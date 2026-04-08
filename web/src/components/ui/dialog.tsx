@@ -55,7 +55,7 @@ export function Dialog({ open, onOpenChange, children }: DialogProps) {
           onClick={() => onOpenChange?.(false)}
           className="absolute inset-0 bg-slate-950/45"
         />
-        <div className="relative z-10 w-full">{children}</div>
+        <div className="relative z-10 flex w-full justify-center">{children}</div>
       </div>
     </DialogContext.Provider>
   );
