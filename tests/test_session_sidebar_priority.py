@@ -493,6 +493,13 @@ class TestSessionSidebarPriority(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "collapsed must be a boolean"):
             mgr.cwd_group_set(cwd="/tmp", collapsed="not-a-bool") # type: ignore
 
+    def test_cwd_group_set_rejects_non_string_label(self) -> None:
+        mgr = _make_manager()
+        mgr._recent_cwds = {"/tmp": time.time()}
+
+        with self.assertRaisesRegex(ValueError, "label must be a string"):
+            mgr.cwd_group_set(cwd="/tmp", label=123)  # type: ignore[arg-type]
+
     def test_cwd_group_set_rejects_unknown_cwd(self) -> None:
         mgr = _make_manager()
         mgr._recent_cwds = {"/tmp/known": time.time()}

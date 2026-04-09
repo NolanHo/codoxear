@@ -3245,6 +3245,8 @@ class SessionManager:
         normalized_cwd = _normalize_cwd_group_key(cwd)
         if normalized_cwd not in self._known_cwd_group_keys():
             raise ValueError("cwd is not a known session working directory")
+        if label is not None and not isinstance(label, str):
+            raise ValueError("label must be a string")
 
         with self._lock:
             existing = self._cwd_groups.get(normalized_cwd, {"label": "", "collapsed": False})
