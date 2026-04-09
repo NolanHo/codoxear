@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+import copy
 import errno
 import hashlib
 import heapq
@@ -3175,25 +3176,30 @@ class SessionManager:
         os.replace(tmp, RECENT_CWD_PATH)
 
     def _load_cwd_groups(self) -> None:
+        cleaned: dict[str, dict[str, Any]] = {}
         try:
             raw = CWD_GROUPS_PATH.read_text(encoding="utf-8")
         except FileNotFoundError:
+            with self._lock:
+                self._cwd_groups = cleaned
             return
-        obj = json.loads(raw)
-        if not isinstance(obj, dict):
-            raise ValueError("invalid cwd_groups.json (expected object)")
-        cleaned: dict[str, dict[str, Any]] = {}
-        for cwd, v in obj.items():
-            try:
-                normalized_cwd = _normalize_cwd_group_key(cwd)
-            except ValueError:
-                continue
-            if not isinstance(v, dict):
-                continue
-            label = _clean_alias(v.get("label", ""))
-            collapsed = bool(v.get("collapsed"))
-            if label or collapsed:
-                cleaned[normalized_cwd] = {"label": label, "collapsed": collapsed}
+        try:
+            obj = json.loads(raw)
+            if not isinstance(obj, dict):
+                raise ValueError("invalid cwd_groups.json (expected object)")
+            for cwd, v in obj.items():
+                try:
+                    normalized_cwd = _normalize_cwd_group_key(cwd)
+                except ValueError:
+                    continue
+                if not isinstance(v, dict):
+                    continue
+                label = _clean_alias(v.get("label", ""))
+                collapsed = bool(v.get("collapsed"))
+                if label or collapsed:
+                    cleaned[normalized_cwd] = {"label": label, "collapsed": collapsed}
+        except (json.JSONDecodeError, TypeError, ValueError):
+            cleaned = {}
         with self._lock:
             self._cwd_groups = cleaned
 
@@ -3207,7 +3213,7 @@ class SessionManager:
 
     def cwd_groups_get(self) -> dict[str, dict[str, Any]]:
         with self._lock:
-            return dict(self._cwd_groups)
+            return copy.deepcopy(self._cwd_groups)
 
     def cwd_group_set(self, cwd: str, label: str | None = None, collapsed: bool | None = None) -> tuple[str, dict[str, Any]]:
         normalized_cwd = _normalize_cwd_group_key(cwd)

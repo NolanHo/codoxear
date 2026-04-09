@@ -344,6 +344,31 @@ class TestSessionSidebarPriority(unittest.TestCase):
             {expected_normalized: {"label": "Demo", "collapsed": True}},
         )
 
+    def test_load_cwd_groups_falls_back_to_empty_store_on_malformed_json(self) -> None:
+        mgr = _make_manager()
+        mgr._cwd_groups = {"/tmp/stale": {"label": "Stale", "collapsed": True}}
+        with tempfile.TemporaryDirectory() as td:
+            groups_path = Path(td) / "cwd_groups.json"
+            groups_path.write_text("{not valid json\n", encoding="utf-8")
+
+            with patch("codoxear.server.CWD_GROUPS_PATH", groups_path):
+                mgr._load_cwd_groups()
+
+        self.assertEqual(mgr.cwd_groups_get(), {})
+
+    def test_cwd_groups_get_returns_entry_copies(self) -> None:
+        mgr = _make_manager()
+        mgr._cwd_groups = {"/tmp/project": {"label": "Project", "collapsed": True}}
+
+        groups = mgr.cwd_groups_get()
+        groups["/tmp/project"]["label"] = "Mutated"
+        groups["/tmp/project"]["collapsed"] = False
+
+        self.assertEqual(
+            mgr._cwd_groups,
+            {"/tmp/project": {"label": "Project", "collapsed": True}},
+        )
+
     def test_cwd_group_set_normalizes_path_and_round_trips_metadata(self) -> None:
         mgr = _make_manager()
         cwd_raw = "/tmp/project/foo/../bar"
