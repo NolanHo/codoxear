@@ -268,7 +268,7 @@ class TestSessionSidebarPriority(unittest.TestCase):
 
         mgr.list_sessions()
 
-        self.assertEqual(mgr.recent_cwds(limit=4), ["/tmp/current", "/repo/ended"])
+        self.assertEqual(mgr.recent_cwds(limit=4), [str(Path("/tmp/current").resolve(strict=False)), "/repo/ended"])
 
     def test_list_sessions_exposes_model_and_reasoning_effort(self) -> None:
         mgr = _make_manager()
@@ -428,6 +428,21 @@ class TestSessionSidebarPriority(unittest.TestCase):
 
         self.assertEqual(normalized, expected_normalized)
         self.assertEqual(meta, {"label": "Trimmed", "collapsed": True})
+
+    def test_list_sessions_canonicalizes_session_cwds_for_group_metadata(self) -> None:
+        mgr = _make_manager()
+        with tempfile.TemporaryDirectory() as td:
+            raw_cwd = str(Path(td) / "project" / "." / "docs" / ".." / "docs")
+            expected_cwd = str(Path(raw_cwd).resolve(strict=False))
+            session = _session(sid="docs", start_ts=time.time())
+            session.cwd = f"  {raw_cwd}  "
+            mgr._sessions = {session.session_id: session}
+
+            with patch("codoxear.server._current_git_branch", return_value=None):
+                rows = mgr.list_sessions()
+
+        self.assertEqual(rows[0]["cwd"], expected_cwd)
+        self.assertIn(expected_cwd, mgr._recent_cwds)
 
     def test_cwd_group_set_returns_meta_copy(self) -> None:
         mgr = _make_manager()

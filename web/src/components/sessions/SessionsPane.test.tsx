@@ -277,7 +277,7 @@ describe("SessionsPane", () => {
     expect(sessionsStore.refresh).toHaveBeenCalled();
   });
 
-  it("groups same-cwd sessions and orders groups by freshest activity", () => {
+  it("groups same-cwd sessions together and preserves first-appearance order", () => {
     renderSessionsPane({
       items: [
         { session_id: "sess-1", alias: "Docs polish", cwd: "/work/docs", agent_backend: "pi", updated_ts: 30 },
@@ -294,9 +294,12 @@ describe("SessionsPane", () => {
 
     const groups = Array.from(root?.querySelectorAll<HTMLElement>(".sessionGroup") || []);
     expect(groups).toHaveLength(2);
-    expect(groups.map((group) => group.querySelector(".sessionGroupTitle")?.textContent?.trim())).toEqual(["api", "docs"]);
-    expect(groups[1]?.textContent).toContain("Docs polish");
-    expect(groups[1]?.textContent).toContain("Release notes");
+    expect(groups.map((group) => group.querySelector(".sessionGroupTitle")?.textContent?.trim())).toEqual([
+      "docs",
+      "api",
+    ]);
+    expect(groups[0]?.textContent).toContain("Docs polish");
+    expect(groups[0]?.textContent).toContain("Release notes");
   });
 
   it("selects grouped session cards when clicked", async () => {

@@ -19,16 +19,12 @@ const FALLBACK_GROUP_KEY = "__no_working_directory__";
 const FALLBACK_GROUP_TITLE = "No working directory";
 const FALLBACK_GROUP_SUBTITLE = "Sessions without a cwd";
 
-type SessionWithStartTs = SessionSummary & { start_ts?: number };
-
 interface GroupedSessions {
   key: string;
   cwd: string | null;
   title: string;
   subtitle: string;
   collapsed: boolean;
-  freshestTs: number;
-  firstIndex: number;
   sessions: SessionSummary[];
 }
 
@@ -47,11 +43,6 @@ function deleteSessionConfirmText(session: SessionSummary) {
   return `Delete this terminal-owned session${target}? This will also stop the corresponding terminal session.`;
 }
 
-function getSessionActivityTs(session: SessionSummary) {
-  const candidate = session as SessionWithStartTs;
-  return Number(candidate.updated_ts ?? candidate.start_ts ?? 0) || 0;
-}
-
 function getGroupTitle(cwd: string | null) {
   if (!cwd) {
     return FALLBACK_GROUP_TITLE;
@@ -63,7 +54,7 @@ function getGroupTitle(cwd: string | null) {
 function groupSessions(items: SessionSummary[], cwdGroups: Record<string, CwdGroupMeta>) {
   const groups = new Map<string, GroupedSessions>();
 
-  items.forEach((session, index) => {
+  items.forEach((session) => {
     const cwd = session.cwd?.trim() || null;
     const key = cwd || FALLBACK_GROUP_KEY;
     const meta = cwd ? cwdGroups[cwd] : undefined;
@@ -71,7 +62,6 @@ function groupSessions(items: SessionSummary[], cwdGroups: Record<string, CwdGro
 
     if (existing) {
       existing.sessions.push(session);
-      existing.freshestTs = Math.max(existing.freshestTs, getSessionActivityTs(session));
       return;
     }
 
@@ -81,18 +71,11 @@ function groupSessions(items: SessionSummary[], cwdGroups: Record<string, CwdGro
       title: meta?.label?.trim() || getGroupTitle(cwd),
       subtitle: cwd || FALLBACK_GROUP_SUBTITLE,
       collapsed: Boolean(meta?.collapsed),
-      freshestTs: getSessionActivityTs(session),
-      firstIndex: index,
       sessions: [session],
     });
   });
 
-  return Array.from(groups.values()).sort((left, right) => {
-    if (right.freshestTs !== left.freshestTs) {
-      return right.freshestTs - left.freshestTs;
-    }
-    return left.firstIndex - right.firstIndex;
-  });
+  return Array.from(groups.values());
 }
 
 export function SessionsPane({ onNewSession }: SessionsPaneProps) {

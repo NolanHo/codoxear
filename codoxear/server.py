@@ -1299,6 +1299,29 @@ def _normalize_cwd_group_key(cwd: Any) -> str:
     return str(Path(trimmed).expanduser().resolve(strict=False))
 
 
+def _canonical_session_cwd(cwd: Any) -> str | None:
+    if not isinstance(cwd, str):
+        return None
+    trimmed = cwd.strip()
+    if not trimmed:
+        return None
+    try:
+        return _normalize_cwd_group_key(trimmed)
+    except ValueError:
+        return trimmed
+
+
+def _normalize_session_cwd_row(row: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(row, dict) or "cwd" not in row:
+        return row
+    canonical_cwd = _canonical_session_cwd(row.get("cwd"))
+    if canonical_cwd is None:
+        return row
+    normalized = dict(row)
+    normalized["cwd"] = canonical_cwd
+    return normalized
+
+
 def _clean_recent_cwd(value: Any) -> str | None:
     if not isinstance(value, str):
         return None
@@ -4191,7 +4214,8 @@ class SessionManager:
                     if activity_ts is not None:
                         s.last_chat_ts = activity_ts if s.last_chat_ts is None else max(s.last_chat_ts, activity_ts)
                 updated_ts = _display_updated_ts(s)
-                cwd_recent = _clean_recent_cwd(s.cwd)
+                canonical_cwd = _canonical_session_cwd(s.cwd)
+                cwd_recent = _clean_recent_cwd(canonical_cwd)
                 recent_map = getattr(self, "_recent_cwds", None)
                 if cwd_recent is not None:
                     if not isinstance(recent_map, dict):
@@ -4227,7 +4251,7 @@ class SessionManager:
                 blocked = dependency_session_id is not None
                 snoozed = snooze_until is not None and snooze_until > now_ts
                 final_priority = 0.0 if (snoozed or blocked) else base_priority
-                cwd_path = _safe_expanduser(Path(s.cwd))
+                cwd_path = _safe_expanduser(Path(canonical_cwd or s.cwd))
                 if not cwd_path.is_absolute():
                     cwd_path = cwd_path.resolve()
                 git_branch = _current_git_branch(cwd_path)
@@ -4249,7 +4273,7 @@ class SessionManager:
                         "agent_backend": s.agent_backend,
                         "owned": s.owned,
                         "transport": s.transport,
-                        "cwd": s.cwd,
+                        "cwd": canonical_cwd,
                         "start_ts": s.start_ts,
                         "updated_ts": updated_ts,
                         "log_path": (str(s.log_path) if s.log_path is not None else None),
@@ -5806,7 +5830,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     self._unauthorized()
                     return
                 t0 = time.perf_counter()
-                sessions = MANAGER.list_sessions()
+                sessions = [_normalize_session_cwd_row(session) for session in MANAGER.list_sessions()]
                 recent_cwds = MANAGER.recent_cwds()
                 cwd_groups = MANAGER.cwd_groups_get()
                 new_session_defaults = _read_new_session_defaults()

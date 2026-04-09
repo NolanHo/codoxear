@@ -1377,6 +1377,23 @@ class TestPiBackendRouting(unittest.TestCase):
         self.assertEqual(payload["cwd_groups"], cwd_groups)
         manager.cwd_groups_get.assert_called_once()
 
+    def test_list_sessions_normalizes_session_cwds_to_match_group_keys(self) -> None:
+        handler = _HandlerHarness("/api/sessions")
+        raw_cwd = "  /tmp/project/../project/docs  "
+        expected_cwd = str(Path(raw_cwd.strip()).resolve(strict=False))
+        with patch("codoxear.server._require_auth", return_value=True), \
+             patch("codoxear.server.MANAGER") as manager:
+            manager.list_sessions.return_value = [{"session_id": "sess-1", "cwd": raw_cwd}]
+            manager.recent_cwds.return_value = []
+            manager.cwd_groups_get.return_value = {expected_cwd: {"label": "Docs", "collapsed": False}}
+
+            Handler.do_GET(handler)  # type: ignore[arg-type]
+
+        payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(handler.status, 200)
+        self.assertEqual(payload["sessions"][0]["cwd"], expected_cwd)
+        self.assertEqual(payload["cwd_groups"], {expected_cwd: {"label": "Docs", "collapsed": False}})
+
     def test_edit_cwd_group_updates_metadata(self) -> None:
         body = json.dumps({
             "cwd": "/tmp",
