@@ -440,6 +440,13 @@ select {
   color: inherit;
 }
 
+.sessionGroupActions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex: 0 0 auto;
+}
+
 .sessionGroupHeading {
   display: flex;
   flex-direction: column;
@@ -453,11 +460,53 @@ select {
   line-height: 1.2;
 }
 
+.sessionGroupRenameInput {
+  width: min(100%, 18rem);
+  padding: 0.45rem 0.7rem;
+  border: 1px solid color-mix(in srgb, var(--primary) 32%, var(--border));
+  border-radius: 0.85rem;
+  background: color-mix(in srgb, var(--card) 92%, white 8%);
+  color: inherit;
+  font-size: 0.98rem;
+  font-weight: 650;
+  line-height: 1.2;
+}
+
+.sessionGroupRenameInput:focus {
+  outline: 2px solid color-mix(in srgb, var(--primary) 35%, transparent);
+  outline-offset: 2px;
+}
+
 .sessionGroupSubtitle {
   color: var(--legacy-muted);
   font-size: 0.82rem;
   line-height: 1.35;
   overflow-wrap: anywhere;
+}
+
+.sessionGroupRenameButton,
+.sessionGroupToggleButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 1.9rem;
+  padding: 0 0.8rem;
+  border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.62);
+  color: inherit;
+  cursor: pointer;
+}
+
+.sessionGroupRenameButton:disabled,
+.sessionGroupToggleButton:disabled {
+  opacity: 0.65;
+  cursor: default;
+}
+
+.sessionGroupRenameButton {
+  font-size: 0.8rem;
+  font-weight: 600;
 }
 
 .sessionGroupToggle {
@@ -473,6 +522,19 @@ select {
   font-weight: 700;
   line-height: 1;
   flex: 0 0 auto;
+}
+
+.sessionGroupToggleButton {
+  padding: 0;
+  width: 1.9rem;
+}
+
+.sessionGroupError {
+  margin: -0.15rem 0 0;
+  padding: 0 0.35rem;
+  color: hsl(var(--destructive));
+  font-size: 0.82rem;
+  font-weight: 600;
 }
 
 .sessionGroupList {

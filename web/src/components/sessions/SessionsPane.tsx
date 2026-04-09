@@ -5,8 +5,8 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 
 import { useSessionsStore, useSessionsStoreApi } from "../../app/providers";
 import { api } from "../../lib/api";
-import type { CwdGroupMeta, SessionSummary } from "../../lib/types";
 import { normalizeLaunchBackend, providerChoiceToSettings } from "../../lib/launch";
+import type { CwdGroupMeta, SessionSummary } from "../../lib/types";
 import { EditSessionDialog } from "./EditSessionDialog";
 import { SessionCard } from "./SessionCard";
 import { SessionGroup } from "./SessionGroup";
@@ -101,6 +101,7 @@ export function SessionsPane({ onNewSession }: SessionsPaneProps) {
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
   const [actionError, setActionError] = useState("");
   const [pendingGroupKey, setPendingGroupKey] = useState<string | null>(null);
+  const [groupErrors, setGroupErrors] = useState<Record<string, string>>({});
 
   const editingSession = useMemo(
     () => items.find((session) => session.session_id === editingSessionId) ?? null,
@@ -164,25 +165,26 @@ export function SessionsPane({ onNewSession }: SessionsPaneProps) {
     }
   };
 
-  const toggleGroup = async (group: GroupedSessions) => {
-    if (!group.cwd || pendingGroupKey === group.key) {
-      return;
+  async function saveGroupChange(group: GroupedSessions, payload: { label?: string; collapsed?: boolean }) {
+    if (!group.cwd) {
+      return false;
     }
+
+    setPendingGroupKey(group.key);
+    setGroupErrors((current) => ({ ...current, [group.key]: "" }));
+
     try {
-      setActionError("");
-      setPendingGroupKey(group.key);
-      await api.editCwdGroup({
-        cwd: group.cwd,
-        label: group.title,
-        collapsed: !group.collapsed,
-      });
+      await api.editCwdGroup({ cwd: group.cwd, ...payload });
       await sessionsStoreApi.refresh();
+      return true;
     } catch (error) {
-      setActionError(error instanceof Error ? error.message : "Failed to update session group");
+      const message = error instanceof Error ? error.message : "Failed to save group changes.";
+      setGroupErrors((current) => ({ ...current, [group.key]: message }));
+      return false;
     } finally {
-      setPendingGroupKey(null);
+      setPendingGroupKey((current) => (current === group.key ? null : current));
     }
-  };
+  }
 
   return (
     <>
@@ -205,7 +207,21 @@ export function SessionsPane({ onNewSession }: SessionsPaneProps) {
                 title={group.title}
                 subtitle={group.subtitle}
                 collapsed={group.collapsed}
-                onToggle={group.cwd ? () => { void toggleGroup(group); } : undefined}
+                canRename={Boolean(group.cwd)}
+                isSaving={pendingGroupKey === group.key}
+                errorMessage={groupErrors[group.key]}
+                onRename={
+                  group.cwd
+                    ? async (label) => saveGroupChange(group, { label: label.trim() })
+                    : undefined
+                }
+                onToggle={
+                  group.cwd
+                    ? () => {
+                        void saveGroupChange(group, { collapsed: !group.collapsed });
+                      }
+                    : undefined
+                }
               >
                 {group.sessions.map((session) => (
                   <SessionCard

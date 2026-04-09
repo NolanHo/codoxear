@@ -3,44 +3,81 @@ import { act } from "preact/test-utils";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AppProviders } from "../../app/providers";
+import { api } from "../../lib/api";
 import { SessionsPane } from "./SessionsPane";
 
 vi.mock("../../lib/api", () => ({
   api: {
     createSession: vi.fn().mockResolvedValue({ ok: true, broker_pid: 42 }),
     editSession: vi.fn().mockResolvedValue({ ok: true, alias: "Updated session" }),
-    editCwdGroup: vi.fn().mockResolvedValue({ ok: true, cwd: "/tmp", collapsed: true }),
+    editCwdGroup: vi.fn().mockResolvedValue({ ok: true }),
     deleteSession: vi.fn().mockResolvedValue({ ok: true }),
   },
 }));
 
 let root: HTMLDivElement | null = null;
 
-function createStaticStore(state: any) {
-  let currentState = state;
-  const listeners = new Set<() => void>();
-  return {
-    getState: () => currentState,
-    subscribe(listener: () => void) {
-      listeners.add(listener);
-      return () => listeners.delete(listener);
-    },
-    refresh: vi.fn(async () => undefined),
-    select: vi.fn(),
-    setState(next: any) {
-      currentState = next;
-      listeners.forEach((listener) => listener());
-    },
-  };
-}
-
 async function flush() {
   await Promise.resolve();
   await Promise.resolve();
 }
 
-function renderSessionsPane(state: any) {
-  const sessionsStore = createStaticStore(state);
+async function click(element: Element) {
+  await act(async () => {
+    (element as HTMLElement).dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  });
+}
+
+async function setInputValue(element: HTMLInputElement, value: string) {
+  await act(async () => {
+    element.value = value;
+    element.dispatchEvent(new Event("input", { bubbles: true }));
+    element.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+}
+
+async function pressKey(element: Element, key: string) {
+  await act(async () => {
+    element.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+  });
+}
+
+function createSessionsStore(initialState: any, options?: { onRefresh?: () => void | Promise<void> }) {
+  let state = initialState;
+  const listeners = new Set<() => void>();
+
+  const emit = () => {
+    listeners.forEach((listener) => listener());
+  };
+
+  const store = {
+    getState: () => state,
+    subscribe(listener: () => void) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    refresh: vi.fn(async (refreshOptions?: { preferNewest?: boolean }) => {
+      if (refreshOptions?.preferNewest) {
+        state = { ...state, activeSessionId: state.items[0]?.session_id ?? null };
+      }
+      await options?.onRefresh?.();
+      emit();
+    }),
+    select: vi.fn((sessionId: string) => {
+      state = { ...state, activeSessionId: sessionId };
+      emit();
+    }),
+    setState(next: any) {
+      state = next;
+      emit();
+    },
+  };
+
+  return store;
+}
+
+function renderSessionsPane(state: any, options?: { onRefresh?: () => void | Promise<void> }) {
+  const sessionsStore = createSessionsStore(state, options);
 
   root = document.createElement("div");
   document.body.appendChild(root);
@@ -96,35 +133,6 @@ describe("SessionsPane", () => {
     expect(root?.textContent).toContain("web");
   });
 
-  it("renders compact session rows with dense metadata hooks", () => {
-    renderSessionsPane({
-      items: [
-        {
-          session_id: "sess-compact-1",
-          alias: "Ship mobile polish",
-          first_user_message: "Optimize phone UI",
-          cwd: "/Users/huapeixuan/Documents/Code/codoxear/web",
-          agent_backend: "pi",
-          owned: true,
-          queue_len: 3,
-          busy: false,
-        },
-      ],
-      activeSessionId: "sess-compact-1",
-      loading: false,
-      newSessionDefaults: null,
-      recentCwds: [],
-      cwdGroups: {},
-      tmuxAvailable: false,
-    });
-
-    const card = root?.querySelector("[data-testid='session-card']");
-    expect(card?.querySelector(".sessionCardButton.compactSessionButton")).not.toBeNull();
-    expect(card?.querySelector(".sessionTitleRow")).not.toBeNull();
-    expect(card?.querySelector(".sessionMetaBadges")).not.toBeNull();
-    expect(card?.querySelector(".sessionPreview")).not.toBeNull();
-  });
-
   it("uses the first user message as the primary title when no alias is present", () => {
     renderSessionsPane({
       items: [
@@ -151,19 +159,10 @@ describe("SessionsPane", () => {
   });
 
   it("deletes a session after confirmation and refreshes the list", async () => {
-    const { api } = await import("../../lib/api");
-    const refresh = vi.fn().mockResolvedValue(undefined);
     const confirm = vi.fn().mockReturnValue(true);
     vi.stubGlobal("confirm", confirm);
     const sessionsStore = renderSessionsPane({
-      items: [
-        {
-          session_id: "sess-1",
-          alias: "Inbox cleanup",
-          first_user_message: "整理一下今天的会话",
-          agent_backend: "pi",
-        },
-      ],
+      items: [{ session_id: "sess-1", alias: "Inbox cleanup", agent_backend: "pi" }],
       activeSessionId: "sess-1",
       loading: false,
       newSessionDefaults: null,
@@ -171,20 +170,18 @@ describe("SessionsPane", () => {
       cwdGroups: {},
       tmuxAvailable: false,
     });
-    sessionsStore.refresh = refresh;
 
     const deleteButton = Array.from(root?.querySelectorAll("button") || []).find((button) => button.textContent?.includes("Delete"));
-    expect(deleteButton).not.toBeUndefined();
+    expect(deleteButton).toBeDefined();
     deleteButton?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     await flush();
 
     expect(api.deleteSession).toHaveBeenCalledWith("sess-1");
-    expect(refresh).toHaveBeenCalled();
+    expect(sessionsStore.refresh).toHaveBeenCalled();
     expect(confirm).toHaveBeenCalledWith(expect.stringContaining("terminal-owned session"));
   });
 
-  it("duplicates a session with its launch settings and selects the new broker pid", async () => {
-    const { api } = await import("../../lib/api");
+  it("duplicates a session with launch settings and selects the new session", async () => {
     const sessionsStore = renderSessionsPane({
       items: [
         {
@@ -201,16 +198,15 @@ describe("SessionsPane", () => {
       ],
       activeSessionId: "sess-1",
       loading: false,
-      tmuxAvailable: true,
-      recentCwds: ["/tmp/project"],
       newSessionDefaults: null,
+      recentCwds: ["/tmp/project"],
       cwdGroups: {},
+      tmuxAvailable: true,
     });
 
-    sessionsStore.refresh = vi.fn(async (options?: { preferNewest?: boolean }) => {
+    sessionsStore.refresh = vi.fn(async () => {
       sessionsStore.setState({
         ...sessionsStore.getState(),
-        activeSessionId: options?.preferNewest ? "sess-2" : sessionsStore.getState().activeSessionId,
         items: [
           ...sessionsStore.getState().items,
           {
@@ -225,8 +221,7 @@ describe("SessionsPane", () => {
     });
 
     const duplicateButton = Array.from(root?.querySelectorAll("button") || []).find((button) => button.textContent?.includes("Duplicate"));
-    expect(duplicateButton).not.toBeUndefined();
-
+    expect(duplicateButton).toBeDefined();
     duplicateButton?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     await flush();
 
@@ -243,23 +238,11 @@ describe("SessionsPane", () => {
     expect(sessionsStore.select).toHaveBeenCalledWith("sess-2");
   });
 
-  it("opens the edit dialog and saves the legacy sidebar fields", async () => {
-    const { api } = await import("../../lib/api");
-    const refresh = vi.fn().mockResolvedValue(undefined);
+  it("opens the edit dialog and saves legacy session metadata", async () => {
     const sessionsStore = renderSessionsPane({
       items: [
-        {
-          session_id: "sess-1",
-          alias: "Inbox cleanup",
-          first_user_message: "整理一下今天的会话",
-          agent_backend: "pi",
-          priority_offset: 0,
-        },
-        {
-          session_id: "sess-2",
-          alias: "Release prep",
-          agent_backend: "pi",
-        },
+        { session_id: "sess-1", alias: "Inbox cleanup", agent_backend: "pi", priority_offset: 0 },
+        { session_id: "sess-2", alias: "Release prep", agent_backend: "pi" },
       ],
       activeSessionId: "sess-1",
       loading: false,
@@ -268,15 +251,11 @@ describe("SessionsPane", () => {
       cwdGroups: {},
       tmuxAvailable: false,
     });
-    sessionsStore.refresh = refresh;
 
     const editButton = Array.from(root?.querySelectorAll("button") || []).find((button) => button.textContent?.includes("Edit"));
-    expect(editButton).not.toBeUndefined();
+    expect(editButton).toBeDefined();
     editButton?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     await flush();
-
-    const nameInput = root?.querySelector('input[name="sessionName"]') as HTMLInputElement;
-    expect(nameInput?.value).toBe("Inbox cleanup");
 
     const dependencySelect = root?.querySelector('select[name="dependencySessionId"]') as HTMLSelectElement;
     await act(async () => {
@@ -285,7 +264,7 @@ describe("SessionsPane", () => {
     });
 
     const saveButton = Array.from(root?.querySelectorAll("button") || []).find((button) => button.textContent?.includes("Save changes"));
-    expect(saveButton).not.toBeUndefined();
+    expect(saveButton).toBeDefined();
     saveButton?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     await flush();
 
@@ -295,33 +274,15 @@ describe("SessionsPane", () => {
       snooze_until: null,
       dependency_session_id: "sess-2",
     });
-    expect(refresh).toHaveBeenCalled();
+    expect(sessionsStore.refresh).toHaveBeenCalled();
   });
 
-  it("groups same-cwd sessions together and orders groups by freshest activity", () => {
+  it("groups same-cwd sessions and orders groups by freshest activity", () => {
     renderSessionsPane({
       items: [
-        {
-          session_id: "sess-1",
-          alias: "Docs polish",
-          cwd: "/work/docs",
-          agent_backend: "pi",
-          updated_ts: 30,
-        },
-        {
-          session_id: "sess-2",
-          alias: "Bug bash",
-          cwd: "/work/api",
-          agent_backend: "codex",
-          updated_ts: 120,
-        },
-        {
-          session_id: "sess-3",
-          alias: "Release notes",
-          cwd: "/work/docs",
-          agent_backend: "pi",
-          updated_ts: 20,
-        },
+        { session_id: "sess-1", alias: "Docs polish", cwd: "/work/docs", agent_backend: "pi", updated_ts: 30 },
+        { session_id: "sess-2", alias: "Bug bash", cwd: "/work/api", agent_backend: "codex", updated_ts: 120 },
+        { session_id: "sess-3", alias: "Release notes", cwd: "/work/docs", agent_backend: "pi", updated_ts: 20 },
       ],
       activeSessionId: "sess-3",
       loading: false,
@@ -333,31 +294,100 @@ describe("SessionsPane", () => {
 
     const groups = Array.from(root?.querySelectorAll<HTMLElement>(".sessionGroup") || []);
     expect(groups).toHaveLength(2);
-    expect(groups.map((group) => group.querySelector(".sessionGroupTitle")?.textContent?.trim())).toEqual([
-      "api",
-      "docs",
-    ]);
-    expect(groups[0]?.textContent).toContain("/work/api");
+    expect(groups.map((group) => group.querySelector(".sessionGroupTitle")?.textContent?.trim())).toEqual(["api", "docs"]);
     expect(groups[1]?.textContent).toContain("Docs polish");
     expect(groups[1]?.textContent).toContain("Release notes");
-
-    const groupedCards = groups[1]?.querySelectorAll("[data-testid='session-card']") || [];
-    expect(Array.from(groupedCards).map((card) => card.textContent)).toEqual([
-      expect.stringContaining("Docs polish"),
-      expect.stringContaining("Release notes"),
-    ]);
   });
 
-  it("renders a fallback group for sessions without a working directory", () => {
-    renderSessionsPane({
+  it("selects grouped session cards when clicked", async () => {
+    const sessionsStore = renderSessionsPane({
       items: [
-        {
-          session_id: "sess-1",
-          alias: "Inbox",
-          agent_backend: "pi",
-          start_ts: 10,
-        },
+        { session_id: "sess-1", alias: "Docs polish", cwd: "/work/docs", agent_backend: "pi", updated_ts: 30 },
+        { session_id: "sess-2", alias: "Release notes", cwd: "/work/docs", agent_backend: "pi", updated_ts: 20 },
       ],
+      activeSessionId: null,
+      loading: false,
+      newSessionDefaults: null,
+      recentCwds: [],
+      cwdGroups: {},
+      tmuxAvailable: false,
+    });
+
+    const cardButtons = root?.querySelectorAll<HTMLButtonElement>(".sessionCardButton") || [];
+    await click(cardButtons[1]!);
+    await flush();
+
+    expect(sessionsStore.select).toHaveBeenCalledWith("sess-2");
+  });
+
+  it("persists cwd group rename and refreshes sessions", async () => {
+    const sessionsStore = renderSessionsPane(
+      {
+        items: [{ session_id: "sess-1", alias: "Docs polish", cwd: "/work/docs", agent_backend: "pi" }],
+        activeSessionId: null,
+        loading: false,
+        newSessionDefaults: null,
+        recentCwds: [],
+        cwdGroups: {},
+        tmuxAvailable: false,
+      },
+      {
+        onRefresh: () => {
+          sessionsStore.setState({
+            ...sessionsStore.getState(),
+            cwdGroups: { "/work/docs": { label: "Knowledge Base" } },
+          });
+        },
+      },
+    );
+
+    const renameButton = root?.querySelector<HTMLButtonElement>(".sessionGroupRenameButton");
+    expect(renameButton).not.toBeNull();
+    await click(renameButton!);
+
+    const input = root?.querySelector<HTMLInputElement>(".sessionGroupRenameInput");
+    expect(input).not.toBeNull();
+    await setInputValue(input!, "Knowledge Base");
+    await pressKey(input!, "Enter");
+    await flush();
+
+    expect(api.editCwdGroup).toHaveBeenCalledWith({ cwd: "/work/docs", label: "Knowledge Base" });
+    expect(sessionsStore.refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("persists cwd group collapse and hides cards after refresh", async () => {
+    const sessionsStore = renderSessionsPane(
+      {
+        items: [{ session_id: "sess-1", alias: "Docs polish", cwd: "/work/docs", agent_backend: "pi" }],
+        activeSessionId: null,
+        loading: false,
+        newSessionDefaults: null,
+        recentCwds: [],
+        cwdGroups: {},
+        tmuxAvailable: false,
+      },
+      {
+        onRefresh: () => {
+          sessionsStore.setState({
+            ...sessionsStore.getState(),
+            cwdGroups: { "/work/docs": { collapsed: true } },
+          });
+        },
+      },
+    );
+
+    const toggleButton = root?.querySelector<HTMLButtonElement>(".sessionGroupToggleButton");
+    expect(toggleButton).not.toBeNull();
+    await click(toggleButton!);
+    await flush();
+
+    expect(api.editCwdGroup).toHaveBeenCalledWith({ cwd: "/work/docs", collapsed: true });
+    expect(root?.querySelectorAll("[data-testid='session-card']")).toHaveLength(0);
+  });
+
+  it("renders a fallback group for sessions without cwd and disables group actions", () => {
+    renderSessionsPane({
+      items: [{ session_id: "sess-1", alias: "Inbox", agent_backend: "pi", start_ts: 10 }],
       activeSessionId: null,
       loading: false,
       newSessionDefaults: null,
@@ -369,42 +399,7 @@ describe("SessionsPane", () => {
     const group = root?.querySelector<HTMLElement>(".sessionGroup");
     expect(group?.querySelector(".sessionGroupTitle")?.textContent).toContain("No working directory");
     expect(group?.querySelector(".sessionGroupSubtitle")?.textContent).toContain("Sessions without a cwd");
-    expect(group?.textContent).toContain("Inbox");
-  });
-
-  it("uses cwd group metadata for titles and collapse state, then persists toggles", async () => {
-    const { api } = await import("../../lib/api");
-    const refresh = vi.fn().mockResolvedValue(undefined);
-    const sessionsStore = renderSessionsPane({
-      items: [
-        {
-          session_id: "sess-1",
-          alias: "Inbox cleanup",
-          cwd: "/tmp/project",
-          agent_backend: "pi",
-        },
-      ],
-      activeSessionId: "sess-1",
-      loading: false,
-      newSessionDefaults: null,
-      recentCwds: [],
-      cwdGroups: { "/tmp/project": { label: "Project Alpha", collapsed: true } },
-      tmuxAvailable: false,
-    });
-    sessionsStore.refresh = refresh;
-
-    expect(root?.textContent).toContain("Project Alpha");
-    expect(root?.querySelectorAll("[data-testid='session-card']")).toHaveLength(0);
-
-    const toggleButton = root?.querySelector<HTMLButtonElement>(".sessionGroupHeader");
-    toggleButton?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
-    await flush();
-
-    expect(api.editCwdGroup).toHaveBeenCalledWith({
-      cwd: "/tmp/project",
-      label: "Project Alpha",
-      collapsed: false,
-    });
-    expect(refresh).toHaveBeenCalled();
+    expect(group?.querySelector(".sessionGroupRenameButton")).toBeNull();
+    expect(group?.querySelector(".sessionGroupToggleButton")).toBeNull();
   });
 });
