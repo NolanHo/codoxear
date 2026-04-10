@@ -110,8 +110,13 @@ export const api = {
   getQueue(sessionId: string) {
     return getJson(`/api/sessions/${sessionId}/queue`);
   },
-  getFiles(sessionId: string, signal?: AbortSignal) {
-    return getJson<SessionFileListResponse>(`/api/sessions/${sessionId}/file/list`, signal);
+  getFiles(sessionId: string, path?: string, signal?: AbortSignal) {
+    const query = new URLSearchParams();
+    if (path) {
+      query.set("path", path);
+    }
+    const suffix = query.size ? `?${query.toString()}` : "";
+    return getJson<SessionFileListResponse>(`/api/sessions/${sessionId}/file/list${suffix}`, signal);
   },
   getFileRead(sessionId: string, path: string, signal?: AbortSignal) {
     const query = new URLSearchParams();

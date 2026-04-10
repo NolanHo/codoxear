@@ -51,9 +51,24 @@ describe("FileViewerDialog", () => {
     }
   });
 
-  it("defaults to diff mode for the first tracked file and loads git file versions", async () => {
+  it("loads the root directory, expands a folder, and opens a selected file in diff mode", async () => {
     const { api } = await import("../../lib/api");
-    (api as any).getFiles.mockResolvedValue({ ok: true, files: ["src/main.tsx"] });
+    (api as any).getFiles.mockImplementation((_sessionId: string, nextPath?: string) => Promise.resolve(
+      nextPath === "src"
+        ? {
+            ok: true,
+            path: "src",
+            entries: [{ name: "main.tsx", path: "src/main.tsx", kind: "file" }],
+          }
+        : {
+            ok: true,
+            path: "",
+            entries: [
+              { name: "src", path: "src", kind: "dir" },
+              { name: "README.md", path: "README.md", kind: "file" },
+            ],
+          },
+    ));
     (api as any).getGitFileVersions.mockResolvedValue({
       ok: true,
       path: "src/main.tsx",
@@ -73,15 +88,87 @@ describe("FileViewerDialog", () => {
       );
       await settle(8);
     });
+    await settle(8);
 
-    expect((api as any).getFiles).toHaveBeenCalledWith("sess-diff", expect.any(AbortSignal));
+    expect((api as any).getFiles).toHaveBeenCalledWith("sess-diff", undefined, expect.any(AbortSignal));
+    expect(root?.textContent).toContain("src");
+    expect(root?.textContent).toContain("README.md");
+
+    const expandButton = root?.querySelector('button[aria-label="Expand src"]') as HTMLButtonElement | null;
+    expect(expandButton).not.toBeNull();
+    act(() => {
+      expandButton?.click();
+    });
+    await settle(8);
+
+    expect((api as any).getFiles).toHaveBeenCalledWith("sess-diff", "src", expect.any(AbortSignal));
+
+    const fileButton = Array.from(root?.querySelectorAll("button") || []).find((button) => button.textContent === "main.tsx") as HTMLButtonElement | undefined;
+    expect(fileButton).toBeDefined();
+    act(() => {
+      fileButton?.click();
+    });
+    await settle(8);
+
     expect((api as any).getGitFileVersions).toHaveBeenCalledWith("sess-diff", "src/main.tsx", expect.any(AbortSignal));
     expect(root.textContent).toContain("Diff");
   });
 
+  it("loads a directory only once when it is collapsed and re-expanded", async () => {
+    const { api } = await import("../../lib/api");
+    (api as any).getFiles.mockImplementation((_sessionId: string, nextPath?: string) => Promise.resolve(
+      nextPath === "docs"
+        ? {
+            ok: true,
+            path: "docs",
+            entries: [{ name: "intro.md", path: "docs/intro.md", kind: "file" }],
+          }
+        : {
+            ok: true,
+            path: "",
+            entries: [{ name: "docs", path: "docs", kind: "dir" }],
+          },
+    ));
+
+    root = document.createElement("div");
+    document.body.appendChild(root);
+    await act(async () => {
+      render(
+        <FileViewerDialog open sessionId="sess-cache" files={[]} onClose={() => undefined} />,
+        root!,
+      );
+      await settle(8);
+    });
+    await settle(8);
+
+    const expandButton = root?.querySelector('button[aria-label="Expand docs"]') as HTMLButtonElement | null;
+    expect(expandButton).not.toBeNull();
+
+    act(() => {
+      expandButton?.click();
+    });
+    await settle(8);
+
+    const collapseButton = root?.querySelector('button[aria-label="Collapse docs"]') as HTMLButtonElement | null;
+    expect(collapseButton).not.toBeNull();
+    act(() => {
+      collapseButton?.click();
+    });
+    await settle(4);
+
+    const reExpandButton = root?.querySelector('button[aria-label="Expand docs"]') as HTMLButtonElement | null;
+    expect(reExpandButton).not.toBeNull();
+    act(() => {
+      reExpandButton?.click();
+    });
+    await settle(8);
+
+    expect((api as any).getFiles).toHaveBeenCalledTimes(2);
+  });
+
   it("can switch from diff mode to file and markdown preview modes", async () => {
     const { api } = await import("../../lib/api");
-    (api as any).getFiles.mockResolvedValue({ ok: true, files: ["docs/intro.md"] });
+    (api as any).getFiles.mockResolvedValue({ ok: true, path: "", entries: [] });
     (api as any).getGitFileVersions.mockResolvedValue({
       ok: true,
       path: "docs/intro.md",
@@ -96,7 +183,7 @@ describe("FileViewerDialog", () => {
     document.body.appendChild(root);
     await act(async () => {
       render(
-        <FileViewerDialog open sessionId="sess-preview" files={["docs/intro.md"]} onClose={() => undefined} />,
+        <FileViewerDialog open sessionId="sess-preview" files={[]} initialPath="docs/intro.md" onClose={() => undefined} />,
         root!,
       );
       await settle(8);
@@ -124,7 +211,7 @@ describe("FileViewerDialog", () => {
 
   it("opens explicit file references in file mode and preserves the requested line", async () => {
     const { api } = await import("../../lib/api");
-    (api as any).getFiles.mockResolvedValue({ ok: true, files: ["src/main.tsx"] });
+    (api as any).getFiles.mockResolvedValue({ ok: true, path: "", entries: [] });
     (api as any).getFileRead.mockResolvedValue({ ok: true, kind: "text", text: "line 1\nline 2" });
 
     root = document.createElement("div");

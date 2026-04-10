@@ -4,6 +4,7 @@ from __future__ import annotations
 import base64
 import copy
 import errno
+import fnmatch
 import hashlib
 import heapq
 import hmac
@@ -907,26 +908,112 @@ def _resolve_tracked_file_by_basename(session_id: str, raw_path: str) -> Path | 
     return match
 
 
-def _list_session_relative_files(base: Path) -> list[str]:
-    root = _safe_expanduser(base)
-    if not root.is_absolute():
-        root = root.resolve()
+def _resolve_session_relative_child(base: Path, raw_path: str) -> Path:
+    rel = str(raw_path or "").strip()
+    if not rel:
+        return base.resolve()
+    if " " in rel:
+        raise ValueError("invalid path")
+    p = Path(rel)
+    if p.is_absolute():
+        raise ValueError("path must be relative")
+    resolved_base = base.resolve()
+    resolved = (resolved_base / p).resolve()
+    if (
+        not str(resolved).startswith(str(resolved_base) + os.sep)
+        and resolved != resolved_base
+    ):
+        raise ValueError("path escapes session cwd")
+    return resolved
+
+
+def _load_root_gitignore_patterns(root: Path) -> list[str]:
+    path = root / ".gitignore"
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return []
+    except OSError:
+        return []
+    patterns: list[str] = []
+    for line in raw.splitlines():
+        pattern = line.strip()
+        if not pattern or pattern.startswith("#") or pattern.startswith("!"):
+            continue
+        patterns.append(pattern)
+    return patterns
+
+
+def _gitignore_matches(rel_path: str, *, is_dir: bool, pattern: str) -> bool:
+    candidate = rel_path.strip("/")
+    if not candidate:
+        return False
+    rule = pattern.strip()
+    if not rule:
+        return False
+    dir_only = rule.endswith("/")
+    if dir_only and not is_dir:
+        return False
+    rule = rule.rstrip("/")
+    if not rule:
+        return False
+    anchored = rule.startswith("/")
+    rule = rule.lstrip("/")
+    if not rule:
+        return False
+
+    if "/" in rule:
+        return fnmatch.fnmatchcase(candidate, rule)
+
+    parts = candidate.split("/")
+    if anchored:
+        return fnmatch.fnmatchcase(parts[0], rule)
+    return any(fnmatch.fnmatchcase(part, rule) for part in parts)
+
+
+def _is_ignored_session_relpath(
+    rel_path: str, *, is_dir: bool, patterns: list[str]
+) -> bool:
+    return any(
+        _gitignore_matches(rel_path, is_dir=is_dir, pattern=pattern)
+        for pattern in patterns
+    )
+
+
+def _session_entry_sort_key(entry: dict[str, str]) -> tuple[int, str]:
+    return (0 if entry.get("kind") == "dir" else 1, entry.get("name", ""))
+
+
+def _list_session_directory_entries(
+    base: Path, raw_path: str = ""
+) -> list[dict[str, str]]:
+    root = _safe_expanduser(base).resolve()
     if not root.exists():
         raise FileNotFoundError("session cwd not found")
     if not root.is_dir():
         raise ValueError("session cwd is not a directory")
-    out: list[str] = []
+    target = _resolve_session_relative_child(root, raw_path)
+    if not target.exists():
+        raise FileNotFoundError("path not found")
+    if not target.is_dir():
+        raise ValueError("path is not a directory")
 
-    def _onerror(err: OSError) -> None:
-        raise err
-
-    for current_root, dirnames, filenames in os.walk(root, topdown=True, onerror=_onerror, followlinks=False):
-        dirnames[:] = [name for name in sorted(dirnames) if name not in FILE_LIST_IGNORED_DIRS]
-        current_path = Path(current_root)
-        for name in sorted(filenames):
-            rel = (current_path / name).relative_to(root)
-            out.append(rel.as_posix())
-    out.sort()
+    patterns = _load_root_gitignore_patterns(root)
+    out: list[dict[str, str]] = []
+    for child in target.iterdir():
+        rel = child.relative_to(root).as_posix()
+        if child.is_dir() and child.name in FILE_LIST_IGNORED_DIRS:
+            continue
+        if _is_ignored_session_relpath(rel, is_dir=child.is_dir(), patterns=patterns):
+            continue
+        out.append(
+            {
+                "name": child.name,
+                "path": rel,
+                "kind": "dir" if child.is_dir() else "file",
+            }
+        )
+    out.sort(key=_session_entry_sort_key)
     return out
 
 
@@ -6183,11 +6270,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 if not s:
                     _json_response(self, 404, {"error": "unknown session"})
                     return
+                qs = urllib.parse.parse_qs(u.query)
+                raw_rel = qs.get("path", [""])[0]
                 base = _safe_expanduser(Path(s.cwd))
                 if not base.is_absolute():
                     base = base.resolve()
                 try:
-                    files = _list_session_relative_files(base)
+                    entries = _list_session_directory_entries(base, raw_rel)
                 except FileNotFoundError as e:
                     _json_response(self, 404, {"error": str(e)})
                     return
@@ -6197,7 +6286,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 except ValueError as e:
                     _json_response(self, 400, {"error": str(e)})
                     return
-                _json_response(self, 200, {"ok": True, "cwd": str(base), "files": files})
+                _json_response(
+                    self,
+                    200,
+                    {
+                        "ok": True,
+                        "cwd": str(base),
+                        "path": str(raw_rel or ""),
+                        "entries": entries,
+                    },
+                )
                 return
 
             if path.startswith("/api/sessions/") and path.endswith("/file/blob"):

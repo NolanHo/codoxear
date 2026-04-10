@@ -22,7 +22,7 @@ vi.mock("../lib/api", () => ({
     getNotificationSubscriptionState: vi.fn().mockResolvedValue({ ok: true, vapid_public_key: "", subscriptions: [] }),
     upsertNotificationSubscription: vi.fn().mockResolvedValue({ ok: true, vapid_public_key: "", subscriptions: [] }),
     toggleNotificationSubscription: vi.fn().mockResolvedValue({ ok: true, vapid_public_key: "", subscriptions: [] }),
-    getFiles: vi.fn().mockResolvedValue({ ok: true, files: ["src/main.tsx"] }),
+    getFiles: vi.fn().mockResolvedValue({ ok: true, path: "", entries: [{ name: "src", path: "src", kind: "dir" }] }),
     getFileRead: vi.fn().mockResolvedValue({ ok: true, kind: "text", text: "console.log('viewer');" }),
     getGitFileVersions: vi.fn().mockResolvedValue({ ok: true, path: "src/main.tsx", base_text: "before", current_text: "after" }),
     getHarness: vi.fn().mockResolvedValue({ ok: true, enabled: true, request: "Keep going", cooldown_minutes: 15, remaining_injections: 2 }),
@@ -328,9 +328,9 @@ describe("AppShell", () => {
     }
   });
 
-  it("opens the file viewer from the toolbar and loads the first tracked file", async () => {
+  it("opens the file viewer from the toolbar and requests the root directory listing", async () => {
     const { api } = await import("../lib/api");
-    renderAppShell({ files: ["src/main.tsx"] });
+    renderAppShell({ files: [] });
     await flush();
 
     const button = findButtonByText("Files");
@@ -342,10 +342,9 @@ describe("AppShell", () => {
     await flush();
     await flush();
 
-    expect(api.getGitFileVersions).toHaveBeenCalledWith("sess-1", "src/main.tsx", expect.any(AbortSignal));
+    expect(api.getFiles).toHaveBeenCalledWith("sess-1", undefined, expect.any(AbortSignal));
     expect(getRoot().textContent).toContain("File viewer");
-    expect(getRoot().textContent).toContain("src/main.tsx");
-    expect(getRoot().textContent).toContain("Diff");
+    expect(getRoot().textContent).toContain("Choose a file from the session.");
   });
 
   it("opens harness mode from the toolbar and saves harness settings", async () => {

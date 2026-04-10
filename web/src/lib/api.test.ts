@@ -147,12 +147,35 @@ describe("api", () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
-      text: async () => '{"ok":true,"files":["src/main.tsx"]}',
+      text: async () => '{"ok":true,"path":"","entries":[{"name":"src","path":"src","kind":"dir"}]}',
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(api.getFiles("pi-session")).resolves.toEqual({ ok: true, files: ["src/main.tsx"] });
+    await expect(api.getFiles("pi-session")).resolves.toEqual({
+      ok: true,
+      path: "",
+      entries: [{ name: "src", path: "src", kind: "dir" }],
+    });
     expect(fetchMock).toHaveBeenCalledWith("api/sessions/pi-session/file/list", {
+      headers: { Accept: "application/json" },
+      signal: undefined,
+    });
+  });
+
+  it("requests a nested session directory listing", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => '{"ok":true,"path":"src","entries":[{"name":"main.tsx","path":"src/main.tsx","kind":"file"}]}',
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(api.getFiles("pi-session", "src")).resolves.toEqual({
+      ok: true,
+      path: "src",
+      entries: [{ name: "main.tsx", path: "src/main.tsx", kind: "file" }],
+    });
+    expect(fetchMock).toHaveBeenCalledWith("api/sessions/pi-session/file/list?path=src", {
       headers: { Accept: "application/json" },
       signal: undefined,
     });

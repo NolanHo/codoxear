@@ -61,11 +61,10 @@ export function createSessionUiStore(): SessionUiStore {
 
       try {
         const requestsPromise = options?.agentBackend === "pi" ? api.getSessionUiState(sessionId) : Promise.resolve({ requests: [] });
-        const [uiState, diagnostics, queue, files] = await Promise.all([
+        const [uiState, diagnostics, queue] = await Promise.all([
           requestsPromise,
           api.getDiagnostics(sessionId),
           api.getQueue(sessionId),
-          api.getFiles(sessionId),
         ]);
         if (refreshId !== currentRefreshId) {
           return;
@@ -76,7 +75,7 @@ export function createSessionUiStore(): SessionUiStore {
           requests: uiState.requests,
           diagnostics: diagnostics as Record<string, unknown>,
           queue: queue as Record<string, unknown>,
-          files: files.files,
+          files: [],
           loading: false,
         };
         emit();

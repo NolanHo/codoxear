@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
 import { api } from "../../lib/api";
-import type { GitFileVersionsResponse, SessionFileReadResponse } from "../../lib/types";
+import type { GitFileVersionsResponse, SessionFileListEntry, SessionFileReadResponse } from "../../lib/types";
 import { MonacoWorkspace } from "./MonacoWorkspace";
 import { normalizeRememberedLine, preferredFileSelectionForSession, rememberFileSelection } from "./fileSelectionState";
 
@@ -23,17 +23,67 @@ export interface FileViewerDialogProps {
 
 export type FileViewMode = "diff" | "file" | "preview";
 
-function uniquePaths(paths: Array<string | null | undefined>) {
-  const seen = new Set<string>();
-  const result: string[] = [];
-  for (const value of paths) {
-    if (typeof value !== "string") continue;
-    const trimmed = value.trim();
-    if (!trimmed || seen.has(trimmed)) continue;
-    seen.add(trimmed);
-    result.push(trimmed);
-  }
-  return result;
+type TreeNode = SessionFileListEntry & {
+  children?: TreeNode[];
+  error?: string;
+  expanded?: boolean;
+  loaded?: boolean;
+  loading?: boolean;
+};
+
+function entryToTreeNode(entry: SessionFileListEntry): TreeNode {
+  return {
+    ...entry,
+    children: entry.kind === "dir" ? [] : undefined,
+    error: "",
+    expanded: false,
+    loaded: false,
+    loading: false,
+  };
+}
+
+function sortTreeNodes(nodes: TreeNode[]) {
+  return [...nodes].sort((left, right) => {
+    if (left.kind !== right.kind) {
+      return left.kind === "dir" ? -1 : 1;
+    }
+    return left.name.localeCompare(right.name);
+  });
+}
+
+function mapTreeNodes(nodes: TreeNode[], targetPath: string, update: (node: TreeNode) => TreeNode): TreeNode[] {
+  return nodes.map((node) => {
+    if (node.path === targetPath) {
+      return update(node);
+    }
+    if (!node.children?.length) {
+      return node;
+    }
+    return { ...node, children: mapTreeNodes(node.children, targetPath, update) };
+  });
+}
+
+function setTreeNodeExpanded(nodes: TreeNode[], targetPath: string, expanded: boolean) {
+  return mapTreeNodes(nodes, targetPath, (node) => ({ ...node, expanded }));
+}
+
+function setTreeNodeLoading(nodes: TreeNode[], targetPath: string, loading: boolean) {
+  return mapTreeNodes(nodes, targetPath, (node) => ({ ...node, loading, error: loading ? "" : node.error }));
+}
+
+function setTreeNodeError(nodes: TreeNode[], targetPath: string, error: string) {
+  return mapTreeNodes(nodes, targetPath, (node) => ({ ...node, error, loading: false }));
+}
+
+function mergeTreeChildren(nodes: TreeNode[], targetPath: string, entries: SessionFileListEntry[]) {
+  return mapTreeNodes(nodes, targetPath, (node) => ({
+    ...node,
+    children: sortTreeNodes(entries.map(entryToTreeNode)),
+    error: "",
+    expanded: true,
+    loaded: true,
+    loading: false,
+  }));
 }
 
 function normalizePath(value: string) {
@@ -91,10 +141,84 @@ function PlainDiffWorkspace({ baseText, currentText }: { baseText: string; curre
   );
 }
 
+function FileTreeNodeRow({
+  depth,
+  node,
+  onRetry,
+  onSelect,
+  onToggle,
+  selectedPath,
+}: {
+  depth: number;
+  node: TreeNode;
+  onRetry: (path: string) => void;
+  onSelect: (path: string) => void;
+  onToggle: (path: string, expanded: boolean) => void;
+  selectedPath: string;
+}) {
+  const selected = node.path === selectedPath;
+
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center gap-1" style={{ paddingLeft: `${depth * 12}px` }}>
+        {node.kind === "dir" ? (
+          <button
+            type="button"
+            aria-label={node.expanded ? `Collapse ${node.name}` : `Expand ${node.name}`}
+            className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition hover:bg-accent hover:text-accent-foreground"
+            onClick={() => onToggle(node.path, !node.expanded)}
+          >
+            {node.expanded ? "-" : "+"}
+          </button>
+        ) : (
+          <span className="inline-block h-8 w-8" aria-hidden="true" />
+        )}
+        <button
+          type="button"
+          className={`min-w-0 flex-1 rounded-xl px-3 py-2 text-left text-sm transition hover:bg-accent hover:text-accent-foreground ${selected ? "bg-accent text-accent-foreground" : "text-foreground"}`}
+          onClick={() => {
+            if (node.kind === "dir") {
+              onToggle(node.path, !node.expanded);
+              return;
+            }
+            onSelect(node.path);
+          }}
+        >
+          {node.name}
+        </button>
+      </div>
+      {node.kind === "dir" && node.expanded ? (
+        <div className="space-y-1">
+          {node.loading ? <p className="px-3 text-sm text-muted-foreground" style={{ paddingLeft: `${depth * 12 + 40}px` }}>Loading…</p> : null}
+          {!node.loading && node.error ? (
+            <div className="flex items-center gap-2 px-3" style={{ paddingLeft: `${depth * 12 + 40}px` }}>
+              <p className="text-sm text-destructive">{node.error}</p>
+              <Button type="button" size="sm" variant="outline" onClick={() => onRetry(node.path)}>Retry</Button>
+            </div>
+          ) : null}
+          {!node.loading && !node.error && node.children?.length
+            ? node.children.map((child) => (
+                <FileTreeNodeRow
+                  key={child.path}
+                  depth={depth + 1}
+                  node={child}
+                  onRetry={onRetry}
+                  onSelect={onSelect}
+                  onToggle={onToggle}
+                  selectedPath={selectedPath}
+                />
+              ))
+            : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export function FileViewerDialog({
   open,
   sessionId,
-  files,
+  files: _files,
   initialPath = "",
   initialLine = null,
   initialMode = null,
@@ -103,7 +227,9 @@ export function FileViewerDialog({
 }: FileViewerDialogProps) {
   const rememberedSelection = preferredFileSelectionForSession(sessionId);
   const rememberedPath = rememberedSelection?.path || "";
-  const [listedPaths, setListedPaths] = useState<string[]>([]);
+  const [tree, setTree] = useState<TreeNode[]>([]);
+  const [treeError, setTreeError] = useState("");
+  const [treeLoading, setTreeLoading] = useState(false);
   const [path, setPath] = useState("");
   const [line, setLine] = useState<number | null>(null);
   const [viewMode, setViewMode] = useState<FileViewMode>("diff");
@@ -114,11 +240,7 @@ export function FileViewerDialog({
   const listRequestIdRef = useRef(0);
   const openRequestIdRef = useRef(0);
   const fileOpenAbortRef = useRef<AbortController | null>(null);
-
-  const availablePaths = useMemo(
-    () => uniquePaths([initialPath, rememberedPath, ...files, ...listedPaths]),
-    [files, initialPath, listedPaths, rememberedPath],
-  );
+  const treeRequestControllersRef = useRef(new Map<string, AbortController>());
 
   useEffect(() => {
     if (!open || !sessionId) {
@@ -128,24 +250,42 @@ export function FileViewerDialog({
     listRequestIdRef.current += 1;
     const requestId = listRequestIdRef.current;
     const controller = new AbortController();
+    for (const activeController of treeRequestControllersRef.current.values()) {
+      activeController.abort();
+    }
+    treeRequestControllersRef.current.clear();
+    setTree([]);
+    setTreeError("");
+    setTreeLoading(true);
 
-    void api.getFiles(sessionId, controller.signal).then((response) => {
-      if (requestId !== listRequestIdRef.current) {
-        return;
+    void (async () => {
+      try {
+        const response = await api.getFiles(sessionId, undefined, controller.signal);
+        if (controller.signal.aborted || requestId !== listRequestIdRef.current) {
+          return;
+        }
+        setTree(sortTreeNodes(response.entries.map(entryToTreeNode)));
+        setTreeError("");
+        setTreeLoading(false);
+      } catch (nextError) {
+        if (controller.signal.aborted || requestId !== listRequestIdRef.current) {
+          return;
+        }
+        if (nextError instanceof Error && nextError.name === "AbortError") {
+          return;
+        }
+        setTree([]);
+        setTreeError(nextError instanceof Error ? nextError.message : "Unable to list files");
+        setTreeLoading(false);
       }
-      setListedPaths(uniquePaths(response.files));
-    }).catch((nextError) => {
-      if (controller.signal.aborted || requestId !== listRequestIdRef.current) {
-        return;
-      }
-      if (nextError instanceof Error && nextError.name === "AbortError") {
-        return;
-      }
-      setListedPaths([]);
-    });
+    })();
 
     return () => {
       controller.abort();
+      for (const activeController of treeRequestControllersRef.current.values()) {
+        activeController.abort();
+      }
+      treeRequestControllersRef.current.clear();
     };
   }, [open, openRequestKey, sessionId]);
 
@@ -154,7 +294,7 @@ export function FileViewerDialog({
       return;
     }
 
-    const preferredPath = normalizePath(initialPath || rememberedPath || availablePaths[0] || "");
+    const preferredPath = normalizePath(initialPath || rememberedPath || "");
     if (!preferredPath) {
       setPath("");
       setLine(null);
@@ -170,7 +310,7 @@ export function FileViewerDialog({
     setLine(preferredLine);
     setViewMode(initialPath ? normalizeViewMode(initialMode || "file") : "diff");
     setError("");
-  }, [availablePaths, initialLine, initialMode, initialPath, open, openRequestKey, rememberedPath, rememberedSelection?.line]);
+  }, [initialLine, initialMode, initialPath, open, openRequestKey, rememberedPath, rememberedSelection?.line]);
 
   useEffect(() => {
     if (!open || !sessionId) {
@@ -237,6 +377,58 @@ export function FileViewerDialog({
   const canPreview = isMarkdownFile(normalizedPath);
   const activeLine = normalizeRememberedLine(line);
 
+  const loadDirectory = (dirPath: string) => {
+    if (!sessionId) {
+      return;
+    }
+    treeRequestControllersRef.current.get(dirPath)?.abort();
+    const controller = new AbortController();
+    treeRequestControllersRef.current.set(dirPath, controller);
+    setTree((current) => setTreeNodeLoading(current, dirPath, true));
+
+    void api.getFiles(sessionId, dirPath, controller.signal).then((response) => {
+      if (controller.signal.aborted) {
+        return;
+      }
+      setTree((current) => mergeTreeChildren(current, dirPath, response.entries));
+    }).catch((nextError) => {
+      if (controller.signal.aborted || (nextError instanceof Error && nextError.name === "AbortError")) {
+        return;
+      }
+      setTree((current) => setTreeNodeError(current, dirPath, nextError instanceof Error ? nextError.message : "Unable to list files"));
+    }).finally(() => {
+      treeRequestControllersRef.current.delete(dirPath);
+    });
+  };
+
+  const toggleDirectory = (dirPath: string, expanded: boolean) => {
+    setTree((current) => {
+      const next = setTreeNodeExpanded(current, dirPath, expanded);
+      return expanded ? setTreeNodeLoading(next, dirPath, false) : next;
+    });
+    if (!expanded) {
+      return;
+    }
+    const target = (function findNode(nodes: TreeNode[]): TreeNode | null {
+      for (const node of nodes) {
+        if (node.path === dirPath) {
+          return node;
+        }
+        if (node.children?.length) {
+          const nested = findNode(node.children);
+          if (nested) {
+            return nested;
+          }
+        }
+      }
+      return null;
+    })(tree);
+    if (target?.loaded) {
+      return;
+    }
+    loadDirectory(dirPath);
+  };
+
   return (
     <Dialog open={open}>
       <DialogContent className="fileViewerDialog max-w-6xl p-0" titleId="file-viewer-title">
@@ -265,22 +457,27 @@ export function FileViewerDialog({
             />
             <ScrollArea className="mt-4 h-[calc(65vh-8rem)] rounded-2xl border border-border/60 bg-background/80 p-2 max-md:h-48">
               <div className="space-y-1">
-                {availablePaths.length ? (
-                  availablePaths.map((entry) => (
-                    <button
-                      key={entry}
-                      type="button"
-                      className={`w-full rounded-xl px-3 py-2 text-left text-sm transition hover:bg-accent hover:text-accent-foreground ${entry === normalizedPath ? "bg-accent text-accent-foreground" : "text-foreground"}`}
-                      onClick={() => {
-                        setPath(entry);
+                {treeLoading ? (
+                  <p className="px-2 py-3 text-sm text-muted-foreground">Loading files…</p>
+                ) : treeError ? (
+                  <p className="px-2 py-3 text-sm text-destructive">{treeError}</p>
+                ) : tree.length ? (
+                  tree.map((entry) => (
+                    <FileTreeNodeRow
+                      key={entry.path}
+                      depth={0}
+                      node={entry}
+                      onRetry={loadDirectory}
+                      onSelect={(nextPath) => {
+                        setPath(nextPath);
                         setLine(null);
                       }}
-                    >
-                      {entry}
-                    </button>
+                      onToggle={toggleDirectory}
+                      selectedPath={normalizedPath}
+                    />
                   ))
                 ) : (
-                  <p className="px-2 py-3 text-sm text-muted-foreground">No tracked files yet.</p>
+                  <p className="px-2 py-3 text-sm text-muted-foreground">No files available.</p>
                 )}
               </div>
             </ScrollArea>

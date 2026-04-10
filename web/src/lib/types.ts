@@ -229,10 +229,17 @@ export interface SessionUiStateResponse {
   requests: SessionUiRequest[];
 }
 
+export interface SessionFileListEntry {
+  name: string;
+  path: string;
+  kind: "dir" | "file";
+}
+
 export interface SessionFileListResponse {
   ok?: boolean;
   cwd?: string;
-  files: string[];
+  path?: string;
+  entries: SessionFileListEntry[];
 }
 
 export interface SessionFileReadResponse {
