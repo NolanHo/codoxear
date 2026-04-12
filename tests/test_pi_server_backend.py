@@ -272,7 +272,7 @@ class TestPiBackendRouting(unittest.TestCase):
         payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
         self.assertEqual(payload, {"commands": []})
 
-    def test_discover_existing_keeps_live_pi_bootstrap_sidecars_on_slow_state_probe(
+    def test_discover_existing_registers_live_pi_bootstrap_sidecars_on_slow_state_probe(
         self,
     ) -> None:
         mgr = _make_manager()
@@ -312,9 +312,13 @@ class TestPiBackendRouting(unittest.TestCase):
             self.assertTrue(sock.exists())
             self.assertTrue(meta_path.exists())
 
-        self.assertIsNone(mgr.get_session("pi-session"))
+        session = mgr.get_session("pi-session")
+        assert session is not None
+        self.assertFalse(session.busy)
 
-    def test_discover_existing_quarantines_refused_socket_sidecar(self) -> None:
+    def test_discover_existing_registers_refused_socket_sidecar_when_pids_alive(
+        self,
+    ) -> None:
         mgr = _make_manager()
         with tempfile.TemporaryDirectory() as td:
             sock_dir = Path(td)
@@ -352,9 +356,11 @@ class TestPiBackendRouting(unittest.TestCase):
 
             self.assertTrue(sock.exists())
             self.assertTrue(meta_path.exists())
-            self.assertTrue(mgr._sidecar_is_quarantined(sock))
+            self.assertFalse(mgr._sidecar_is_quarantined(sock))
 
-        self.assertIsNone(mgr.get_session("pi-session"))
+        session = mgr.get_session("pi-session")
+        assert session is not None
+        self.assertFalse(session.busy)
 
     def test_discover_existing_ignores_socket_without_metadata_sidecar(self) -> None:
         mgr = _make_manager()
@@ -1277,6 +1283,79 @@ class TestPiBackendRouting(unittest.TestCase):
         body = json.loads(handler.wfile.getvalue().decode("utf-8"))
         self.assertEqual(handler.status, 502)
         self.assertEqual(body, {"error": "prompt rejected"})
+
+    def test_send_touches_pi_session_file_even_before_agent_writes(self) -> None:
+        mgr = _make_manager()
+        with tempfile.TemporaryDirectory() as td:
+            session_path = Path(td) / "pi-session.jsonl"
+            sock = Path(td) / "pi.sock"
+            sock.touch()
+            mgr._sessions["pi-session"] = Session(
+                session_id="pi-session",
+                thread_id="pi-thread-001",
+                agent_backend="pi",
+                backend="pi",
+                broker_pid=os.getpid(),
+                codex_pid=os.getpid(),
+                owned=True,
+                start_ts=123.0,
+                cwd=td,
+                log_path=None,
+                sock_path=sock,
+                session_path=session_path,
+                busy=False,
+            )
+            mgr._sock_call = lambda _sock, req, timeout_s=0.0: (
+                {"busy": True, "queue_len": 0, "token": None}
+                if req["cmd"] == "send"
+                else {"busy": True, "queue_len": 0, "token": None}
+            )  # type: ignore[method-assign]
+
+            res = mgr.send("pi-session", "hello pi")
+
+            self.assertEqual(res["queue_len"], 0)
+            self.assertTrue(session_path.exists())
+            s = mgr._sessions["pi-session"]
+            self.assertTrue(isinstance(s.pi_busy_activity_floor, float))
+
+    def test_send_fallback_enqueue_touches_pi_session_file(self) -> None:
+        mgr = _make_manager()
+        with tempfile.TemporaryDirectory() as td:
+            session_path = Path(td) / "pi-session.jsonl"
+            sock = Path(td) / "pi.sock"
+            sock.touch()
+            mgr._sessions["pi-session"] = Session(
+                session_id="pi-session",
+                thread_id="pi-thread-001",
+                agent_backend="pi",
+                backend="pi",
+                broker_pid=os.getpid(),
+                codex_pid=os.getpid(),
+                owned=True,
+                start_ts=123.0,
+                cwd=td,
+                log_path=None,
+                sock_path=sock,
+                session_path=session_path,
+                busy=False,
+            )
+
+            def _failing_sock_call(
+                _sock: Path, req: dict[str, object], timeout_s: float = 0.0
+            ) -> dict[str, object]:
+                if req.get("cmd") == "send":
+                    raise ConnectionRefusedError("socket not ready")
+                return {"busy": False, "queue_len": 0, "token": None}
+
+            mgr._sock_call = _failing_sock_call  # type: ignore[method-assign]
+
+            res = mgr.send("pi-session", "hello queued")
+
+            self.assertTrue(bool(res.get("queued")))
+            self.assertEqual(res.get("queue_len"), 1)
+            self.assertTrue(session_path.exists())
+            s = mgr._sessions["pi-session"]
+            self.assertTrue(isinstance(s.pi_busy_activity_floor, float))
 
     def test_ui_state_route_returns_pending_requests_for_pi_session(self) -> None:
         mgr = _make_manager()

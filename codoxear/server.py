@@ -3205,6 +3205,18 @@ def _session_file_activity_ts(path: Path | None) -> float | None:
     return ts
 
 
+def _touch_session_file(path: Path | None) -> float | None:
+    """Best-effort touch used to mark local prompt activity for Pi sessions."""
+    if path is None:
+        return None
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch(exist_ok=True)
+    except OSError:
+        return _session_file_activity_ts(path)
+    return _session_file_activity_ts(path)
+
+
 @dataclass
 class Session:
     session_id: str
@@ -4368,8 +4380,10 @@ class SessionManager:
         t = str(text)
         if not t.strip():
             raise ValueError("text required")
+        touched_ts: float | None = None
         with self._lock:
-            if session_id not in self._sessions:
+            s = self._sessions.get(session_id)
+            if s is None:
                 raise KeyError("unknown session")
             q = self._queues.get(session_id)
             if not isinstance(q, list):
@@ -4377,6 +4391,10 @@ class SessionManager:
                 self._queues[session_id] = q
             q.append(t)
             ql = len(q)
+            if s.backend == "pi":
+                touched_ts = _touch_session_file(s.session_path)
+                s.pi_idle_activity_ts = None
+                s.pi_busy_activity_floor = touched_ts
         self._save_queues()
         return {"queued": True, "queue_len": int(ql)}
 
@@ -5067,39 +5085,25 @@ class SessionManager:
             resume_session_id = _clean_optional_text(meta.get("resume_session_id"))
 
             # Validate socket is responsive.
+            # If the broker is still bootstrapping, keep the session visible with
+            # a degraded state so UI registration does not depend on a ready RPC socket.
             try:
                 resp = self._sock_call(sock, {"cmd": "state"}, timeout_s=0.5)
             except Exception as e:
-                # Socket discovery should not take down the sessions listing. Only
-                # timeouts are treated as transient while the tracked processes are
-                # still alive; a refused Unix-socket connect means the filesystem
-                # entry exists but no broker is listening on it anymore.
-                if _sock_error_definitely_stale(e):
-                    if skip_invalid_sidecars:
-                        self._quarantine_sidecar(
-                            sock, e, reason="unreachable sidecar", log=False
-                        )
-                    elif _probe_failure_safe_to_prune(
-                        broker_pid=broker_pid, codex_pid=codex_pid
-                    ):
-                        _unlink_quiet(sock)
-                        _unlink_quiet(meta_path)
-                    else:
-                        sys.stderr.write(
-                            f"error: discover: sock state call failed for {sock}: {type(e).__name__}: {e}\n"
-                        )
-                        sys.stderr.flush()
-                    continue
-                sys.stderr.write(
-                    f"error: discover: sock state call failed for {sock}: {type(e).__name__}: {e}\n"
-                )
-                sys.stderr.flush()
                 if _probe_failure_safe_to_prune(
                     broker_pid=broker_pid, codex_pid=codex_pid
                 ):
                     _unlink_quiet(sock)
                     _unlink_quiet(meta_path)
-                continue
+                    continue
+                if (not _sock_error_definitely_stale(e)) and (
+                    not skip_invalid_sidecars
+                ):
+                    sys.stderr.write(
+                        f"error: discover: sock state call failed for {sock}: {type(e).__name__}: {e}\n"
+                    )
+                    sys.stderr.flush()
+                resp = {"busy": False, "queue_len": 0, "token": None}
 
             if log_path is not None:
                 meta_log_off = int(log_path.stat().st_size)
@@ -6782,9 +6786,11 @@ class SessionManager:
                     raise ValueError("invalid broker send response")
                 s2.queue_len = int(resp.get("queue_len"))
                 s2.pi_idle_activity_ts = None
-                s2.pi_busy_activity_floor = (
-                    _session_file_activity_ts(s2.session_path) if s2.busy else None
-                )
+                if s2.backend == "pi":
+                    activity_ts = _touch_session_file(s2.session_path)
+                    s2.pi_busy_activity_floor = activity_ts if s2.busy else None
+                else:
+                    s2.pi_busy_activity_floor = None
         return resp
 
     def enqueue(self, session_id: str, text: str) -> dict[str, Any]:

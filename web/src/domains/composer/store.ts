@@ -1,4 +1,5 @@
 import { api } from "../../lib/api";
+import type { MessageEvent } from "../../lib/types";
 
 export interface PendingComposerMessage {
   localId: string;
@@ -19,6 +20,7 @@ export interface ComposerStore {
   subscribe(listener: () => void): () => void;
   setDraft(value: string): void;
   submit(sessionId: string): Promise<void>;
+  clearAcknowledgedPending(sessionId: string, persistedEvents: MessageEvent[]): void;
 }
 
 export function createComposerStore(): ComposerStore {
@@ -72,10 +74,6 @@ export function createComposerStore(): ComposerStore {
         state = {
           ...state,
           sending: false,
-          pendingBySessionId: {
-            ...state.pendingBySessionId,
-            [sessionId]: (state.pendingBySessionId[sessionId] ?? []).filter((item) => item.localId !== pendingMessage.localId),
-          },
         };
         emit();
       } catch (error) {
@@ -91,6 +89,36 @@ export function createComposerStore(): ComposerStore {
         emit();
         throw error;
       }
+    },
+    clearAcknowledgedPending(sessionId: string, persistedEvents: MessageEvent[]) {
+      const pending = state.pendingBySessionId[sessionId] ?? [];
+      if (!pending.length) return;
+
+      const persistedUserTexts = persistedEvents
+        .filter((event) => event?.role === "user" && typeof event?.text === "string")
+        .map((event) => String(event.text));
+      if (!persistedUserTexts.length) return;
+
+      const acknowledgedLocalIds = new Set<string>();
+      let persistedIdx = persistedUserTexts.length - 1;
+      let pendingIdx = pending.length - 1;
+      while (persistedIdx >= 0 && pendingIdx >= 0) {
+        if (persistedUserTexts[persistedIdx] === pending[pendingIdx].text) {
+          acknowledgedLocalIds.add(pending[pendingIdx].localId);
+          pendingIdx -= 1;
+        }
+        persistedIdx -= 1;
+      }
+      if (!acknowledgedLocalIds.size) return;
+
+      state = {
+        ...state,
+        pendingBySessionId: {
+          ...state.pendingBySessionId,
+          [sessionId]: pending.filter((item) => !acknowledgedLocalIds.has(item.localId)),
+        },
+      };
+      emit();
     },
   };
 }

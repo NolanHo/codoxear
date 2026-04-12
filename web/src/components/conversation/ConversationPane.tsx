@@ -9,7 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
 import { AskUserCard, askUserHistorySignature, isUnresolvedAskUserEvent } from "./AskUserCard";
-import { useComposerStore, useLiveSessionStoreApi, useMessagesStore, useMessagesStoreApi, useSessionsStore } from "../../app/providers";
+import { useComposerStore, useComposerStoreApi, useLiveSessionStoreApi, useMessagesStore, useMessagesStoreApi, useSessionsStore } from "../../app/providers";
 import type { MessageEvent } from "../../lib/types";
 
 const MAIN_TIMELINE_KINDS = new Set([
@@ -1076,6 +1076,7 @@ interface ConversationPaneProps {
 export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
   const { activeSessionId, items } = useSessionsStore();
   const composerState = useComposerStore();
+  const composerStoreApi = useComposerStoreApi();
   const pendingBySessionId = composerState.pendingBySessionId ?? {};
   const messagesState = useMessagesStore();
   const bySessionId = messagesState.bySessionId;
@@ -1110,6 +1111,14 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
     cwd: activeSession?.cwd,
     onOpenLocalFile: onOpenFilePath,
   };
+
+  useEffect(() => {
+    if (!activeSessionId) return;
+    if ((pendingBySessionId[activeSessionId] ?? []).length === 0) return;
+    const clearAcknowledgedPending = (composerStoreApi as { clearAcknowledgedPending?: (sessionId: string, events: MessageEvent[]) => void }).clearAcknowledgedPending;
+    if (typeof clearAcknowledgedPending !== "function") return;
+    clearAcknowledgedPending(activeSessionId, persistedMessages);
+  }, [activeSessionId, persistedMessages, pendingBySessionId, composerStoreApi]);
 
   const recomputeFloatingNavigation = () => {
     const pane = sectionRef.current?.querySelector(".conversationPane") as HTMLElement | null;
