@@ -26,9 +26,10 @@ describe("createLiveSessionStore", () => {
 
     await liveStore.loadInitial("s1");
 
-    expect(api.getLiveSession).toHaveBeenCalledWith("s1", undefined, undefined);
+    expect(api.getLiveSession).toHaveBeenCalledWith("s1", undefined, undefined, undefined, undefined);
     expect(messagesStore.getState().bySessionId.s1).toEqual([{ id: "m1" }]);
     expect(liveStore.getState().offsetsBySessionId.s1).toBe(3);
+    expect(liveStore.getState().liveOffsetsBySessionId.s1).toBe(0);
     expect(liveStore.getState().requestsBySessionId.s1).toEqual([{ id: "r1", method: "select" }]);
     expect(liveStore.getState().busyBySessionId.s1).toBe(true);
   });
@@ -53,9 +54,10 @@ describe("createLiveSessionStore", () => {
     await liveStore.loadInitial("s1");
     await liveStore.poll("s1");
 
-    expect(api.getLiveSession).toHaveBeenNthCalledWith(2, "s1", 3, undefined);
+    expect(api.getLiveSession).toHaveBeenNthCalledWith(2, "s1", 3, undefined, undefined, 0);
     expect(messagesStore.getState().bySessionId.s1).toEqual([{ id: "m1" }, { id: "m2" }]);
     expect(liveStore.getState().offsetsBySessionId.s1).toBe(4);
+    expect(liveStore.getState().liveOffsetsBySessionId.s1).toBe(0);
     expect(liveStore.getState().requestsBySessionId.s1).toEqual([{ id: "r2" }]);
     expect(liveStore.getState().busyBySessionId.s1).toBe(false);
   });
@@ -81,7 +83,7 @@ describe("createLiveSessionStore", () => {
     await liveStore.loadInitial("s1");
     await liveStore.poll("s1");
 
-    expect(api.getLiveSession).toHaveBeenNthCalledWith(2, "s1", 3, "v1");
+    expect(api.getLiveSession).toHaveBeenNthCalledWith(2, "s1", 3, "v1", undefined, 0);
     expect(liveStore.getState().requestsBySessionId.s1).toEqual([{ id: "r1" }]);
   });
 
@@ -128,5 +130,33 @@ describe("createLiveSessionStore", () => {
       { role: "assistant", text: "hello", streaming: true, stream_id: "pi-stream:turn-001", turn_id: "turn-001" },
     ]);
     expect(liveStore.getState().offsetsBySessionId.s1).toBe(2);
+  });
+
+  it("tracks a separate live offset for broker-streamed pi messages", async () => {
+    vi.mocked(api.getLiveSession)
+      .mockResolvedValueOnce({
+        events: [{ role: "assistant", text: "hel", streaming: true, stream_id: "pi-stream:turn-001", turn_id: "turn-001" }],
+        requests: [],
+        busy: true,
+        offset: 100,
+        live_offset: 7,
+      } as never)
+      .mockResolvedValueOnce({
+        events: [{ role: "assistant", text: "hello", streaming: true, stream_id: "pi-stream:turn-001", turn_id: "turn-001" }],
+        requests: [],
+        busy: true,
+        offset: 101,
+        live_offset: 8,
+      } as never);
+    const messagesStore = createMessagesStore();
+    const liveStore = createLiveSessionStore(messagesStore);
+
+    await liveStore.loadInitial("s1");
+    await liveStore.poll("s1");
+
+    expect(api.getLiveSession).toHaveBeenNthCalledWith(2, "s1", 100, undefined, undefined, 7);
+    expect(messagesStore.getState().bySessionId.s1).toEqual([
+      { role: "assistant", text: "hello", streaming: true, stream_id: "pi-stream:turn-001", turn_id: "turn-001" },
+    ]);
   });
 });

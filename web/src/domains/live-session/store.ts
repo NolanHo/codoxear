@@ -4,6 +4,7 @@ import type { MessagesStore } from "../messages/store";
 
 export interface LiveSessionState {
   offsetsBySessionId: Record<string, number>;
+  liveOffsetsBySessionId: Record<string, number>;
   requestsBySessionId: Record<string, SessionUiRequest[]>;
   requestVersionsBySessionId: Record<string, string>;
   busyBySessionId: Record<string, boolean>;
@@ -20,6 +21,7 @@ export interface LiveSessionStore {
 export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessionStore {
   let state: LiveSessionState = {
     offsetsBySessionId: {},
+    liveOffsetsBySessionId: {},
     requestsBySessionId: {},
     requestVersionsBySessionId: {},
     busyBySessionId: {},
@@ -52,8 +54,9 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
 
       try {
         const offset = replace ? undefined : state.offsetsBySessionId[sessionId];
+        const liveOffset = replace ? undefined : state.liveOffsetsBySessionId[sessionId];
         const requestsVersion = replace ? undefined : state.requestVersionsBySessionId[sessionId];
-        const payload = await api.getLiveSession(sessionId, offset, requestsVersion);
+        const payload = await api.getLiveSession(sessionId, offset, requestsVersion, undefined, liveOffset);
         messagesStore.applyLive(sessionId, payload.events ?? [], {
           replace,
           offset: typeof payload.offset === "number" ? payload.offset : offset,
@@ -72,6 +75,10 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
           offsetsBySessionId: {
             ...state.offsetsBySessionId,
             [sessionId]: typeof payload.offset === "number" ? payload.offset : state.offsetsBySessionId[sessionId] ?? 0,
+          },
+          liveOffsetsBySessionId: {
+            ...state.liveOffsetsBySessionId,
+            [sessionId]: typeof payload.live_offset === "number" ? payload.live_offset : state.liveOffsetsBySessionId[sessionId] ?? 0,
           },
           requestsBySessionId: {
             ...state.requestsBySessionId,

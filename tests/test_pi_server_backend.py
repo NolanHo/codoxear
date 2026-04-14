@@ -1794,6 +1794,145 @@ class TestPiBackendRouting(unittest.TestCase):
             ],
         )
 
+    def test_session_live_payload_uses_separate_live_offset_for_pi_rpc_streams(
+        self,
+    ) -> None:
+        mgr = _make_manager()
+        with tempfile.TemporaryDirectory() as td:
+            sock = Path(td) / "pi.sock"
+            sock.touch()
+            session_path = Path(td) / "pi-session.jsonl"
+            mgr._sessions["pi-session"] = Session(
+                session_id="pi-session",
+                thread_id="pi-thread-001",
+                agent_backend="pi",
+                backend="pi",
+                broker_pid=3333,
+                codex_pid=4444,
+                owned=True,
+                start_ts=123.0,
+                cwd=td,
+                log_path=None,
+                sock_path=sock,
+                session_path=session_path,
+                transport="pi-rpc",
+                supports_live_ui=True,
+                ui_protocol_version=1,
+            )
+
+            def _sock_call(
+                _sock: Path, req: dict[str, object], timeout_s: float = 0.0
+            ) -> dict[str, object]:
+                if req["cmd"] == "state":
+                    return {"busy": True, "queue_len": 0, "token": None}
+                if req["cmd"] == "ui_state":
+                    return {"requests": []}
+                if req["cmd"] == "live_messages":
+                    self.assertEqual(req, {"cmd": "live_messages", "offset": 7})
+                    return {"offset": 8, "events": []}
+                raise AssertionError(f"unexpected broker command: {req['cmd']!r}")
+
+            mgr._sock_call = _sock_call  # type: ignore[method-assign]
+            mgr.get_messages_page = lambda *_args, **_kwargs: {
+                "thread_id": "pi-thread-001",
+                "log_path": str(session_path),
+                "offset": 100,
+                "events": [{"role": "user", "text": "hello", "ts": 1.0}],
+                "busy": True,
+                "queue_len": 0,
+                "token": None,
+            }  # type: ignore[method-assign]
+
+            payload = _session_live_payload(
+                mgr, "pi-session", offset=100, live_offset=7
+            )
+
+        self.assertEqual(payload["offset"], 100)
+        self.assertEqual(payload["live_offset"], 8)
+
+    def test_session_live_payload_keeps_streaming_reply_when_old_history_has_same_text(
+        self,
+    ) -> None:
+        mgr = _make_manager()
+        with tempfile.TemporaryDirectory() as td:
+            sock = Path(td) / "pi.sock"
+            sock.touch()
+            session_path = Path(td) / "pi-session.jsonl"
+            mgr._sessions["pi-session"] = Session(
+                session_id="pi-session",
+                thread_id="pi-thread-001",
+                agent_backend="pi",
+                backend="pi",
+                broker_pid=3333,
+                codex_pid=4444,
+                owned=True,
+                start_ts=123.0,
+                cwd=td,
+                log_path=None,
+                sock_path=sock,
+                session_path=session_path,
+                transport="pi-rpc",
+                supports_live_ui=True,
+                ui_protocol_version=1,
+            )
+
+            def _sock_call(
+                _sock: Path, req: dict[str, object], timeout_s: float = 0.0
+            ) -> dict[str, object]:
+                if req["cmd"] == "state":
+                    return {"busy": True, "queue_len": 0, "token": None}
+                if req["cmd"] == "ui_state":
+                    return {"requests": []}
+                if req["cmd"] == "live_messages":
+                    return {
+                        "offset": 2,
+                        "events": [
+                            {
+                                "role": "assistant",
+                                "text": "Done",
+                                "streaming": True,
+                                "stream_id": "pi-stream:turn-002",
+                                "turn_id": "turn-002",
+                                "ts": 4.0,
+                            }
+                        ],
+                    }
+                raise AssertionError(f"unexpected broker command: {req['cmd']!r}")
+
+            mgr._sock_call = _sock_call  # type: ignore[method-assign]
+            mgr.get_messages_page = lambda *_args, **_kwargs: {
+                "thread_id": "pi-thread-001",
+                "log_path": str(session_path),
+                "offset": 3,
+                "events": [
+                    {"role": "user", "text": "first", "ts": 1.0},
+                    {
+                        "role": "assistant",
+                        "text": "Done",
+                        "turn_id": "turn-001",
+                        "ts": 2.0,
+                    },
+                    {"role": "user", "text": "second", "ts": 3.0},
+                ],
+                "busy": True,
+                "queue_len": 0,
+                "token": None,
+            }  # type: ignore[method-assign]
+
+            payload = _session_live_payload(mgr, "pi-session", offset=3, live_offset=0)
+
+        self.assertEqual(
+            payload["events"][-1],
+            {
+                "role": "assistant",
+                "text": "Done",
+                "streaming": True,
+                "stream_id": "pi-stream:turn-002",
+                "turn_id": "turn-002",
+                "ts": 4.0,
+            },
+        )
+
     def test_workspace_route_returns_diagnostics_and_queue_only(self) -> None:
         handler = _HandlerHarness("/api/sessions/pi-session/workspace")
         session = Session(

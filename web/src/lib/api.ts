@@ -81,13 +81,16 @@ export const api = {
   getSessionUiState(sessionId: string, signal?: AbortSignal) {
     return getJson<SessionUiStateResponse>(`/api/sessions/${sessionId}/ui_state`, signal);
   },
-  getLiveSession(sessionId: string, offset?: number, requestsVersion?: string, signal?: AbortSignal) {
+  getLiveSession(sessionId: string, offset?: number, requestsVersion?: string, signal?: AbortSignal, liveOffset?: number) {
     const query = new URLSearchParams();
     if (typeof offset === "number" && Number.isFinite(offset) && offset > 0) {
       query.set("offset", String(offset));
     }
     if (typeof requestsVersion === "string" && requestsVersion.length > 0) {
       query.set("requests_version", requestsVersion);
+    }
+    if (typeof liveOffset === "number" && Number.isFinite(liveOffset) && liveOffset > 0) {
+      query.set("live_offset", String(liveOffset));
     }
     const suffix = query.size ? `?${query.toString()}` : "";
     return getJson<LiveSessionResponse>(`/api/sessions/${sessionId}/live${suffix}`, signal);

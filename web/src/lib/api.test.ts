@@ -295,6 +295,34 @@ describe("api", () => {
     );
   });
 
+  it("requests live session data with a separate live offset cursor", async () => {
+    const payload: LiveSessionResponse = {
+      ok: true,
+      session_id: "session-1",
+      offset: 6,
+      live_offset: 3,
+      busy: true,
+      events: [{ id: "m2" }],
+      requests_version: "v1",
+      requests: [{ id: "r1", method: "select" }],
+    };
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify(payload),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(api.getLiveSession("session-1", 4, "v1", undefined, 2)).resolves.toEqual(payload);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "api/sessions/session-1/live?offset=4&requests_version=v1&live_offset=2",
+      {
+        headers: { Accept: "application/json" },
+        signal: undefined,
+      },
+    );
+  });
+
   it("requests workspace data", async () => {
     const payload: WorkspaceResponse = {
       ok: true,

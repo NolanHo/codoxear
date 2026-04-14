@@ -3478,6 +3478,7 @@ def _session_live_payload(
     session_id: str,
     *,
     offset: int = 0,
+    live_offset: int = 0,
     requests_version: str | None = None,
 ) -> dict[str, Any]:
     manager.refresh_session_meta(session_id, strict=False)
@@ -3499,18 +3500,26 @@ def _session_live_payload(
     current_requests_version = _ui_requests_version(requests)
     events = page.get("events")
     merged_events = events if isinstance(events, list) else []
+    next_live_offset = max(0, int(live_offset))
     if _session_supports_live_pi_ui(s):
-        streamed_payload = _pi_live_messages_payload(manager, s, offset=offset)
+        streamed_payload = _pi_live_messages_payload(manager, s, offset=live_offset)
+        next_live_offset = int(
+            streamed_payload.get("offset", max(0, int(live_offset)))
+            or max(0, int(live_offset))
+        )
         merged_events = _merge_pi_live_message_events(
             merged_events,
-            streamed_payload.get("events")
-            if isinstance(streamed_payload.get("events"), list)
-            else [],
+            [
+                item
+                for item in (streamed_payload.get("events") or [])
+                if isinstance(item, dict)
+            ],
         )
     payload: dict[str, Any] = {
         "ok": True,
         "session_id": s.session_id,
         "offset": int(page.get("offset", max(0, int(offset))) or 0),
+        "live_offset": next_live_offset,
         "busy": bool(busy),
         "events": merged_events,
         "requests_version": current_requests_version,
@@ -3553,11 +3562,16 @@ def _merge_pi_live_message_events(
         and isinstance(event.get("turn_id"), str)
         and str(event.get("turn_id") or "")
     }
-    durable_texts = {
-        str(event.get("text") or "").strip()
-        for event in durable_events
-        if event.get("role") == "assistant" and isinstance(event.get("text"), str)
-    }
+    tail_durable_text = ""
+    for event in reversed(durable_events):
+        if event.get("role") != "assistant":
+            if event.get("role") == "user":
+                break
+            continue
+        text = event.get("text")
+        if isinstance(text, str) and text.strip():
+            tail_durable_text = text.strip()
+            break
     for event in streamed_events:
         if event.get("role") != "assistant":
             merged.append(event)
@@ -3568,7 +3582,7 @@ def _merge_pi_live_message_events(
         text = str(event.get("text") or "").strip()
         if turn_id and turn_id in durable_turn_ids:
             continue
-        if text and text in durable_texts:
+        if bool(event.get("completed")) and text and text == tail_durable_text:
             continue
         merged.append(event)
     return merged
@@ -7700,6 +7714,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     return
                 qs = urllib.parse.parse_qs(u.query)
                 offset_q = qs.get("offset")
+                live_offset_q = qs.get("live_offset")
                 requests_version_q = qs.get("requests_version")
                 if offset_q is None:
                     offset = 0
@@ -7707,6 +7722,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     if not offset_q:
                         raise ValueError("invalid offset")
                     offset = int(offset_q[0])
+                if live_offset_q is None:
+                    live_offset = 0
+                else:
+                    if not live_offset_q:
+                        raise ValueError("invalid live_offset")
+                    live_offset = int(live_offset_q[0])
                 requests_version = None
                 if requests_version_q:
                     requests_version = str(requests_version_q[0] or "").strip() or None
@@ -7715,6 +7736,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                         MANAGER,
                         session_id,
                         offset=offset,
+                        live_offset=live_offset,
                         requests_version=requests_version,
                     )
                 except KeyError:
