@@ -9,6 +9,24 @@ function Harness(props: Parameters<typeof useAppShellSessionEffects>[0]) {
   return <div data-testid="session-effects" />;
 }
 
+function baseProps(overrides: Partial<Parameters<typeof useAppShellSessionEffects>[0]> = {}): Parameters<typeof useAppShellSessionEffects>[0] {
+  return {
+    activeSessionBackend: "pi",
+    activeSessionId: "sess-1",
+    activeSessionLiveBusy: false,
+    items: [{ session_id: "sess-1", busy: false }] as any,
+    liveSessionStoreApi: { loadInitial: vi.fn().mockResolvedValue(undefined), poll: vi.fn().mockResolvedValue(undefined) } as any,
+    replySoundEnabled: false,
+    sessionUiStoreApi: { refresh: vi.fn().mockResolvedValue(undefined) } as any,
+    sessionsStoreApi: { refresh: vi.fn().mockResolvedValue(undefined) } as any,
+    workspaceOpen: false,
+    activeSessionReplySoundPrimingRef: { current: null },
+    backgroundReplySoundPrimedSessionIdsRef: { current: new Set<string>() },
+    suppressedReplySoundSessionIdsRef: { current: new Set<string>() },
+    ...overrides,
+  };
+}
+
 async function flush() {
   await Promise.resolve();
   await Promise.resolve();
@@ -44,6 +62,7 @@ it("refreshes sessions immediately and every 5 seconds while any session is busy
       <Harness
         activeSessionBackend="pi"
         activeSessionId={null}
+        activeSessionLiveBusy={false}
         items={[{ session_id: "sess-1", busy: true }] as any}
         liveSessionStoreApi={{ loadInitial: vi.fn(), poll: vi.fn() } as any}
         replySoundEnabled={false}
@@ -85,6 +104,7 @@ it("polls the active busy session every 2 seconds and workspace every 15 seconds
       <Harness
         activeSessionBackend="pi"
         activeSessionId="sess-1"
+        activeSessionLiveBusy={false}
         items={[{ session_id: "sess-1", busy: true }] as any}
         liveSessionStoreApi={liveSessionStoreApi}
         replySoundEnabled={false}
@@ -132,6 +152,7 @@ it("slows active idle live polling to every 12 seconds", async () => {
       <Harness
         activeSessionBackend="pi"
         activeSessionId="sess-1"
+        activeSessionLiveBusy={false}
         items={[{ session_id: "sess-1", busy: false }] as any}
         liveSessionStoreApi={liveSessionStoreApi}
         replySoundEnabled={false}
@@ -160,6 +181,35 @@ it("slows active idle live polling to every 12 seconds", async () => {
   expect(liveSessionStoreApi.poll).toHaveBeenCalledTimes(1);
 });
 
+it("switches to fast live polling as soon as live state reports the active session busy", async () => {
+  vi.useFakeTimers();
+  const liveSessionStoreApi = {
+    loadInitial: vi.fn().mockResolvedValue(undefined),
+    poll: vi.fn().mockResolvedValue(undefined),
+  } as any;
+
+  const root = document.createElement("div");
+  document.body.appendChild(root);
+
+  await act(async () => {
+    render(<Harness {...baseProps({ liveSessionStoreApi })} />, root);
+    await flush();
+  });
+
+  await act(async () => {
+    render(<Harness {...baseProps({ liveSessionStoreApi, activeSessionLiveBusy: true })} />, root);
+    await flush();
+  });
+
+  await act(async () => {
+    vi.advanceTimersByTime(2000);
+    await Promise.resolve();
+  });
+
+  expect(liveSessionStoreApi.poll).toHaveBeenCalledTimes(1);
+  expect(liveSessionStoreApi.poll).toHaveBeenCalledWith("sess-1");
+});
+
 it("pauses live and workspace polling while hidden and refreshes immediately on resume", async () => {
   vi.useFakeTimers();
   setDocumentVisibility("hidden");
@@ -178,6 +228,7 @@ it("pauses live and workspace polling while hidden and refreshes immediately on 
       <Harness
         activeSessionBackend="pi"
         activeSessionId="sess-1"
+        activeSessionLiveBusy={false}
         items={[{ session_id: "sess-1", busy: true }] as any}
         liveSessionStoreApi={liveSessionStoreApi}
         replySoundEnabled={false}
@@ -223,6 +274,7 @@ it("primes and polls background busy sessions every 5 seconds when reply sounds 
       <Harness
         activeSessionBackend="pi"
         activeSessionId="sess-1"
+        activeSessionLiveBusy={false}
         items={[
           { session_id: "sess-1", busy: true },
           { session_id: "sess-2", busy: true },

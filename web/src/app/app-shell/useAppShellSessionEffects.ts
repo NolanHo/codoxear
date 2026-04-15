@@ -7,6 +7,7 @@ import type { SessionSummary } from "../../lib/types";
 interface UseAppShellSessionEffectsOptions {
   activeSessionBackend?: string;
   activeSessionId: string | null;
+  activeSessionLiveBusy: boolean;
   items: SessionSummary[];
   liveSessionStoreApi: LiveSessionStore;
   replySoundEnabled: boolean;
@@ -35,6 +36,7 @@ function isDocumentVisible() {
 export function useAppShellSessionEffects({
   activeSessionBackend,
   activeSessionId,
+  activeSessionLiveBusy,
   items,
   liveSessionStoreApi,
   replySoundEnabled,
@@ -48,7 +50,8 @@ export function useAppShellSessionEffects({
   const [pageVisible, setPageVisible] = useState(isDocumentVisible);
   const hasBusySession = items.some((session) => Boolean(session.busy));
   const sessionsRefreshIntervalMs = hasBusySession ? BUSY_SESSIONS_REFRESH_MS : IDLE_SESSIONS_REFRESH_MS;
-  const activeSessionBusy = items.some((session) => session.session_id === activeSessionId && session.busy);
+  const activeSessionBusy = activeSessionLiveBusy
+    || items.some((session) => session.session_id === activeSessionId && session.busy);
   const activeLiveRefreshIntervalMs = activeSessionBusy ? ACTIVE_BUSY_LIVE_REFRESH_MS : ACTIVE_IDLE_LIVE_REFRESH_MS;
 
   useEffect(() => {

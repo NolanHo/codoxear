@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 import {
   useComposerStore,
   useComposerStoreApi,
+  useLiveSessionStoreApi,
   useSessionUiStore,
   useSessionUiStoreApi,
   useSessionsStore,
@@ -184,6 +185,7 @@ export function Composer() {
   const { sessionId: sessionUiSessionId, diagnostics } = useSessionUiStore();
   const sessionsStoreApi = useSessionsStoreApi();
   const composerStoreApi = useComposerStoreApi();
+  const liveSessionStoreApi = useLiveSessionStoreApi();
   const sessionUiStoreApi = useSessionUiStoreApi();
   const [todoExpandedBySessionId, setTodoExpandedBySessionId] = useState<Record<string, boolean>>({});
   const [commandsBySessionId, setCommandsBySessionId] = useState<Record<string, SessionCommand[]>>({});
@@ -372,8 +374,13 @@ export function Composer() {
     }
 
     composerStoreApi.submit(activeSessionId)
-      .then(() => {
+      .then(async () => {
         clearAttachmentCount(activeSessionId);
+        await Promise.allSettled([
+          liveSessionStoreApi.loadInitial(activeSessionId),
+          sessionUiStoreApi.refresh(activeSessionId, { agentBackend: activeSession?.agent_backend }),
+          sessionsStoreApi.refresh(),
+        ]);
       })
       .catch(() => undefined);
   };

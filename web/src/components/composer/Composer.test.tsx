@@ -103,6 +103,10 @@ function renderComposer(options: RenderComposerOptions = {}) {
     draft = "Hello",
   } = options;
   const submit = vi.fn().mockResolvedValue(undefined);
+  const liveSessionStore = createStore(
+    { offsetsBySessionId: {}, liveOffsetsBySessionId: {}, requestsBySessionId: {}, requestVersionsBySessionId: {}, busyBySessionId: {}, loadingBySessionId: {} },
+    () => ({ loadInitial: vi.fn(), poll: vi.fn() }),
+  );
   const sessionsStore = createStore(
     { items, activeSessionId, loading: false, newSessionDefaults: null },
     (setState) => ({ refresh: vi.fn(), select: vi.fn(), setState }),
@@ -132,14 +136,19 @@ function renderComposer(options: RenderComposerOptions = {}) {
   document.body.appendChild(root);
   act(() => {
     render(
-      <AppProviders sessionsStore={sessionsStore as any} composerStore={composerStore as any} sessionUiStore={sessionUiStore as any}>
+      <AppProviders
+        sessionsStore={sessionsStore as any}
+        composerStore={composerStore as any}
+        liveSessionStore={liveSessionStore as any}
+        sessionUiStore={sessionUiStore as any}
+      >
         <Composer />
       </AppProviders>,
       root!,
     );
   });
 
-  return { submit, sessionsStore, composerStore, sessionUiStore };
+  return { submit, sessionsStore, composerStore, liveSessionStore, sessionUiStore };
 }
 
 async function flushEffects() {
@@ -178,6 +187,22 @@ describe("Composer", () => {
 
     expect(submit).toHaveBeenCalledWith("sess-1");
     expect(event.defaultPrevented).toBe(true);
+  });
+
+  it("refreshes live session state immediately after a successful send", async () => {
+    const { submit, liveSessionStore, sessionUiStore, sessionsStore } = renderComposer();
+    const composerRoot = getRoot();
+
+    await act(async () => {
+      (composerRoot.querySelector("button[type='submit']") as HTMLButtonElement).click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(submit).toHaveBeenCalledWith("sess-1");
+    expect(liveSessionStore.loadInitial).toHaveBeenCalledWith("sess-1");
+    expect(sessionUiStore.refresh).toHaveBeenCalledWith("sess-1", { agentBackend: "pi" });
+    expect(sessionsStore.refresh).toHaveBeenCalledTimes(1);
   });
 
   it("submits on ctrl+enter when enter-to-send is disabled", () => {
