@@ -109,6 +109,7 @@ export interface LogoutResponse {
 
 export interface SessionResumeCandidate {
   session_id: string;
+  title?: string;
   alias?: string;
   first_user_message?: string;
   updated_ts?: number;
@@ -122,6 +123,9 @@ export interface SessionResumeCandidatesResponse {
   git_repo?: boolean;
   git_root?: string;
   git_branch?: string;
+  offset?: number;
+  limit?: number;
+  remaining?: number;
   sessions: SessionResumeCandidate[];
 }
 

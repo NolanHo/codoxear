@@ -116,11 +116,17 @@ export const api = {
   async createSession(payload: Record<string, unknown>) {
     return postJson<CreateSessionResponse>(`/api/sessions`, payload);
   },
-  getSessionResumeCandidates(cwd: string, agentBackend: string) {
+  getSessionResumeCandidates(cwd: string, agentBackend: string, options?: { offset?: number; limit?: number }) {
     const query = new URLSearchParams();
     query.set("cwd", cwd);
     query.set("backend", agentBackend);
     query.set("agent_backend", agentBackend);
+    if (typeof options?.offset === "number") {
+      query.set("offset", String(options.offset));
+    }
+    if (typeof options?.limit === "number") {
+      query.set("limit", String(options.limit));
+    }
     return getJson<SessionResumeCandidatesResponse>(`/api/session_resume_candidates?${query.toString()}`);
   },
   renameSession(sessionId: string, name: string) {

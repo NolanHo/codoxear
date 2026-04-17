@@ -16,6 +16,7 @@ from codoxear.server import _default_worktree_path
 from codoxear.server import _first_user_message_preview_from_log
 from codoxear.server import _first_user_message_preview_from_pi_session
 from codoxear.server import _list_resume_candidates_for_cwd
+from codoxear.server import _pi_session_name_from_session_file
 
 
 def _write_jsonl(path: Path, objs: list[dict]) -> None:
@@ -161,13 +162,20 @@ class TestSessionResumeCandidates(unittest.TestCase):
                         "timestamp": "2026-03-28T12:00:00.000Z",
                     },
                     {
+                        "type": "session_info",
+                        "id": "name-1",
+                        "timestamp": "2026-03-28T12:05:00.000Z",
+                        "name": "Named Pi Session",
+                    },
+                    {
                         "type": "message",
+                        "timestamp": 2000,
                         "message": {
                             "role": "user",
                             "content": [
                                 {"type": "text", "text": "Newest Pi session prompt"}
                             ],
-                            "timestamp": 1,
+                            "timestamp": 2000,
                         },
                     },
                 ],
@@ -180,6 +188,15 @@ class TestSessionResumeCandidates(unittest.TestCase):
                         "id": "pi-session-old",
                         "cwd": "/repo",
                         "timestamp": "2026-03-27T12:00:00.000Z",
+                    },
+                    {
+                        "type": "message",
+                        "timestamp": 1000,
+                        "message": {
+                            "role": "user",
+                            "content": [{"type": "text", "text": "Older Pi session prompt"}],
+                            "timestamp": 1000,
+                        },
                     },
                 ],
             )
@@ -210,6 +227,40 @@ class TestSessionResumeCandidates(unittest.TestCase):
         self.assertEqual(rows[0]["cwd"], "/repo")
         self.assertEqual(rows[0]["session_path"], str(newest))
         self.assertEqual(rows[0]["backend"], "pi")
+        self.assertEqual(rows[0]["title"], "Named Pi Session")
+
+    def test_list_resume_candidates_supports_offset_paging(self) -> None:
+        with TemporaryDirectory() as td:
+            root = Path(td)
+            pi_root = root / "pi-native"
+            session_dir = pi_root / "--repo--"
+            session_dir.mkdir(parents=True, exist_ok=True)
+            paths: list[Path] = []
+            for index in range(4):
+                session_path = session_dir / f"2026-03-2{index}T12-00-00-000Z_{index}.jsonl"
+                _write_jsonl(
+                    session_path,
+                    [
+                        {
+                            "type": "session",
+                            "id": f"pi-session-{index}",
+                            "cwd": "/repo",
+                            "timestamp": f"2026-03-2{index}T12:00:00.000Z",
+                        }
+                    ],
+                )
+                ts = 1000 + index
+                os.utime(session_path, (ts, ts))
+                paths.append(session_path)
+
+            with patch("codoxear.server.PI_NATIVE_SESSIONS_DIR", pi_root):
+                rows = _list_resume_candidates_for_cwd(
+                    "/repo", limit=2, offset=1, backend="pi"
+                )
+
+        self.assertEqual(
+            [row["session_id"] for row in rows], ["pi-session-2", "pi-session-1"]
+        )
 
     def test_list_resume_candidates_skips_pi_files_that_disappear_during_sort(
         self,
@@ -359,6 +410,39 @@ class TestSessionResumeCandidates(unittest.TestCase):
             preview,
             "Is it possible to extract something like the conversation title or at least the first user message?",
         )
+
+    def test_pi_session_name_from_session_file_reads_latest_session_info(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as td:
+            session_path = Path(td) / "pi-session.jsonl"
+            _write_jsonl(
+                session_path,
+                [
+                    {
+                        "type": "session",
+                        "id": "pi-session",
+                        "cwd": "/repo",
+                        "timestamp": "2026-03-28T12:00:00.000Z",
+                    },
+                    {
+                        "type": "session_info",
+                        "id": "session-info-1",
+                        "timestamp": "2026-03-28T12:01:00.000Z",
+                        "name": "older-name",
+                    },
+                    {
+                        "type": "session_info",
+                        "id": "session-info-2",
+                        "timestamp": "2026-03-28T12:02:00.000Z",
+                        "name": "newer-name",
+                    },
+                ],
+            )
+
+            name = _pi_session_name_from_session_file(session_path)
+
+        self.assertEqual(name, "newer-name")
 
     def test_first_user_message_preview_from_pi_session_reads_persisted_payload_entries(
         self,

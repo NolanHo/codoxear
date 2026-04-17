@@ -17,6 +17,12 @@ async function flush() {
   await Promise.resolve();
 }
 
+async function wait(ms: number) {
+  await act(async () => {
+    await new Promise((resolve) => window.setTimeout(resolve, ms));
+  });
+}
+
 async function setInputValue(element: HTMLInputElement, value: string) {
   await act(async () => {
     element.value = value;
@@ -430,23 +436,24 @@ describe("NewSessionDialog", () => {
     expect((root.querySelector('input[name="model"]') as HTMLInputElement).value).toBe("custom-model");
   });
 
-  it("falls back to preferNewest when no broker pid match is found", async () => {
+  it("renames the returned new session instead of whatever tab is currently first", async () => {
     const { api } = await import("../../lib/api");
-    vi.mocked(api.createSession).mockResolvedValue({ session_id: "newest", broker_pid: 99, backend: "codex", ok: true } as any);
+    vi.mocked(api.createSession).mockResolvedValue({ session_id: "new-from-server", broker_pid: 99, backend: "codex", ok: true } as any);
     vi.mocked(api.getSessionResumeCandidates).mockResolvedValue({
       exists: true,
       will_create: false,
       git_repo: false,
       sessions: [],
     } as any);
+    vi.mocked(api.renameSession).mockResolvedValue({ ok: true } as any);
     const sessionsStore = createSessionsStore({
       items: [
-        { session_id: "newest" },
-        { session_id: "older" },
+        { session_id: "first-existing" },
+        { session_id: "second-existing" },
       ],
-      activeSessionId: "older",
+      activeSessionId: "first-existing",
       loading: false,
-      recentCwds: [],
+      recentCwds: ["/tmp/project"],
       tmuxAvailable: false,
       newSessionDefaults: {
         default_backend: "codex",
@@ -469,10 +476,8 @@ describe("NewSessionDialog", () => {
     });
     await flush();
 
-    const input = root.querySelector('input[placeholder="/path/to/project"]') as HTMLInputElement;
-    await setInputValue(input, "/tmp/project");
-    await flush();
-    await flush();
+    const nameInput = root.querySelector('input[name="sessionName"]') as HTMLInputElement;
+    await setInputValue(nameInput, "fresh-name");
     await flush();
 
     const form = root.querySelector("form") as HTMLFormElement;
@@ -481,7 +486,9 @@ describe("NewSessionDialog", () => {
     await flush();
 
     expect(api.createSession).toHaveBeenCalled();
-    expect(sessionsStore.getState().activeSessionId).toBe("newest");
+    expect(api.renameSession).toHaveBeenCalledWith("new-from-server", "fresh-name");
+    expect(sessionsStore.select).toHaveBeenCalledWith("new-from-server");
+    expect(api.renameSession).not.toHaveBeenCalledWith("first-existing", "fresh-name");
   });
 
   it("updates Pi model suggestions when the provider changes", async () => {
@@ -713,6 +720,77 @@ describe("NewSessionDialog", () => {
     await flush();
 
     expect(cwdInput.value).toBe("/tmp/project");
+  });
+
+  it("pages older resume candidates and prefers persisted Pi session titles", async () => {
+    const { api } = await import("../../lib/api");
+    vi.mocked(api.getSessionResumeCandidates).mockImplementation(async (_cwd, _backend, options) => {
+      if ((options?.offset || 0) > 0) {
+        return {
+          exists: true,
+          will_create: false,
+          git_repo: false,
+          offset: 20,
+          limit: 20,
+          remaining: 0,
+          sessions: [{ session_id: "older-1", title: "older-title", first_user_message: "older prompt" }],
+        } as any;
+      }
+      return {
+        exists: true,
+        will_create: false,
+        git_repo: false,
+        offset: 0,
+        limit: 20,
+        remaining: 1,
+        sessions: [{ session_id: "recent-1", title: "named-pi-session", first_user_message: "recent prompt" }],
+      } as any;
+    });
+
+    const sessionsStore = createSessionsStore({
+      items: [],
+      activeSessionId: null,
+      loading: false,
+      bootstrapLoaded: true,
+      recentCwds: ["/tmp/pi-project"],
+      tmuxAvailable: true,
+      newSessionDefaults: {
+        default_backend: "pi",
+        backends: {
+          pi: { provider_choice: "macaron" },
+          codex: { provider_choice: "chatgpt" },
+        },
+      },
+    });
+
+    root = document.createElement("div");
+    document.body.appendChild(root);
+    await act(async () => {
+      render(
+        <AppProviders sessionsStore={sessionsStore as any}>
+          <NewSessionDialog open onClose={() => undefined} />
+        </AppProviders>,
+        root!,
+      );
+    });
+    await wait(220);
+    await flush();
+
+    const select = root.querySelector('select[name="resumeSessionId"]') as HTMLSelectElement;
+    expect(select.textContent).toContain("named-pi-session");
+    expect(select.textContent).not.toContain("recent prompt");
+    expect(root.textContent).toContain("1 older");
+
+    const olderButton = Array.from(root.querySelectorAll("button")).find((node) => node.textContent?.trim() === "Older") as HTMLButtonElement;
+    await act(async () => {
+      olderButton.click();
+    });
+    await wait(220);
+    await flush();
+
+    expect(vi.mocked(api.getSessionResumeCandidates)).toHaveBeenLastCalledWith("/tmp/pi-project", "pi", { offset: 20, limit: 20 });
+    expect(select.textContent).toContain("older-title");
+    expect(root.textContent).toContain("Showing 21-21");
   });
 
   it("lets Pi sessions launch in tmux and explains the pi-rpc host split", async () => {

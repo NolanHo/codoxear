@@ -82,8 +82,10 @@ function defaultPiModelForProvider(defaults: LaunchBackendDefaults, providerChoi
   return scopedModels[0] || "";
 }
 
+const RESUME_PAGE_SIZE = 20;
+
 function resumeOptionLabel(item: SessionResumeCandidate) {
-  const title = item.alias?.trim() || item.first_user_message?.trim() || item.session_id.slice(0, 8);
+  const title = item.title?.trim() || item.alias?.trim() || item.first_user_message?.trim() || item.session_id.slice(0, 8);
   const branch = item.git_branch?.trim();
   return branch ? `${title} (${branch})` : title;
 }
@@ -142,6 +144,8 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
   const [fastMode, setFastMode] = useState(false);
   const [resumeSessionId, setResumeSessionId] = useState("");
   const [resumeCandidates, setResumeCandidates] = useState<SessionResumeCandidate[]>([]);
+  const [resumeOffset, setResumeOffset] = useState(0);
+  const [resumeRemaining, setResumeRemaining] = useState(0);
   const [resumeLoading, setResumeLoading] = useState(false);
   const [useWorktree, setUseWorktree] = useState(false);
   const [worktreeBranch, setWorktreeBranch] = useState("");
@@ -218,6 +222,8 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
     setFastMode(String(initialDefaults.service_tier || "").trim().toLowerCase() === "fast");
     setResumeSessionId("");
     setResumeCandidates([]);
+    setResumeOffset(0);
+    setResumeRemaining(0);
     setResumeLoading(false);
     setUseWorktree(false);
     setWorktreeBranch("");
@@ -292,10 +298,16 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
 
   useEffect(() => {
     if (!open) return;
+    setResumeOffset(0);
+  }, [backend, cwd, open]);
+
+  useEffect(() => {
+    if (!open) return;
     const rawCwd = cwd.trim();
     if (!rawCwd) {
       setResumeCandidates([]);
       setResumeSessionId("");
+      setResumeRemaining(0);
       setResumeLoading(false);
       setLookupError("");
       setCwdInfo({ exists: false, willCreate: false, gitRepo: false, gitRoot: "", gitBranch: "" });
@@ -306,9 +318,10 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
     setResumeLoading(true);
     const timeoutId = window.setTimeout(async () => {
       try {
-        const result: SessionResumeCandidatesResponse = await api.getSessionResumeCandidates(rawCwd, backend);
+        const result: SessionResumeCandidatesResponse = await api.getSessionResumeCandidates(rawCwd, backend, { offset: resumeOffset, limit: RESUME_PAGE_SIZE });
         if (cancelled) return;
         setResumeCandidates(Array.isArray(result.sessions) ? result.sessions : []);
+        setResumeRemaining(Math.max(0, Number(result.remaining || 0)));
         setResumeSessionId((current) => {
           if (!current) return "";
           return (result.sessions || []).some((item) => item.session_id === current) ? current : "";
@@ -325,6 +338,7 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
         if (cancelled) return;
         setResumeCandidates([]);
         setResumeSessionId("");
+        setResumeRemaining(0);
         setCwdInfo({ exists: false, willCreate: false, gitRepo: false, gitRoot: "", gitBranch: "" });
         setLookupError(loadError instanceof Error ? loadError.message : "Failed to inspect working directory");
       } finally {
@@ -338,7 +352,7 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
       cancelled = true;
       window.clearTimeout(timeoutId);
     };
-  }, [backend, cwd, open]);
+  }, [backend, cwd, open, resumeOffset]);
 
   if (!open) return null;
 
@@ -386,6 +400,8 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
     setFastMode(String(nextDefaults.service_tier || "").trim().toLowerCase() === "fast");
     setCreateInTmux(Boolean(tmuxAvailable));
     setResumeSessionId("");
+    setResumeOffset(0);
+    setResumeRemaining(0);
     setUseWorktree(false);
     setWorktreeBranch("");
     setError("");
@@ -475,38 +491,27 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
                 });
                 await sessionsStoreApi.refresh();
                 const returnedSessionId = String(response.session_id || "").trim();
-                let createdSession = returnedSessionId
-                  ? sessionsStoreApi
-                    .getState()
-                    .items.find((session) => session.session_id === returnedSessionId)
-                  : undefined;
-                if (!createdSession) {
-                  createdSession = sessionsStoreApi
-                    .getState()
-                    .items.find((session) => session.broker_pid === response.broker_pid);
-                }
-                if (!createdSession) {
-                  await sessionsStoreApi.refresh({ preferNewest: true });
-                  const state = sessionsStoreApi.getState();
-                  createdSession = (returnedSessionId
-                    ? state.items.find((session) => session.session_id === returnedSessionId)
-                    : undefined)
-                    ?? state.items.find((session) => session.broker_pid === response.broker_pid)
-                    ?? state.items.find((session) => session.session_id === state.activeSessionId)
-                    ?? state.items[0];
+                const renamedSessionId = returnedSessionId || "";
+                let createdSessionId = renamedSessionId;
+                if (!createdSessionId) {
+                  const brokerPid = typeof response.broker_pid === "number" ? response.broker_pid : null;
+                  const matched = brokerPid === null
+                    ? undefined
+                    : sessionsStoreApi.getState().items.find((session) => session.broker_pid === brokerPid);
+                  createdSessionId = matched?.session_id || "";
                 }
                 await sessionsStoreApi.refreshBootstrap();
-                if (createdSession && sessionName.trim()) {
+                if (sessionName.trim() && createdSessionId) {
                   try {
-                    await api.renameSession(createdSession.session_id, sessionName.trim());
+                    await api.renameSession(createdSessionId, sessionName.trim());
                     await sessionsStoreApi.refresh();
                   } catch (renameError) {
                     // Launch succeeded; keep the new session selected even if post-create rename fails.
                     console.warn("Failed to rename new session", renameError);
                   }
                 }
-                if (createdSession) {
-                  sessionsStoreApi.select(createdSession.session_id);
+                if (createdSessionId) {
+                  sessionsStoreApi.select(createdSessionId);
                 }
                 onClose();
               } catch (submitError) {
@@ -572,6 +577,36 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
                         </option>
                       ))}
                     </SelectField>
+                    {resumeCandidates.length || resumeOffset > 0 || resumeRemaining > 0 ? (
+                      <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                        <span>
+                          {resumeCandidates.length
+                            ? `Showing ${resumeOffset + 1}-${resumeOffset + resumeCandidates.length}`
+                            : `Showing ${resumeOffset + 1}-${resumeOffset}`}
+                          {resumeRemaining > 0 ? `, ${resumeRemaining} older` : ""}
+                        </span>
+                        <div className="flex items-center gap-2">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            className="h-8 px-2"
+                            disabled={resumeLoading || resumeOffset <= 0}
+                            onClick={() => setResumeOffset((current) => Math.max(0, current - RESUME_PAGE_SIZE))}
+                          >
+                            Newer
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            className="h-8 px-2"
+                            disabled={resumeLoading || resumeRemaining <= 0}
+                            onClick={() => setResumeOffset((current) => current + RESUME_PAGE_SIZE)}
+                          >
+                            Older
+                          </Button>
+                        </div>
+                      </div>
+                    ) : null}
                   </label>
                 </div>
               </section>

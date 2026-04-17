@@ -2882,6 +2882,23 @@ def _pi_new_session_file_for_cwd(cwd: str | Path) -> Path:
     return _pi_native_session_dir_for_cwd(cwd) / name
 
 
+def _pi_session_name_from_session_file(
+    session_path: Path, *, max_scan_bytes: int = 512 * 1024
+) -> str:
+    try:
+        objs = _read_jsonl_tail(session_path, max_scan_bytes)
+    except Exception:
+        return ""
+    for obj in reversed(objs):
+        if not isinstance(obj, dict) or obj.get("type") != "session_info":
+            continue
+        name = obj.get("name")
+        if isinstance(name, str):
+            return name.strip()
+    return ""
+
+
+
 def _pi_resume_candidate_from_session_file(session_path: Path) -> dict[str, Any] | None:
     try:
         with session_path.open("rb") as f:
@@ -2912,6 +2929,7 @@ def _pi_resume_candidate_from_session_file(session_path: Path) -> dict[str, Any]
                     "git_branch": None,
                     "agent_backend": "pi",
                     "backend": "pi",
+                    "title": _pi_session_name_from_session_file(session_path),
                 }
     except OSError:
         return None
@@ -2999,12 +3017,15 @@ def _list_resume_candidates_for_cwd(
     cwd: str,
     *,
     limit: int = 12,
+    offset: int = 0,
     backend: str | None = None,
     agent_backend: str | None = None,
 ) -> list[dict[str, Any]]:
     cwd2 = str(_safe_expanduser(Path(cwd)).resolve())
     backend_raw = backend if backend is not None else agent_backend
     backend2 = normalize_agent_backend(backend_raw, default="codex")
+    limit2 = max(1, int(limit))
+    offset2 = max(0, int(offset))
     if backend2 == "pi":
         rows: list[dict[str, Any]] = []
         session_dir = _pi_native_session_dir_for_cwd(cwd2)
@@ -3018,7 +3039,7 @@ def _list_resume_candidates_for_cwd(
                 continue
             rows.append(row)
         rows.sort(key=lambda row: -float(row.get("updated_ts") or 0.0))
-        return rows[:limit]
+        return rows[offset2 : offset2 + limit2]
     out: list[dict[str, Any]] = []
     seen: set[str] = set()
     for log_path in _iter_session_logs(agent_backend=backend2):
@@ -3039,7 +3060,7 @@ def _list_resume_candidates_for_cwd(
         out.append(row)
         seen.add(session_id)
     out.sort(key=lambda row: -float(row.get("updated_ts") or 0.0))
-    return out[:limit]
+    return out[offset2 : offset2 + limit2]
 
 
 def _iter_all_resume_candidates(*, limit: int = 200) -> list[dict[str, Any]]:
@@ -8168,6 +8189,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 qs = urllib.parse.parse_qs(u.query)
                 cwd_raw = qs.get("cwd", [""])[0]
                 backend_raw = qs.get("backend", ["codex"])[0]
+                offset_raw = qs.get("offset", ["0"])[0]
+                limit_raw = qs.get("limit", ["20"])[0]
                 try:
                     agent_backend = normalize_agent_backend(
                         qs.get("agent_backend", [""])[0], default=DEFAULT_AGENT_BACKEND
@@ -8185,12 +8208,24 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 except ValueError as e:
                     _json_response(self, 400, {"error": str(e), "field": "backend"})
                     return
+                try:
+                    offset = max(0, int(offset_raw))
+                except ValueError:
+                    _json_response(self, 400, {"error": "offset must be an integer", "field": "offset"})
+                    return
+                try:
+                    limit = max(1, min(100, int(limit_raw)))
+                except ValueError:
+                    _json_response(self, 400, {"error": "limit must be an integer", "field": "limit"})
+                    return
                 info = _describe_session_cwd(cwd_path)
-                rows = (
-                    _list_resume_candidates_for_cwd(info["cwd"], backend=backend)
+                all_rows = (
+                    _list_resume_candidates_for_cwd(info["cwd"], backend=backend, limit=100000)
                     if info["exists"]
                     else []
                 )
+                rows = all_rows[offset : offset + limit]
+                remaining = max(0, len(all_rows) - (offset + len(rows)))
                 for row in rows:
                     sid = row.get("session_id")
                     alias = (
@@ -8209,7 +8244,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
                         )
                     row["alias"] = alias
                     row["first_user_message"] = preview
-                _json_response(self, 200, {"ok": True, **info, "sessions": rows})
+                _json_response(
+                    self,
+                    200,
+                    {
+                        "ok": True,
+                        **info,
+                        "sessions": rows,
+                        "offset": offset,
+                        "limit": limit,
+                        "remaining": remaining,
+                    },
+                )
                 return
 
             if path == "/api/metrics":
