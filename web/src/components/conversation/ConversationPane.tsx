@@ -567,7 +567,7 @@ function messageSurfaceTone(kind: string, isError = false): string {
     case "subagent":
       return "border-slate-200/80 bg-slate-50/85";
     case "todo_snapshot":
-      return "border-teal-200/80 bg-teal-50/85";
+      return "";
     default:
       return "border-border/60 bg-muted/30";
   }
