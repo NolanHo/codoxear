@@ -1927,6 +1927,87 @@ select {
   margin-top: 14px;
 }
 
+:root[data-theme="dark"] .composerTodoPanel {
+  background: color-mix(in srgb, var(--panel) 94%, #14111b);
+  border-color: var(--chrome-border);
+}
+
+:root[data-theme="dark"] .composerTodoItem {
+  background: color-mix(in srgb, var(--panel) 90%, #191621);
+  border-color: var(--control-border);
+}
+
+:root[data-theme="dark"] .composerTodoStatus,
+:root[data-theme="dark"] .messageTodoStatus {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--legacy-muted);
+}
+
+:root[data-theme="dark"] .composerTodoStatus.completed,
+:root[data-theme="dark"] .messageTodoStatus.completed {
+  background: rgba(23, 185, 120, 0.16);
+  color: #7ee0b0;
+}
+
+:root[data-theme="dark"] .composerTodoStatus.in-progress,
+:root[data-theme="dark"] .messageTodoStatus.in-progress {
+  background: rgba(69, 170, 255, 0.16);
+  color: #8dc7ff;
+}
+
+:root[data-theme="dark"] .composerTodoStatus.not-started,
+:root[data-theme="dark"] .messageTodoStatus.not-started {
+  background: rgba(255, 201, 60, 0.16);
+  color: #ffd772;
+}
+
+:root[data-theme="dark"] .sessionGroupRenameButton,
+:root[data-theme="dark"] .sessionGroupMoreButton,
+:root[data-theme="dark"] .sessionCardSurface,
+:root[data-theme="dark"] .ownerBadge,
+:root[data-theme="dark"] .composerShell,
+:root[data-theme="dark"] .composerInputWrap,
+:root[data-theme="dark"] .composerQueueButton,
+:root[data-theme="dark"] .composerCommandMenu {
+  background: var(--chrome-elevated);
+}
+
+:root[data-theme="dark"] .sessionCardSurface,
+:root[data-theme="dark"] .composerQueueButton,
+:root[data-theme="dark"] .composerCommandMenu,
+:root[data-theme="dark"] .conversationColumn,
+:root[data-theme="dark"] .conversationToolbar,
+:root[data-theme="dark"] .workspaceRail,
+:root[data-theme="dark"] .sidebarFooter {
+  border-color: var(--chrome-border);
+}
+
+:root[data-theme="dark"] .sessionGroupRenameButton,
+:root[data-theme="dark"] .sessionGroupMoreButton,
+:root[data-theme="dark"] .ownerBadge {
+  color: var(--text);
+  border-color: var(--control-border);
+}
+
+:root[data-theme="dark"] .sessionGroupRenameButton:hover,
+:root[data-theme="dark"] .sessionGroupMoreButton:hover,
+:root[data-theme="dark"] .sessionActionIconButton:hover,
+:root[data-theme="dark"] .sessionActionIconButton:focus-visible,
+:root[data-theme="dark"] .sessionCard:hover .sessionCardSurface,
+:root[data-theme="dark"] .sessionCard:focus-within .sessionCardSurface,
+:root[data-theme="dark"] .sessionCard.active .sessionCardSurface {
+  background: color-mix(in srgb, var(--accent) 88%, var(--panel));
+}
+
+:root[data-theme="dark"] .conversationPane.emptyState {
+  background: color-mix(in srgb, var(--panel) 92%, #14111b);
+}
+
+:root[data-theme="dark"] .messageCopyButton.isCopied {
+  background: color-mix(in srgb, var(--primary) 18%, var(--panel));
+  border-color: color-mix(in srgb, var(--primary) 34%, var(--control-border));
+}
+
 @media (max-width: 1080px) and (min-width: 881px) {
   .conversationToolbar {
     grid-template-columns: minmax(0, 1fr);
