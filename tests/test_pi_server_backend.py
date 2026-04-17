@@ -4641,6 +4641,47 @@ class TestPiMessageNormalization(unittest.TestCase):
         self.assertEqual(events[1]["role"], "assistant")
         self.assertEqual(events[1]["text"], "Final answer.")
 
+    def test_turn_failed_emits_visible_pi_event(self) -> None:
+        entries = [
+            {
+                "type": "turn.failed",
+                "timestamp": "2026-04-03T01:02:03.000Z",
+                "payload": {
+                    "source_event": "turn.failed",
+                    "message": "model await failed",
+                    "error": "upstream timeout",
+                },
+            },
+        ]
+
+        events, _meta, flags, _diag = pi_messages.normalize_pi_entries(entries)
+
+        self.assertTrue(flags["turn_aborted"])
+        self.assertEqual(events[0]["type"], "pi_event")
+        self.assertTrue(events[0]["is_error"])
+        self.assertEqual(events[0]["summary"], "turn.failed")
+        self.assertEqual(events[0]["text"], "upstream timeout")
+
+    def test_error_tool_result_without_output_still_emits_visible_event(self) -> None:
+        entries = [
+            {
+                "type": "message",
+                "message": {
+                    "role": "toolResult",
+                    "toolCallId": "call_1",
+                    "toolName": "bash",
+                    "isError": True,
+                },
+            },
+        ]
+
+        events, _meta, _flags, _diag = pi_messages.normalize_pi_entries(entries)
+
+        self.assertEqual(events[0]["type"], "tool_result")
+        self.assertEqual(events[0]["name"], "bash")
+        self.assertTrue(events[0]["is_error"])
+        self.assertEqual(events[0]["text"], "bash failed")
+
     def test_manage_todo_tool_result_emits_todo_snapshot(self) -> None:
         entries = [
             {

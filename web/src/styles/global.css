@@ -426,6 +426,31 @@ select {
   flex-wrap: wrap;
 }
 
+.todoViewerDialog {
+  border-color: color-mix(in srgb, var(--border) 72%, transparent);
+  background: color-mix(in srgb, var(--panel) 96%, white 4%);
+}
+
+.todoViewerDialogFrame {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.todoViewerDialogHeader {
+  padding-bottom: 0.75rem;
+}
+
+.todoViewerDialogContent {
+  max-height: min(70vh, 44rem);
+  overflow-y: auto;
+  padding-right: 0.25rem;
+}
+
+.todoViewerDialogBody {
+  min-height: 0;
+}
+
 .conversationTitle {
   min-width: 0;
   font-weight: 650;
@@ -994,6 +1019,90 @@ select {
   margin-top: 2px;
 }
 
+.todoPopover {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  padding: 0.25rem 0;
+}
+
+.todoPopoverHeader h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.todoPopoverSummary {
+  margin: 0.25rem 0 0;
+  color: var(--text-muted);
+  font-size: 0.92rem;
+}
+
+.todoPopoverEmpty {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.94rem;
+}
+
+.todoPopoverList {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+}
+
+.todoPopoverItem {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--chrome-border);
+  border-radius: 1rem;
+  background: color-mix(in srgb, var(--card) 92%, white 8%);
+}
+
+.todoPopoverItemHead {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.todoPopoverItemHead strong {
+  font-size: 0.96rem;
+  line-height: 1.35;
+}
+
+.todoPopoverItem p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.92rem;
+  line-height: 1.45;
+}
+
+.todoPopoverStatus {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  padding: 0.18rem 0.55rem;
+  font-size: 0.72rem;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.todoPopoverStatus.completed {
+  background: rgba(16, 185, 129, 0.12);
+  color: #047857;
+}
+
+.todoPopoverStatus.in-progress {
+  background: rgba(37, 99, 235, 0.12);
+  color: #1d4ed8;
+}
+
+.todoPopoverStatus.not-started {
+  background: rgba(245, 158, 11, 0.14);
+  color: #92400e;
+}
+
 .machineTraceSurface {
   width: min(820px, 100%);
 }
@@ -1052,6 +1161,12 @@ select {
   color: var(--markdown-inline-code-fg);
 }
 
+.machineTraceToken.todo_snapshot {
+  background: var(--todo-card-shell);
+  border-color: var(--todo-card-border);
+  color: var(--todo-card-pill-fg);
+}
+
 .machineTraceToken.isSelected {
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary) 32%, transparent);
 }
@@ -1108,6 +1223,11 @@ select {
 .machineTraceDetail.reasoning {
   background: var(--message-card-reasoning-bg);
   border-color: var(--message-card-reasoning-border);
+}
+
+.machineTraceDetail.todo_snapshot {
+  background: var(--todo-card-shell);
+  border-color: var(--todo-card-border);
 }
 
 @keyframes machine-trace-pulse {

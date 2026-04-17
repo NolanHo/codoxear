@@ -53,7 +53,7 @@ def _payload_for_entry(entry: dict[str, Any]) -> dict[str, Any]:
     if entry.get("type") == "message" and isinstance(message, dict):
         return message
     payload = entry.get("payload")
-    if entry.get("type") == "message" and isinstance(payload, dict):
+    if isinstance(payload, dict):
         return payload
     return entry
 
@@ -332,6 +332,52 @@ def _tool_name(entry: dict[str, Any], payload: dict[str, Any]) -> str | None:
             if isinstance(value, str) and value and value != "message":
                 return value
     return None
+
+
+def _fallback_pi_event(
+    entry: dict[str, Any], payload: dict[str, Any], *, ts: float
+) -> dict[str, Any] | None:
+    entry_type = _entry_type(entry)
+    payload_type = _entry_type(payload)
+    source_event = _non_empty_string(payload.get("source_event"))
+    role = _non_empty_string(payload.get("role"))
+    error_text = _non_empty_string(payload.get("error")) or _non_empty_string(
+        entry.get("error")
+    )
+    message_text = _non_empty_string(payload.get("message")) or _non_empty_string(
+        entry.get("message")
+    )
+    body = _entry_text(payload) or error_text or message_text
+    details = payload.get("details") if isinstance(payload.get("details"), dict) else None
+    summary = source_event or entry_type or payload_type or role
+    is_error = bool(
+        payload.get("isError") is True
+        or source_event in _PI_ABORT_EVENT_TYPES
+        or entry_type in _PI_ABORT_EVENT_TYPES
+        or error_text
+    )
+
+    if summary is None and body is None and details is None:
+        return None
+    if body is None and details is None and not is_error:
+        return None
+
+    event: dict[str, Any] = {
+        "type": "pi_event",
+        "ts": float(ts),
+        "summary": summary or ("Pi error" if is_error else "Pi event"),
+    }
+    if body is not None:
+        event["text"] = body
+    elif is_error and summary is not None:
+        event["text"] = f"Pi reported {summary}."
+    if details is not None:
+        event["details"] = details
+    if source_event is not None:
+        event["name"] = source_event
+    if is_error:
+        event["is_error"] = True
+    return event
 
 
 def _coerce_tool_arguments(args: Any) -> dict[str, Any]:
@@ -940,14 +986,16 @@ def normalize_pi_entries(
                     continue
             output = _extract_subagent_output(payload)
             details = _tool_result_details(payload)
-            if (
-                isinstance(tn, str)
-                and tn
-                and ((isinstance(output, str) and output) or details)
+            if isinstance(tn, str) and tn and (
+                (isinstance(output, str) and output)
+                or details is not None
+                or payload.get("isError") is True
             ):
                 event: dict[str, Any] = {"type": "tool_result", "name": tn, "ts": ts}
-                if isinstance(output, str):
+                if isinstance(output, str) and output:
                     event["text"] = output
+                elif payload.get("isError") is True:
+                    event["text"] = f"{tn} failed"
                 if payload.get("isError") is True:
                     event["is_error"] = True
                 if details is not None:
@@ -1149,6 +1197,15 @@ def normalize_pi_entries(
             if custom_event is not None:
                 events.append(custom_event)
                 fallback_ts = ts + 0.1
+                continue
+
+        ts = _event_ts_value(
+            preferred_ts=entry_ts or payload_ts, fallback_ts=fallback_ts
+        )
+        fallback_event = _fallback_pi_event(entry, payload, ts=ts)
+        if fallback_event is not None:
+            events.append(fallback_event)
+            fallback_ts = ts + 0.1
             continue
 
     pending_events: list[dict[str, Any]] = [*pending_ask_user.values()]

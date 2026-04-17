@@ -138,19 +138,26 @@ describe("ConversationPane", () => {
 
     const text = root.textContent || "";
     expect(root.querySelectorAll(".messageRow")).toHaveLength(6);
-    const traceStrip = root.querySelector("[data-testid='machine-trace-strip']") as HTMLElement | null;
-    expect(traceStrip).not.toBeNull();
-    expect(traceStrip?.querySelectorAll(".machineTraceToken")).toHaveLength(3);
+    const traceStrips = Array.from(root.querySelectorAll("[data-testid='machine-trace-strip']")) as HTMLElement[];
+    expect(traceStrips).toHaveLength(2);
+    expect(root.querySelectorAll(".machineTraceToken")).toHaveLength(4);
+    const todoToken = root.querySelector(".machineTraceToken.todo_snapshot") as HTMLButtonElement | null;
+    expect(todoToken).not.toBeNull();
     expect(root.querySelector("[data-testid='message-surface'][data-kind='subagent']")).not.toBeNull();
-    expect(root.querySelector("[data-testid='message-surface'][data-kind='todo_snapshot']")).not.toBeNull();
+    expect(root.querySelector("[data-testid='message-surface'][data-kind='todo_snapshot']")).toBeNull();
     expect(root.querySelector("[data-testid='message-surface'][data-kind='pi_model_change']")).not.toBeNull();
     expect(text).toContain("Please fix this");
     expect(text).toContain("reviewer");
     expect(text).toContain("Check the patch");
     expect(text).toContain("Looks good");
-    expect(text).toContain("2/3 completed");
     expect(text).toContain("Switched to gpt-5.4");
     expect(text).toContain("Fixed.");
+
+    act(() => {
+      todoToken?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+
+    expect(root.textContent).toContain("2/3 completed");
   });
 
   it("renders Claude Todo V2 task-assignment custom messages as dedicated timeline events", () => {
@@ -1014,6 +1021,7 @@ describe("ConversationPane", () => {
         requestVersionsBySessionId: {},
         busyBySessionId: { "sess-live-busy": true },
         loadingBySessionId: {},
+        errorBySessionId: {},
       },
       { loadInitial: () => Promise.resolve(), poll: () => Promise.resolve() },
     );
@@ -1032,6 +1040,51 @@ describe("ConversationPane", () => {
     );
 
     expect(root.textContent).toContain("Working");
+  });
+
+  it("shows a visible warning when live pi-rpc polling fails", () => {
+    const sessionsStore = createStaticStore(
+      { items: [{ session_id: "sess-rpc-error", agent_backend: "pi", busy: false }], activeSessionId: "sess-rpc-error", loading: false, newSessionDefaults: null },
+      { refresh: () => Promise.resolve(), select: () => undefined },
+    );
+    const messagesStore = createStaticStore(
+      {
+        bySessionId: {
+          "sess-rpc-error": [{ role: "assistant", text: "Last visible reply" }],
+        },
+        offsetsBySessionId: { "sess-rpc-error": 1 },
+        loading: false,
+      },
+      { loadInitial: () => Promise.resolve(), poll: () => Promise.resolve(), loadOlder: () => Promise.resolve() },
+    );
+    const liveSessionStore = createStaticStore(
+      {
+        offsetsBySessionId: { "sess-rpc-error": 1 },
+        liveOffsetsBySessionId: { "sess-rpc-error": 1 },
+        requestsBySessionId: {},
+        requestVersionsBySessionId: {},
+        busyBySessionId: {},
+        loadingBySessionId: {},
+        errorBySessionId: { "sess-rpc-error": "broker unavailable" },
+      },
+      { loadInitial: () => Promise.resolve(), poll: () => Promise.resolve() },
+    );
+
+    root = document.createElement("div");
+    document.body.appendChild(root);
+    render(
+      <AppProviders
+        sessionsStore={sessionsStore as any}
+        messagesStore={messagesStore as any}
+        liveSessionStore={liveSessionStore as any}
+      >
+        <ConversationPane />
+      </AppProviders>,
+      root,
+    );
+
+    expect(root.textContent).toContain("Pi RPC warning");
+    expect(root.textContent).toContain("broker unavailable");
   });
 
   it("shows a floating previous-user button only after scrolling above an earlier user message", async () => {
@@ -1321,6 +1374,94 @@ describe("ConversationPane", () => {
     expect(bottomButton).not.toBeNull();
     expect(bottomButton?.textContent).toBe("");
     expect(bottomButton?.getAttribute("aria-label")).toBe("Scroll to conversation bottom");
+
+    if (scrollHeightDescriptor) {
+      Object.defineProperty(HTMLElement.prototype, "scrollHeight", scrollHeightDescriptor);
+    }
+    if (clientHeightDescriptor) {
+      Object.defineProperty(HTMLElement.prototype, "clientHeight", clientHeightDescriptor);
+    }
+  });
+
+  it("does not yank the pane to the bottom when tool updates arrive while reading older content", async () => {
+    const sessionsStore = createStaticStore(
+      { items: [{ session_id: "sess-stay-put", agent_backend: "pi" }], activeSessionId: "sess-stay-put", loading: false, newSessionDefaults: null },
+      { refresh: () => Promise.resolve(), select: () => undefined },
+    );
+    const messagesStore = createMutableStore(
+      {
+        bySessionId: {
+          "sess-stay-put": [
+            { role: "user", text: "Question 1" },
+            { role: "assistant", text: "Answer 1" },
+            { role: "assistant", text: "Answer 2" },
+          ],
+        },
+        offsetsBySessionId: { "sess-stay-put": 3 },
+        loading: false,
+      },
+      (_getState, _setState) => ({ loadInitial: () => Promise.resolve(), poll: () => Promise.resolve(), loadOlder: () => Promise.resolve() }),
+    );
+
+    const scrollTo = vi.fn();
+    const scrollHeightDescriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollHeight");
+    const clientHeightDescriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientHeight");
+    Object.defineProperty(HTMLElement.prototype, "scrollHeight", {
+      configurable: true,
+      get() {
+        return this.classList?.contains("conversationPane") ? 1200 : (scrollHeightDescriptor?.get?.call(this) ?? 0);
+      },
+    });
+    Object.defineProperty(HTMLElement.prototype, "clientHeight", {
+      configurable: true,
+      get() {
+        return this.classList?.contains("conversationPane") ? 240 : (clientHeightDescriptor?.get?.call(this) ?? 0);
+      },
+    });
+
+    root = document.createElement("div");
+    document.body.appendChild(root);
+    render(
+      <AppProviders sessionsStore={sessionsStore as any} messagesStore={messagesStore as any}>
+        <ConversationPane />
+      </AppProviders>,
+      root,
+    );
+
+    const pane = root.querySelector(".conversationPane") as HTMLDivElement | null;
+    Object.defineProperty(pane!, "scrollTo", { configurable: true, value: scrollTo });
+    Object.defineProperty(pane!, "scrollTop", { configurable: true, writable: true, value: 360 });
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    scrollTo.mockClear();
+
+    await act(async () => {
+      pane?.dispatchEvent(new Event("scroll"));
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      (messagesStore as any).setState({
+        ...(messagesStore as any).getState(),
+        bySessionId: {
+          "sess-stay-put": [
+            { role: "user", text: "Question 1" },
+            { role: "assistant", text: "Answer 1" },
+            { role: "assistant", text: "Answer 2" },
+            { type: "tool", name: "read", text: "package.json" },
+          ],
+        },
+        offsetsBySessionId: { "sess-stay-put": 4 },
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(scrollTo).not.toHaveBeenCalled();
+    expect(root.querySelector("[data-testid='scroll-to-bottom']")).not.toBeNull();
 
     if (scrollHeightDescriptor) {
       Object.defineProperty(HTMLElement.prototype, "scrollHeight", scrollHeightDescriptor);

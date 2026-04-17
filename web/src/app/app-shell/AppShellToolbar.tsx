@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { FileIcon, HarnessIcon, MenuIcon, SessionsIcon, StopIcon, WorkspaceIcon } from "./icons";
+import { FileIcon, HarnessIcon, MenuIcon, SessionsIcon, StopIcon, TodoListIcon, WorkspaceIcon } from "./icons";
 
 interface AppShellToolbarProps {
   activeSessionId: string | null;
@@ -14,6 +14,7 @@ interface AppShellToolbarProps {
   onOpenFiles(): void;
   onOpenHarness(): void;
   onOpenSessions(): void;
+  onOpenTodo(): void;
   onOpenWorkspace(): void;
 }
 
@@ -28,6 +29,7 @@ export function AppShellToolbar({
   onOpenFiles,
   onOpenHarness,
   onOpenSessions,
+  onOpenTodo,
   onOpenWorkspace,
 }: AppShellToolbarProps) {
   const [mobileToolsOpen, setMobileToolsOpen] = useState(false);
@@ -82,6 +84,22 @@ export function AppShellToolbar({
           <span>Sessions</span>
         </Button>
       ) : null}
+      <Button
+        type="button"
+        variant={mobileMenu ? "ghost" : "outline"}
+        size={mobileMenu ? "sm" : "icon"}
+        className={mobileMenu ? "conversationMenuItem" : "toolbarButton conversationToolButton"}
+        aria-label="Todo list"
+        title="Todo list"
+        disabled={!activeSessionId}
+        onClick={() => {
+          closeMobileToolsMenu();
+          onOpenTodo();
+        }}
+      >
+        <TodoListIcon />
+        {mobileMenu ? <span>Todo list</span> : null}
+      </Button>
       <Button
         type="button"
         variant={mobileMenu ? "ghost" : "outline"}

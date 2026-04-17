@@ -1,4 +1,5 @@
 import { api } from "../../lib/api";
+import { HttpError } from "../../lib/http";
 import type { SessionUiRequest } from "../../lib/types";
 import type { MessagesStore } from "../messages/store";
 
@@ -9,6 +10,7 @@ export interface LiveSessionState {
   requestVersionsBySessionId: Record<string, string>;
   busyBySessionId: Record<string, boolean>;
   loadingBySessionId: Record<string, boolean>;
+  errorBySessionId: Record<string, string>;
 }
 
 export interface LiveSessionStore {
@@ -16,6 +18,16 @@ export interface LiveSessionStore {
   subscribe(listener: () => void): () => void;
   loadInitial(sessionId: string): Promise<void>;
   poll(sessionId: string): Promise<void>;
+}
+
+function liveSessionErrorMessage(error: unknown): string {
+  if (error instanceof HttpError && error.status === 404) {
+    return "Pi RPC session ended or broker exited";
+  }
+  if (error instanceof Error && error.message.trim()) {
+    return error.message;
+  }
+  return "live session unavailable";
 }
 
 export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessionStore {
@@ -26,6 +38,7 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
     requestVersionsBySessionId: {},
     busyBySessionId: {},
     loadingBySessionId: {},
+    errorBySessionId: {},
   };
   const listeners = new Set<() => void>();
   const inFlightBySessionId: Record<string, Promise<void> | undefined> = {};
@@ -95,14 +108,23 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
             ...state.loadingBySessionId,
             [sessionId]: false,
           },
+          errorBySessionId: {
+            ...state.errorBySessionId,
+            [sessionId]: "",
+          },
         };
         emit();
       } catch (error) {
+        const message = liveSessionErrorMessage(error);
         state = {
           ...state,
           loadingBySessionId: {
             ...state.loadingBySessionId,
             [sessionId]: false,
+          },
+          errorBySessionId: {
+            ...state.errorBySessionId,
+            [sessionId]: message,
           },
         };
         emit();

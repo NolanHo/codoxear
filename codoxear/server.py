@@ -5403,6 +5403,19 @@ class SessionManager:
                     if type(ui_protocol_version_raw) is int
                     else None
                 )
+                # Older Pi sidecars predate explicit live-ui metadata. Infer the
+                # RPC capability only when the sidecar already claims web control.
+                if backend == "pi" and transport is None and (owned or _supports_web_control(meta)):
+                    transport = "pi-rpc"
+                if backend == "pi" and transport == "pi-rpc" and supports_live_ui is None:
+                    supports_live_ui = True
+                if (
+                    backend == "pi"
+                    and transport == "pi-rpc"
+                    and supports_live_ui is True
+                    and ui_protocol_version is None
+                ):
+                    ui_protocol_version = 1
 
                 cwd_raw = meta.get("cwd")
                 if not isinstance(cwd_raw, str) or (not cwd_raw.strip()):
@@ -5439,6 +5452,12 @@ class SessionManager:
                     backend = "pi"
                     agent_backend = "pi"
                     session_path_discovered = True
+                    if transport is None and (owned or _supports_web_control(meta)):
+                        transport = "pi-rpc"
+                    if supports_live_ui is None and transport == "pi-rpc":
+                        supports_live_ui = True
+                    if ui_protocol_version is None and supports_live_ui is True:
+                        ui_protocol_version = 1
                     _patch_metadata_pi_binding(sock, inferred_pi_session_path)
 
                 if backend == "pi":

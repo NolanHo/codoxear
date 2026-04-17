@@ -499,6 +499,35 @@ describe("AppShell", () => {
     }
   });
 
+  it("opens the todo viewer from the toolbar", async () => {
+    renderAppShell({
+      diagnostics: {
+        todo_snapshot: {
+          available: true,
+          error: false,
+          progress_text: "1/2 completed",
+          items: [
+            { title: "Inspect session shortlist", status: "in-progress", description: "Check the active queue" },
+            { title: "Draft focus metadata", status: "not-started" },
+          ],
+        },
+      },
+    });
+    await flush();
+
+    const button = findButtonByAriaLabel("Todo list");
+    expect(button).not.toBeNull();
+
+    act(() => {
+      button!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+    await flush();
+
+    expect(getRoot().textContent).toContain("Todo list");
+    expect(getRoot().textContent).toContain("1/2 completed");
+    expect(getRoot().textContent).toContain("Inspect session shortlist");
+  });
+
   it("opens the file viewer from the toolbar and requests the root directory listing", async () => {
     const { api } = await import("../lib/api");
     renderAppShell({ files: [] });

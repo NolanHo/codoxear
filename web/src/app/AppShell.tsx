@@ -4,6 +4,7 @@ import { ConversationPane } from "../components/conversation/ConversationPane";
 import { Composer } from "../components/composer/Composer";
 import { SessionWorkspace } from "../components/workspace/SessionWorkspace";
 import type { FileViewMode } from "../components/workspace/FileViewerDialog";
+import { TodoPopover } from "../components/workspace/TodoPopover";
 import { AppShellSidebar } from "./app-shell/AppShellSidebar";
 import { AppShellToolbar } from "./app-shell/AppShellToolbar";
 import { AppShellWorkspaceOverlays } from "./app-shell/AppShellWorkspaceOverlays";
@@ -51,7 +52,7 @@ export function AppShell() {
   const { bySessionId } = useMessagesStore();
   const { activeSessionId, items } = useSessionsStore();
   const { busyBySessionId } = useLiveSessionStore();
-  const { sessionId: sessionUiSessionId } = useSessionUiStore();
+  const { sessionId: sessionUiSessionId, diagnostics } = useSessionUiStore();
   const sessionsStoreApi = useSessionsStoreApi();
   const liveSessionStoreApi = useLiveSessionStoreApi();
   const sessionUiStoreApi = useSessionUiStoreApi();
@@ -60,6 +61,7 @@ export function AppShell() {
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
   const [fileViewerOpen, setFileViewerOpen] = useState(false);
   const [harnessOpen, setHarnessOpen] = useState(false);
+  const [todoViewerOpen, setTodoViewerOpen] = useState(false);
   const [fileViewerPath, setFileViewerPath] = useState("");
   const [fileViewerLine, setFileViewerLine] = useState<number | null>(null);
   const [fileViewerMode, setFileViewerMode] = useState<FileViewMode | null>(null);
@@ -107,6 +109,9 @@ export function AppShell() {
     (activeSessionId && busyBySessionId[activeSessionId] === true)
     || activeSession?.busy === true,
   );
+  const activeTodoSnapshot = sessionUiSessionId === activeSessionId && diagnostics && typeof diagnostics === "object"
+    ? (diagnostics as { todo_snapshot?: unknown }).todo_snapshot ?? null
+    : null;
   const activeTitle = activeSession
     ? activeSession.alias || activeSession.first_user_message || activeSession.title || shortSessionId(activeSession.session_id)
     : "No session selected";
@@ -216,6 +221,7 @@ export function AppShell() {
   useEffect(() => {
     setFileViewerOpen(false);
     setHarnessOpen(false);
+    setTodoViewerOpen(false);
   }, [activeSessionId]);
 
   const shellClassName = useMemo(() => ["appShell", "editorialShell"].join(" "), []);
@@ -308,6 +314,7 @@ export function AppShell() {
             onOpenFiles={() => openFileViewer()}
             onOpenHarness={() => setHarnessOpen(true)}
             onOpenSessions={() => setSidebarOpen(true)}
+            onOpenTodo={() => setTodoViewerOpen(true)}
             onOpenWorkspace={openWorkspace}
           />
           <ConversationPane onOpenFilePath={(path, line) => openFileViewer(path, line ?? null, "file")} />
@@ -359,6 +366,12 @@ export function AppShell() {
             }}
           />
         )}
+        todoViewer={(
+          <div data-testid="todo-viewer-dialog" className="todoViewerDialogBody">
+            <TodoPopover snapshot={activeTodoSnapshot} />
+          </div>
+        )}
+        todoViewerOpen={todoViewerOpen}
         workspaceDetails={renderWorkspaceDetails()}
         workspaceOpen={workspaceOpen}
         onCloseDetails={() => setDetailsOpen(false)}
@@ -366,6 +379,7 @@ export function AppShell() {
         onCloseHarness={() => setHarnessOpen(false)}
         onCloseNewSession={() => setNewSessionOpen(false)}
         onCloseSidebar={() => setSidebarOpen(false)}
+        onCloseTodoViewer={() => setTodoViewerOpen(false)}
         onCloseWorkspace={() => setWorkspaceOpen(false)}
       />
     </>

@@ -34,6 +34,19 @@ export function FileIcon() {
   );
 }
 
+export function TodoListIcon() {
+  return (
+    <svg className="actionIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M9 6h11" />
+      <path d="M9 12h11" />
+      <path d="M9 18h11" />
+      <path d="m4 6 1.5 1.5L8 5" />
+      <path d="m4 12 1.5 1.5L8 11" />
+      <path d="m4 18 1.5 1.5L8 17" />
+    </svg>
+  );
+}
+
 export function SessionsIcon() {
   return (
     <svg className="actionIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">

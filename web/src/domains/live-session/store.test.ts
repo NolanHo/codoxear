@@ -169,4 +169,23 @@ describe("createLiveSessionStore", () => {
       { role: "assistant", text: "hello", streaming: true, stream_id: "pi-stream:turn-001", turn_id: "turn-001" },
     ]);
   });
+
+  it("records and clears live transport errors per session", async () => {
+    vi.mocked(api.getLiveSession)
+      .mockRejectedValueOnce(new Error("broker unavailable"))
+      .mockResolvedValueOnce({
+        events: [{ id: "m1" }],
+        requests: [],
+        busy: false,
+        offset: 1,
+      } as never);
+    const messagesStore = createMessagesStore();
+    const liveStore = createLiveSessionStore(messagesStore);
+
+    await expect(liveStore.loadInitial("s1")).rejects.toThrow("broker unavailable");
+    expect(liveStore.getState().errorBySessionId.s1).toBe("broker unavailable");
+
+    await liveStore.loadInitial("s1");
+    expect(liveStore.getState().errorBySessionId.s1).toBe("");
+  });
 });

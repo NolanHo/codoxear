@@ -33,7 +33,7 @@ const MAIN_TIMELINE_KINDS = new Set([
   "event",
 ]);
 
-const MACHINE_TRACE_KINDS = new Set(["reasoning", "tool", "tool_result"]);
+const MACHINE_TRACE_KINDS = new Set(["reasoning", "tool", "tool_result", "todo_snapshot"]);
 const CHAT_GROUPABLE_KINDS = new Set(["user", "assistant", "ask_user"]);
 const COLLAPSIBLE_LINE_THRESHOLD = 8;
 const COLLAPSIBLE_CHAR_THRESHOLD = 420;
@@ -525,7 +525,7 @@ function canGroupEvent(kind: string): boolean {
   return CHAT_GROUPABLE_KINDS.has(kind);
 }
 
-function isMachineTraceKind(kind: string): kind is "reasoning" | "tool" | "tool_result" {
+function isMachineTraceKind(kind: string): kind is "reasoning" | "tool" | "tool_result" | "todo_snapshot" {
   return MACHINE_TRACE_KINDS.has(kind);
 }
 
@@ -878,32 +878,60 @@ function ToolResultIcon() {
   );
 }
 
-function ReasoningIcon() {
+function TodoChangeIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M9.5 18c-2.5 0-4.5-2.06-4.5-4.6 0-1.56.79-2.94 1.99-3.77A5.5 5.5 0 0 1 12 4a5.5 5.5 0 0 1 5.01 5.63A4.6 4.6 0 0 1 19 13.4c0 2.54-2 4.6-4.5 4.6" />
-      <path d="M10 10.5c.3-.74 1.03-1.25 1.88-1.25 1.11 0 2.02.91 2.02 2.03 0 .82-.5 1.53-1.2 1.84-.5.22-.83.7-.83 1.24V15" />
-      <path d="M12 18.5h.01" />
+      <path d="M9 6h11" />
+      <path d="M9 12h11" />
+      <path d="M9 18h11" />
+      <path d="m4.5 6 1.5 1.5L8.5 5" />
+      <path d="m4.5 12 1.5 1.5L8.5 11" />
+      <path d="m4.5 18 1.5 1.5L8.5 17" />
     </svg>
   );
 }
 
-function machineTraceTitle(event: MessageEvent, kind: "reasoning" | "tool" | "tool_result") {
+function ReasoningIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M9.5 7.5A3.5 3.5 0 0 0 6 11c0 1.2.6 2.3 1.5 2.95.62.45 1 .96 1 1.55v1h7v-1c0-.59.38-1.1 1-1.55A3.6 3.6 0 0 0 18 11a3.5 3.5 0 0 0-3.5-3.5c-.93 0-1.78.36-2.42.95A3.47 3.47 0 0 0 9.5 7.5Z" />
+      <path d="M10 16.5v2" />
+      <path d="M14 16.5v2" />
+      <path d="M9.5 20.5h5" />
+      <path d="M9.75 11.25h.01" />
+      <path d="M14.25 11.25h.01" />
+      <path d="M10.75 13.5c.32.38.77.6 1.25.6s.93-.22 1.25-.6" />
+    </svg>
+  );
+}
+
+function machineTraceTitle(event: MessageEvent, kind: "reasoning" | "tool" | "tool_result" | "todo_snapshot") {
   if (kind === "reasoning") {
     return firstNonEmptyText(event.summary, "Reasoning");
   }
   if (kind === "tool") {
     return firstNonEmptyText(event.name, "Tool");
   }
+  if (kind === "todo_snapshot") {
+    return firstNonEmptyText(event.progress_text, event.operation, "Todo update");
+  }
   return firstNonEmptyText(event.name, event.summary, "Tool result");
 }
 
-function machineTraceSummary(event: MessageEvent, kind: "reasoning" | "tool" | "tool_result") {
+function machineTraceSummary(event: MessageEvent, kind: "reasoning" | "tool" | "tool_result" | "todo_snapshot") {
   if (kind === "reasoning") {
     return compactSingleLine(firstNonEmptyText(event.summary, event.text), 90);
   }
   if (kind === "tool") {
     return compactSingleLine(firstNonEmptyText(event.summary, event.text, event.context), 90);
+  }
+  if (kind === "todo_snapshot") {
+    const items = Array.isArray(event.items)
+      ? event.items
+        .map((item) => firstNonEmptyText(item.title, item.description))
+        .filter((value): value is string => Boolean(value))
+      : [];
+    return compactSingleLine(firstNonEmptyText(event.progress_text, event.operation, items.join(", ")), 90);
   }
   const detailsText = !event.text && event.details ? JSON.stringify(event.details, null, 2) : "";
   return compactSingleLine(firstNonEmptyText(event.summary, event.text, detailsSummary(event.details), detailsText), 90);
@@ -912,7 +940,7 @@ function machineTraceSummary(event: MessageEvent, kind: "reasoning" | "tool" | "
 function hasTrailingUnresolvedTool(events: MessageEvent[]) {
   for (let index = events.length - 1; index >= 0; index -= 1) {
     const kind = eventKind(events[index]);
-    if (kind === "tool_result") {
+    if (kind === "tool_result" || kind === "todo_snapshot") {
       return false;
     }
     if (kind === "tool") {
@@ -934,7 +962,7 @@ function machineTraceRunningIndex(events: MessageEvent[], isBusy: boolean) {
   return -1;
 }
 
-function renderMachineTraceDetail(event: MessageEvent, kind: "reasoning" | "tool" | "tool_result", options: MarkdownRenderOptions) {
+function renderMachineTraceDetail(event: MessageEvent, kind: "reasoning" | "tool" | "tool_result" | "todo_snapshot", options: MarkdownRenderOptions) {
   if (kind === "reasoning") {
     const summary = firstNonEmptyText(event.summary);
     const body = firstNonEmptyText(event.text, summary);
@@ -952,6 +980,26 @@ function renderMachineTraceDetail(event: MessageEvent, kind: "reasoning" | "tool
       <div className="machineTraceDetailBody space-y-3">
         {renderCardHeader("tool", machineTraceTitle(event, kind), event.summary || undefined, event.ts)}
         {body ? renderRichText(body, "messageBody", options) : <div className="messageCardFooterText text-sm text-muted-foreground">No additional tool input.</div>}
+      </div>
+    );
+  }
+
+  if (kind === "todo_snapshot") {
+    const items = Array.isArray(event.items) ? event.items : [];
+    return (
+      <div className="machineTraceDetailBody space-y-3">
+        {renderCardHeader("todo_snapshot", machineTraceTitle(event, kind), firstNonEmptyText(event.operation), event.ts)}
+        {items.length ? (
+          <ul className="messageTodoList space-y-2">
+            {items.map((item, index) => (
+              <li key={`${item.title || "todo"}-${index}`} className="messageTodoItem flex items-start gap-3 rounded-xl px-3 py-2 text-sm">
+                <span className={cn("messageTodoStatus rounded-full px-2 py-0.5 text-xs font-semibold uppercase tracking-wide", typeof item.status === "string" ? item.status : "unknown")}>{item.status || "unknown"}</span>
+                <span>{item.title || item.description || "Untitled item"}</span>
+              </li>
+            ))}
+          </ul>
+        ) : <div className="messageCardFooterText text-sm text-muted-foreground">No todo items in this snapshot.</div>}
+        {event.text ? renderRichText(event.text, "messageBody", options) : null}
       </div>
     );
   }
@@ -986,7 +1034,11 @@ function CompactMachineTrace({ events, options, isBusy }: { events: MessageEvent
           const isRunning = index === runningIndex;
           const summary = machineTraceSummary(event, kind);
           const title = machineTraceTitle(event, kind);
-          const statusLabel = kind === "tool_result" ? (event.is_error ? "error" : "complete") : isRunning ? "running" : kind;
+          const statusLabel = kind === "tool_result"
+            ? (event.is_error ? "error" : "complete")
+            : kind === "todo_snapshot"
+              ? "updated"
+              : isRunning ? "running" : kind;
           return (
             <button
               key={`${kind}-${index}-${title}`}
@@ -999,7 +1051,13 @@ function CompactMachineTrace({ events, options, isBusy }: { events: MessageEvent
               onClick={() => setSelectedIndex((current) => (current === index ? null : index))}
             >
               <span className="machineTraceTokenIcon" aria-hidden="true">
-                {kind === "tool" ? <ToolCallIcon /> : kind === "tool_result" ? <ToolResultIcon /> : <ReasoningIcon />}
+                {kind === "tool"
+                  ? <ToolCallIcon />
+                  : kind === "tool_result"
+                    ? <ToolResultIcon />
+                    : kind === "todo_snapshot"
+                      ? <TodoChangeIcon />
+                      : <ReasoningIcon />}
               </span>
               {isRunning ? <span className="machineTraceTokenPulse" aria-hidden="true" /> : null}
             </button>
@@ -1271,15 +1329,25 @@ function findPreviousUserRow(pane: HTMLElement): HTMLElement | null {
   return candidate;
 }
 
-function shouldShowScrollToBottom(pane: HTMLElement): boolean {
+function paneDistanceFromBottom(pane: HTMLElement): number {
   const rows = Array.from(pane.querySelectorAll<HTMLElement>(".messageRow"));
   const lastRow = rows[rows.length - 1] ?? null;
   const fallbackContentBottom = lastRow ? lastRow.offsetTop + lastRow.offsetHeight : 0;
   const contentBottom = Math.max(pane.scrollHeight, fallbackContentBottom);
   const visibleHeight = pane.clientHeight > 0 ? pane.clientHeight : 0;
-  const distanceFromBottom = contentBottom - (pane.scrollTop + visibleHeight);
+  return contentBottom - (pane.scrollTop + visibleHeight);
+}
+
+function shouldShowScrollToBottom(pane: HTMLElement): boolean {
+  const visibleHeight = pane.clientHeight > 0 ? pane.clientHeight : 0;
   const threshold = visibleHeight > 0 ? Math.max(160, Math.round(visibleHeight * 0.5)) : 180;
-  return distanceFromBottom > threshold;
+  return paneDistanceFromBottom(pane) > threshold;
+}
+
+function shouldAutoFollowBottom(pane: HTMLElement): boolean {
+  const visibleHeight = pane.clientHeight > 0 ? pane.clientHeight : 0;
+  const threshold = visibleHeight > 0 ? Math.max(40, Math.round(visibleHeight * 0.12)) : 48;
+  return paneDistanceFromBottom(pane) <= threshold;
 }
 
 function scrollPaneToPosition(element: HTMLElement, top: number) {
@@ -1297,7 +1365,12 @@ interface ConversationPaneProps {
 
 export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
   const { activeSessionId, items } = useSessionsStore();
-  const { busyBySessionId } = useLiveSessionStore();
+  const liveSessionState = useLiveSessionStore() as {
+    busyBySessionId?: Record<string, boolean>;
+    errorBySessionId?: Record<string, string>;
+  };
+  const busyBySessionId = liveSessionState.busyBySessionId ?? {};
+  const errorBySessionId = liveSessionState.errorBySessionId ?? {};
   const composerState = useComposerStore();
   const composerStoreApi = useComposerStoreApi();
   const pendingBySessionId = composerState.pendingBySessionId ?? {};
@@ -1372,6 +1445,7 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
   const sectionRef = useRef<HTMLElement | null>(null);
   const historyAnchorRef = useRef<{ key: string; top: number } | null>(null);
   const scrollModeRef = useRef<"bottom" | "preserve" | null>(null);
+  const autoFollowBottomRef = useRef(true);
   const [showPreviousUserJump, setShowPreviousUserJump] = useState(false);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [attemptedLoadOlder, setAttemptedLoadOlder] = useState(false);
@@ -1384,6 +1458,7 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
   const showHistoryTopReached = Boolean(activeSessionId && messages.length && attemptedLoadOlder && !olderLoading && !hasOlder && olderCursor <= 0);
   const waitingForInitialHistoricalReplay = activeSessionIsHistoricalPi && messages.length === 0 && !activeSessionLoaded;
   const showLoadingState = (activeSessionLoading || waitingForInitialHistoricalReplay) && messages.length === 0 && !activeSessionLoaded;
+  const liveSessionError = activeSessionId ? String(errorBySessionId[activeSessionId] || "").trim() : "";
   const markdownOptions: MarkdownRenderOptions = {
     sessionId: activeSessionId || undefined,
     cwd: activeSession?.cwd,
@@ -1392,6 +1467,7 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
 
   useEffect(() => {
     setAttemptedLoadOlder(false);
+    autoFollowBottomRef.current = true;
   }, [activeSessionId]);
 
   useEffect(() => {
@@ -1431,11 +1507,19 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
       }
       historyAnchorRef.current = null;
       scrollModeRef.current = null;
+      autoFollowBottomRef.current = shouldAutoFollowBottom(pane);
       recomputeFloatingNavigation();
       return;
     }
 
-    scrollPaneToBottom(pane);
+    if (scrollModeRef.current === "bottom" || autoFollowBottomRef.current) {
+      scrollPaneToBottom(pane);
+      autoFollowBottomRef.current = true;
+      scrollModeRef.current = null;
+      recomputeFloatingNavigation();
+      return;
+    }
+
     scrollModeRef.current = null;
     recomputeFloatingNavigation();
   }, [messages.length, activeSessionId, isBusy]);
@@ -1447,6 +1531,7 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
     }
 
     const onScroll = () => {
+      autoFollowBottomRef.current = shouldAutoFollowBottom(pane);
       if (pane.scrollTop <= 12 && !olderLoading && (hasOlder || olderCursor > 0)) {
         void handleLoadOlder();
       }
@@ -1469,6 +1554,7 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
       };
       scrollModeRef.current = "preserve";
     }
+    autoFollowBottomRef.current = false;
     setAttemptedLoadOlder(true);
     await messagesStoreApi.loadOlder(activeSessionId);
   };
@@ -1487,6 +1573,7 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
     if (!activeSessionId) return;
     historyAnchorRef.current = null;
     scrollModeRef.current = "bottom";
+    autoFollowBottomRef.current = true;
     if (activeSessionIsHistoricalPi) {
       await messagesStoreApi.loadInitial(activeSessionId);
       return;
@@ -1508,6 +1595,7 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
   const handleScrollToBottom = () => {
     const pane = sectionRef.current?.querySelector(".conversationPane") as HTMLElement | null;
     if (!pane) return;
+    autoFollowBottomRef.current = true;
     scrollPaneToPosition(pane, pane.scrollHeight);
   };
 
@@ -1546,6 +1634,12 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
                   </button>
                 </div>
               </div>
+            ) : null}
+            {liveSessionError ? (
+              <MessageSurface kind="event" isError>
+                {renderCardHeader("event", "Pi RPC warning")}
+                <div className="messageCardFooterText text-sm text-foreground">{liveSessionError}</div>
+              </MessageSurface>
             ) : null}
             {rows.length ? (
               rows.map((row, index) => {
