@@ -2787,6 +2787,50 @@ def _read_new_session_defaults() -> dict[str, Any]:
     }
 
 
+def _fallback_path_mtime(path: Path) -> float | None:
+    try:
+        stat = path.stat()
+    except FileNotFoundError:
+        return None
+    except Exception:
+        return 0.0
+    return float(stat.st_mtime)
+
+
+def _last_pi_conversation_ts(path: Path) -> float | None:
+    try:
+        for entry in _rollout_log._iter_jsonl_objects_reverse(path):
+            if entry.get("type") != "message":
+                continue
+            message = entry.get("message")
+            if not isinstance(message, dict):
+                continue
+            role = message.get("role")
+            if role not in {"user", "assistant", "toolResult"}:
+                continue
+            ts = _pi_messages._entry_ts(message)
+            if ts is None:
+                ts = _pi_messages._entry_ts(entry)
+            if isinstance(ts, (int, float)) and math.isfinite(float(ts)) and float(ts) > 0:
+                return float(ts)
+    except FileNotFoundError:
+        return None
+    except Exception:
+        return 0.0
+    return None
+
+
+def _resume_candidate_updated_ts(path: Path, *, agent_backend: str) -> float | None:
+    backend_name = normalize_agent_backend(agent_backend)
+    if backend_name == "pi":
+        ts = _last_pi_conversation_ts(path)
+    else:
+        ts = _last_conversation_ts_from_tail(path)
+    if isinstance(ts, (int, float)) and math.isfinite(float(ts)) and float(ts) > 0:
+        return float(ts)
+    return _fallback_path_mtime(path)
+
+
 def _resume_candidate_from_log(
     log_path: Path, *, agent_backend: str = "codex"
 ) -> dict[str, Any] | None:
@@ -2800,13 +2844,9 @@ def _resume_candidate_from_log(
         return None
     if not isinstance(cwd, str) or not cwd:
         return None
-    try:
-        stat = log_path.stat()
-        updated_ts = float(stat.st_mtime)
-    except FileNotFoundError:
+    updated_ts = _resume_candidate_updated_ts(log_path, agent_backend=backend_name)
+    if updated_ts is None:
         return None
-    except Exception:
-        updated_ts = 0.0
     git_branch = ""
     if backend_name == "codex":
         git_info = meta.get("git")
@@ -2860,9 +2900,8 @@ def _pi_resume_candidate_from_session_file(session_path: Path) -> dict[str, Any]
                     return None
                 if not (isinstance(cwd, str) and cwd):
                     return None
-                try:
-                    updated_ts = float(session_path.stat().st_mtime)
-                except OSError:
+                updated_ts = _resume_candidate_updated_ts(session_path, agent_backend="pi")
+                if updated_ts is None:
                     return None
                 return {
                     "session_id": session_id,
@@ -2967,28 +3006,19 @@ def _list_resume_candidates_for_cwd(
     backend_raw = backend if backend is not None else agent_backend
     backend2 = normalize_agent_backend(backend_raw, default="codex")
     if backend2 == "pi":
-        out: list[dict[str, Any]] = []
+        rows: list[dict[str, Any]] = []
         session_dir = _pi_native_session_dir_for_cwd(cwd2)
         if not session_dir.exists():
-            return out
-        ranked_paths: list[tuple[float, Path]] = []
+            return rows
         for session_path in session_dir.glob("*.jsonl"):
-            mtime = _safe_path_mtime(session_path)
-            if mtime is None:
-                continue
-            ranked_paths.append((mtime, session_path))
-        for _mtime, session_path in sorted(
-            ranked_paths, key=lambda item: item[0], reverse=True
-        ):
             row = _pi_resume_candidate_from_session_file(session_path)
             if not isinstance(row, dict):
                 continue
             if row.get("cwd") != cwd2:
                 continue
-            out.append(row)
-            if len(out) >= limit:
-                break
-        return out
+            rows.append(row)
+        rows.sort(key=lambda row: -float(row.get("updated_ts") or 0.0))
+        return rows[:limit]
     out: list[dict[str, Any]] = []
     seen: set[str] = set()
     for log_path in _iter_session_logs(agent_backend=backend2):
@@ -3008,38 +3038,29 @@ def _list_resume_candidates_for_cwd(
             continue
         out.append(row)
         seen.add(session_id)
-        if len(out) >= limit:
-            break
-    return out
+    out.sort(key=lambda row: -float(row.get("updated_ts") or 0.0))
+    return out[:limit]
 
 
 def _iter_all_resume_candidates(*, limit: int = 200) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
 
-    pi_ranked_paths: list[tuple[float, Path]] = []
+    ranked_rows: list[tuple[float, dict[str, Any]]] = []
+
     if PI_NATIVE_SESSIONS_DIR.exists():
         for session_path in PI_NATIVE_SESSIONS_DIR.glob("--*--/*.jsonl"):
-            mtime = _safe_path_mtime(session_path)
-            if mtime is None:
+            row = _pi_resume_candidate_from_session_file(session_path)
+            if not isinstance(row, dict):
                 continue
-            pi_ranked_paths.append((mtime, session_path))
-    for _mtime, session_path in sorted(
-        pi_ranked_paths, key=lambda item: item[0], reverse=True
-    ):
-        row = _pi_resume_candidate_from_session_file(session_path)
-        if not isinstance(row, dict):
-            continue
-        session_id = row.get("session_id")
-        if not isinstance(session_id, str) or not session_id:
-            continue
-        key = ("pi", session_id)
-        if key in seen:
-            continue
-        rows.append(row)
-        seen.add(key)
-        if len(rows) >= limit:
-            return rows
+            session_id = row.get("session_id")
+            if not isinstance(session_id, str) or not session_id:
+                continue
+            key = ("pi", session_id)
+            if key in seen:
+                continue
+            seen.add(key)
+            ranked_rows.append((float(row.get("updated_ts") or 0.0), row))
 
     for log_path in _iter_session_logs(agent_backend="codex"):
         try:
@@ -3054,12 +3075,11 @@ def _iter_all_resume_candidates(*, limit: int = 200) -> list[dict[str, Any]]:
         key = ("codex", session_id)
         if key in seen:
             continue
-        rows.append(row)
         seen.add(key)
-        if len(rows) >= limit:
-            return rows
+        ranked_rows.append((float(row.get("updated_ts") or 0.0), row))
 
-    return rows
+    ranked_rows.sort(key=lambda item: -item[0])
+    return [row for _updated_ts, row in ranked_rows[:limit]]
 
 
 def _historical_session_id(backend: str, resume_session_id: str) -> str:
