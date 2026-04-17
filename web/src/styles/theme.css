@@ -108,100 +108,100 @@
 
 :root[data-theme="dark"] {
   color-scheme: dark;
-  background: hsl(224 26% 10%);
-  color: hsl(214 28% 92%);
+  background: hsl(258 23% 8%);
+  color: hsl(0 0% 75%);
 
-  --background: 224 26% 10%;
-  --foreground: 214 28% 92%;
-  --card: 224 22% 13%;
-  --card-foreground: 214 28% 92%;
-  --popover: 224 22% 13%;
-  --popover-foreground: 214 28% 92%;
-  --primary: 200 92% 64%;
-  --primary-foreground: 222 47% 11%;
-  --secondary: 224 16% 18%;
-  --secondary-foreground: 214 28% 92%;
-  --muted: 223 16% 18%;
-  --muted-foreground: 218 16% 68%;
-  --accent: 217 42% 18%;
-  --accent-foreground: 214 28% 92%;
-  --destructive: 0 78% 61%;
-  --destructive-foreground: 210 40% 98%;
-  --border: 221 14% 24%;
-  --input: 221 14% 24%;
-  --ring: 200 92% 64%;
+  --background: 258 23% 8%;
+  --foreground: 0 0% 75%;
+  --card: 255 21% 11%;
+  --card-foreground: 0 0% 75%;
+  --popover: 255 21% 11%;
+  --popover-foreground: 0 0% 75%;
+  --primary: 189 86% 45%;
+  --primary-foreground: 255 24% 10%;
+  --secondary: 257 18% 15%;
+  --secondary-foreground: 0 0% 75%;
+  --muted: 257 18% 15%;
+  --muted-foreground: 221 34% 71%;
+  --accent: 256 20% 17%;
+  --accent-foreground: 0 0% 75%;
+  --destructive: 340 87% 66%;
+  --destructive-foreground: 255 24% 10%;
+  --border: 255 18% 14%;
+  --input: 255 18% 14%;
+  --ring: 189 86% 45%;
   --radius: 1rem;
 
   --bg: hsl(var(--background));
   --panel: hsl(var(--card));
   --text: hsl(var(--foreground));
   --text-muted: hsl(var(--muted-foreground));
-  --surface: hsl(var(--card) / 0.88);
+  --surface: hsl(var(--card) / 0.9);
   --surface-border: hsl(var(--border));
   --legacy-border: hsl(var(--border));
   --legacy-accent: hsl(var(--primary));
   --legacy-muted: hsl(var(--muted-foreground));
-  --accent-weak: hsl(var(--primary) / 0.12);
-  --shadow: 0 24px 60px rgba(2, 6, 23, 0.48);
-  --shadow-sm: 0 1px 2px rgba(2, 6, 23, 0.28);
-  --bubble-user: hsl(214 52% 18%);
-  --bubble-assistant: hsl(223 22% 14%);
+  --accent-weak: hsl(var(--primary) / 0.1);
+  --shadow: 0 22px 56px rgba(3, 2, 8, 0.46);
+  --shadow-sm: 0 1px 2px rgba(3, 2, 8, 0.24);
+  --bubble-user: hsl(252 28% 16%);
+  --bubble-assistant: hsl(255 21% 11%);
 
   --page-background:
-    radial-gradient(circle at top, hsl(var(--primary) / 0.18), transparent 36%),
-    linear-gradient(180deg, hsl(224 30% 12%), hsl(var(--background)) 42%, hsl(228 26% 8%));
+    radial-gradient(circle at top, hsl(var(--primary) / 0.08), transparent 38%),
+    linear-gradient(180deg, hsl(258 22% 10%), hsl(var(--background)) 44%, hsl(258 24% 6%));
   --shell-background:
-    radial-gradient(circle at top left, hsl(var(--primary) / 0.12), transparent 28%),
-    linear-gradient(180deg, color-mix(in srgb, var(--panel) 92%, #111827), color-mix(in srgb, var(--bg) 96%, #020617));
-  --chrome-border: color-mix(in srgb, var(--legacy-border) 88%, black);
-  --chrome-surface: color-mix(in srgb, var(--panel) 94%, #111827);
-  --chrome-elevated: color-mix(in srgb, var(--panel) 88%, #0f172a);
-  --dialog-backdrop: rgba(2, 6, 23, 0.62);
-  --field-label: color-mix(in srgb, var(--text) 82%, transparent);
-  --field-surface: rgba(15, 23, 42, 0.72);
-  --field-surface-disabled: rgba(255, 255, 255, 0.04);
-  --field-border: rgba(148, 163, 184, 0.16);
-  --field-focus: rgba(56, 189, 248, 0.14);
-  --field-focus-border: rgba(56, 189, 248, 0.4);
-  --control-surface: rgba(15, 23, 42, 0.76);
-  --control-surface-hover: rgba(30, 41, 59, 0.92);
-  --control-border: rgba(148, 163, 184, 0.18);
+    radial-gradient(circle at top left, hsl(var(--primary) / 0.06), transparent 30%),
+    linear-gradient(180deg, color-mix(in srgb, var(--panel) 94%, #0d0b12), color-mix(in srgb, var(--bg) 98%, #09070d));
+  --chrome-border: color-mix(in srgb, var(--legacy-border) 92%, black);
+  --chrome-surface: color-mix(in srgb, var(--panel) 96%, #0d0b12);
+  --chrome-elevated: color-mix(in srgb, var(--panel) 92%, #14111b);
+  --dialog-backdrop: rgba(5, 4, 10, 0.68);
+  --field-label: color-mix(in srgb, var(--text) 78%, transparent);
+  --field-surface: rgba(25, 22, 33, 0.92);
+  --field-surface-disabled: rgba(255, 255, 255, 0.03);
+  --field-border: rgba(14, 210, 247, 0.08);
+  --field-focus: rgba(14, 210, 247, 0.12);
+  --field-focus-border: rgba(14, 210, 247, 0.34);
+  --control-surface: rgba(25, 22, 33, 0.88);
+  --control-surface-hover: rgba(31, 27, 41, 0.96);
+  --control-border: rgba(14, 210, 247, 0.12);
 
-  --message-card-base: color-mix(in srgb, var(--panel) 92%, #111827);
-  --message-card-reasoning-bg: color-mix(in srgb, #2d2418 78%, var(--panel));
-  --message-card-reasoning-border: color-mix(in srgb, #6f5a34 44%, var(--legacy-border));
-  --message-card-tool-bg: color-mix(in srgb, #122336 82%, var(--panel));
-  --message-card-tool-border: color-mix(in srgb, #29527f 42%, var(--legacy-border));
-  --message-card-tool-result-bg: color-mix(in srgb, #10291f 82%, var(--panel));
-  --message-card-tool-result-border: color-mix(in srgb, #3f6f58 42%, var(--legacy-border));
-  --message-card-tool-error-bg: color-mix(in srgb, #351617 86%, var(--panel));
-  --message-card-tool-error-border: rgba(248, 113, 113, 0.32);
-  --message-card-subagent-bg: color-mix(in srgb, #201a36 80%, var(--panel));
-  --message-card-subagent-border: color-mix(in srgb, #5a4d93 40%, var(--legacy-border));
-  --message-card-todo-bg: color-mix(in srgb, #1f2a16 82%, var(--panel));
-  --message-card-todo-border: color-mix(in srgb, #5f7a3a 40%, var(--legacy-border));
-  --message-card-system-bg: color-mix(in srgb, #161b26 84%, var(--panel));
-  --message-card-system-border: color-mix(in srgb, #374151 42%, var(--legacy-border));
+  --message-card-base: color-mix(in srgb, var(--panel) 96%, #100e17);
+  --message-card-reasoning-bg: color-mix(in srgb, #241d1a 82%, var(--panel));
+  --message-card-reasoning-border: color-mix(in srgb, #6b5841 36%, var(--legacy-border));
+  --message-card-tool-bg: color-mix(in srgb, #111f2a 84%, var(--panel));
+  --message-card-tool-border: color-mix(in srgb, #1c6072 34%, var(--legacy-border));
+  --message-card-tool-result-bg: color-mix(in srgb, #11201b 84%, var(--panel));
+  --message-card-tool-result-border: color-mix(in srgb, #30594f 32%, var(--legacy-border));
+  --message-card-tool-error-bg: color-mix(in srgb, #2b131b 88%, var(--panel));
+  --message-card-tool-error-border: rgba(244, 86, 157, 0.24);
+  --message-card-subagent-bg: color-mix(in srgb, #1c1730 84%, var(--panel));
+  --message-card-subagent-border: color-mix(in srgb, #4b3b76 30%, var(--legacy-border));
+  --message-card-todo-bg: color-mix(in srgb, #182117 86%, var(--panel));
+  --message-card-todo-border: color-mix(in srgb, #476046 28%, var(--legacy-border));
+  --message-card-system-bg: color-mix(in srgb, #15131d 88%, var(--panel));
+  --message-card-system-border: color-mix(in srgb, #2f2a3f 30%, var(--legacy-border));
 
-  --markdown-heading: hsl(214 30% 96%);
-  --markdown-link: hsl(198 100% 72%);
-  --markdown-link-hover: hsl(192 96% 80%);
-  --markdown-file-link-bg: hsl(216 38% 18%);
-  --markdown-file-link-border: hsl(211 42% 36%);
-  --markdown-inline-code-bg: hsl(222 18% 18%);
-  --markdown-inline-code-border: hsl(221 15% 28%);
-  --markdown-inline-code-fg: hsl(36 78% 82%);
-  --markdown-code-bg: hsl(222 28% 12%);
-  --markdown-code-border: hsl(220 18% 24%);
-  --markdown-code-fg: hsl(214 34% 92%);
-  --markdown-blockquote-bg: hsl(216 36% 15%);
-  --markdown-blockquote-border: hsl(200 80% 58%);
-  --markdown-blockquote-fg: hsl(212 30% 84%);
-  --markdown-table-bg: hsl(223 22% 14%);
-  --markdown-table-header-bg: hsl(221 18% 18%);
-  --markdown-table-row-alt: hsl(222 20% 16%);
-  --markdown-table-border: hsl(221 16% 24%);
-  --markdown-rule: hsl(221 14% 26%);
+  --markdown-heading: hsl(188 72% 46%);
+  --markdown-link: hsl(198 91% 70%);
+  --markdown-link-hover: hsl(198 91% 76%);
+  --markdown-file-link-bg: hsl(256 20% 16%);
+  --markdown-file-link-border: hsl(189 52% 34%);
+  --markdown-inline-code-bg: hsl(258 18% 15%);
+  --markdown-inline-code-border: hsl(255 16% 22%);
+  --markdown-inline-code-fg: hsl(334 82% 70%);
+  --markdown-code-bg: hsl(255 20% 12%);
+  --markdown-code-border: hsl(255 16% 18%);
+  --markdown-code-fg: hsl(0 0% 76%);
+  --markdown-blockquote-bg: hsl(254 20% 14%);
+  --markdown-blockquote-border: hsl(205 91% 64%);
+  --markdown-blockquote-fg: hsl(220 32% 80%);
+  --markdown-table-bg: hsl(255 21% 11%);
+  --markdown-table-header-bg: hsl(256 18% 14%);
+  --markdown-table-row-alt: hsl(255 18% 13%);
+  --markdown-table-border: hsl(189 54% 18%);
+  --markdown-rule: hsl(255 16% 20%);
 }
 
 body {
