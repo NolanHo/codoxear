@@ -1,5 +1,9 @@
 import type { VoiceSettingsResponse } from "../../lib/types";
 
+export type ThemeMode = "light" | "dark";
+
+export const THEME_MODE_STORAGE_KEY = "codoxear.themeMode";
+
 export const DEFAULT_VOICE_SETTINGS: VoiceSettingsResponse = {
   tts_enabled_for_narration: false,
   tts_enabled_for_final_response: true,
@@ -40,6 +44,27 @@ export function writeLocalToggle(key: string, value: boolean) {
 export function readLocalToggleDefaultOn(key: string) {
   if (typeof window === "undefined") return true;
   return window.localStorage.getItem(key) !== "0";
+}
+
+export function normalizeThemeMode(value: unknown): ThemeMode {
+  return value === "dark" ? "dark" : "light";
+}
+
+export function readThemeMode(): ThemeMode {
+  if (typeof window === "undefined") return "light";
+  return normalizeThemeMode(window.localStorage.getItem(THEME_MODE_STORAGE_KEY));
+}
+
+export function writeThemeMode(mode: ThemeMode) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(THEME_MODE_STORAGE_KEY, normalizeThemeMode(mode));
+}
+
+export function applyThemeMode(mode: ThemeMode) {
+  if (typeof document === "undefined") return;
+  const next = normalizeThemeMode(mode);
+  document.documentElement.dataset.theme = next;
+  document.documentElement.style.colorScheme = next;
 }
 
 export function getAnnouncementClientId() {

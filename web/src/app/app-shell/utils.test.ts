@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
+  applyThemeMode,
   base64UrlToUint8Array,
   mergeVoiceSettings,
   readLocalToggle,
   readLocalToggleDefaultOn,
+  readThemeMode,
   replySoundTextKey,
   shortSessionId,
+  writeThemeMode,
 } from "./utils";
 
 describe("app-shell utils", () => {
@@ -21,6 +24,15 @@ describe("app-shell utils", () => {
 
     localStorage.removeItem("codoxear.flag");
     expect(readLocalToggleDefaultOn("codoxear.default-on")).toBe(true);
+  });
+
+  it("reads and applies persisted theme mode", () => {
+    writeThemeMode("dark");
+    applyThemeMode(readThemeMode());
+
+    expect(readThemeMode()).toBe("dark");
+    expect(document.documentElement.dataset.theme).toBe("dark");
+    expect(document.documentElement.style.colorScheme).toBe("dark");
   });
 
   it("merges voice settings into the default nested shape", () => {

@@ -26,11 +26,13 @@ describe("VoiceSettingsDialog", () => {
         open
         replySoundEnabled={false}
         status=""
+        themeMode="light"
         voiceApiKeyDraft=""
         voiceBaseUrlDraft=""
         onChangeEnterToSend={() => undefined}
         onChangeNarrationEnabled={() => undefined}
         onChangeReplySoundEnabled={() => undefined}
+        onChangeThemeMode={() => undefined}
         onChangeVoiceApiKey={() => undefined}
         onChangeVoiceBaseUrl={() => undefined}
         onClose={() => undefined}
@@ -62,6 +64,7 @@ describe("VoiceSettingsDialog", () => {
     const onClose = vi.fn();
     const onSave = vi.fn();
     const onTriggerTestPush = vi.fn();
+    const onChangeThemeMode = vi.fn();
 
     root = document.createElement("div");
     document.body.appendChild(root);
@@ -74,11 +77,13 @@ describe("VoiceSettingsDialog", () => {
         open
         replySoundEnabled={false}
         status=""
+        themeMode="light"
         voiceApiKeyDraft=""
         voiceBaseUrlDraft=""
         onChangeEnterToSend={() => undefined}
         onChangeNarrationEnabled={() => undefined}
         onChangeReplySoundEnabled={() => undefined}
+        onChangeThemeMode={onChangeThemeMode}
         onChangeVoiceApiKey={() => undefined}
         onChangeVoiceBaseUrl={() => undefined}
         onClose={onClose}
@@ -92,9 +97,12 @@ describe("VoiceSettingsDialog", () => {
     buttons.find((button) => button.textContent === "Test Push")?.click();
     buttons.find((button) => button.textContent === "Cancel")?.click();
     buttons.find((button) => button.textContent === "Save")?.click();
+    const darkRadio = Array.from(root.querySelectorAll<HTMLInputElement>('input[type="radio"]')).find((input) => !input.checked);
+    darkRadio?.click();
 
     expect(onTriggerTestPush).toHaveBeenCalledTimes(1);
     expect(onClose).toHaveBeenCalledTimes(1);
     expect(onSave).toHaveBeenCalledTimes(1);
+    expect(onChangeThemeMode).toHaveBeenCalledWith("dark");
   });
 });

@@ -13,8 +13,11 @@ import { useAppShellNotifications } from "./app-shell/useAppShellNotifications";
 import { useAppShellSessionEffects } from "./app-shell/useAppShellSessionEffects";
 import { useLiveSessionStore, useLiveSessionStoreApi, useMessagesStore, useSessionUiStore, useSessionUiStoreApi, useSessionsStore, useSessionsStoreApi } from "./providers";
 import {
+  applyThemeMode,
+  readThemeMode,
   shouldUseMobileWorkspaceSheet,
   shortSessionId,
+  writeThemeMode,
 } from "./app-shell/utils";
 
 function EmptyDetailsWorkspace() {
@@ -62,6 +65,7 @@ export function AppShell() {
   const [fileViewerMode, setFileViewerMode] = useState<FileViewMode | null>(null);
   const [fileViewerRequestKey, setFileViewerRequestKey] = useState(0);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [themeMode, setThemeMode] = useState(() => readThemeMode());
   const {
     announcementEnabled,
     announcementLabel,
@@ -199,6 +203,11 @@ export function AppShell() {
   };
 
   useEffect(() => {
+    applyThemeMode(themeMode);
+    writeThemeMode(themeMode);
+  }, [themeMode]);
+
+  useEffect(() => {
     if (activeSessionId) {
       setSidebarOpen(false);
     }
@@ -332,11 +341,13 @@ export function AppShell() {
             open={voiceSettingsOpen}
             replySoundEnabled={replySoundEnabled}
             status={voiceSettingsStatus}
+            themeMode={themeMode}
             voiceApiKeyDraft={voiceApiKeyDraft}
             voiceBaseUrlDraft={voiceBaseUrlDraft}
             onChangeEnterToSend={setEnterToSendDraft}
             onChangeNarrationEnabled={setNarrationEnabledDraft}
             onChangeReplySoundEnabled={setReplySoundEnabled}
+            onChangeThemeMode={setThemeMode}
             onChangeVoiceApiKey={setVoiceApiKeyDraft}
             onChangeVoiceBaseUrl={setVoiceBaseUrlDraft}
             onClose={closeVoiceSettings}

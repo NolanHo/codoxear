@@ -243,6 +243,8 @@ function getToolbarTodoButton() {
 describe("AppShell", () => {
   afterEach(() => {
     localStorage.clear();
+    document.documentElement.dataset.theme = "light";
+    document.documentElement.style.colorScheme = "light";
     setDocumentVisibility("visible");
     if (root) {
       render(null, root);
@@ -596,6 +598,36 @@ describe("AppShell", () => {
     expect(getRoot().textContent).toContain("Announce narration messages");
     expect(getRoot().textContent).toContain("Press Enter to send");
     expect(getRoot().textContent).toContain("Play a short beep when the assistant finishes a reply");
+    expect(getRoot().textContent).toContain("Theme");
+    expect(getRoot().textContent).toContain("Paper-like surfaces with cobalt markdown accents.");
+    expect(getRoot().textContent).toContain("Ink surfaces with brighter markdown contrast for long sessions.");
+  });
+
+  it("persists the selected theme mode from settings", async () => {
+    renderAppShell();
+    await flush();
+
+    const button = getRoot().querySelector<HTMLButtonElement>('[aria-label="Announcements off"]');
+    expect(button).not.toBeNull();
+
+    act(() => {
+      button!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+    await flush();
+
+    const darkRadio = Array.from(getRoot().querySelectorAll<HTMLInputElement>('input[type="radio"]')).find(
+      (input) => input.nextElementSibling?.textContent?.includes("Dark"),
+    );
+    expect(darkRadio).not.toBeUndefined();
+
+    act(() => {
+      darkRadio!.click();
+    });
+    await flush();
+
+    expect(localStorage.getItem("codoxear.themeMode")).toBe("dark");
+    expect(document.documentElement.dataset.theme).toBe("dark");
+    expect(document.documentElement.style.colorScheme).toBe("dark");
   });
 
   it("persists the reply sound toggle from settings", async () => {

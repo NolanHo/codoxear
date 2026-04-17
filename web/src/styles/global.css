@@ -15,9 +15,7 @@ body,
 
 body {
   margin: 0;
-  background:
-    radial-gradient(circle at top, hsl(var(--primary) / 0.18), transparent 36%),
-    linear-gradient(180deg, hsl(0 0% 100% / 0.85), hsl(var(--background)) 42%, hsl(210 32% 90%));
+  background: var(--page-background);
   color: var(--text);
   overflow: hidden;
 }
@@ -96,9 +94,7 @@ select {
   inset: 0;
   gap: 1rem;
   padding: 1rem;
-  background:
-    radial-gradient(circle at top left, hsl(var(--primary) / 0.08), transparent 28%),
-    linear-gradient(180deg, color-mix(in srgb, var(--panel) 82%, white), color-mix(in srgb, var(--bg) 94%, #eef2f7));
+  background: var(--shell-background);
   color: var(--text);
   overflow: hidden;
 }
@@ -113,10 +109,10 @@ select {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  border: 1px solid color-mix(in srgb, var(--legacy-border) 72%, white);
+  border: 1px solid var(--chrome-border);
   border-radius: 30px;
-  background: color-mix(in srgb, var(--panel) 92%, white);
-  box-shadow: 0 20px 48px rgba(15, 23, 42, 0.07);
+  background: var(--chrome-surface);
+  box-shadow: var(--shadow);
 }
 
 .sidebarBanner {
@@ -217,10 +213,10 @@ select {
   flex-direction: column;
   gap: 0.15rem;
   padding: 0.35rem;
-  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  border: 1px solid var(--chrome-border);
   border-radius: 1rem;
-  background: color-mix(in srgb, white 96%, var(--panel));
-  box-shadow: 0 16px 28px rgba(15, 23, 42, 0.16);
+  background: var(--chrome-elevated);
+  box-shadow: var(--shadow);
   z-index: 6;
 }
 
@@ -1026,42 +1022,45 @@ select {
   min-width: 0;
   padding: 11px 13px;
   border-radius: 18px;
-  border: 1px solid color-mix(in srgb, var(--legacy-border) 82%, #cbd5e1);
-  background: color-mix(in srgb, var(--panel) 92%, #f8fafc);
+  border: 1px solid var(--chrome-border);
+  background: var(--message-card-base);
   box-shadow: var(--shadow-sm);
   line-height: 1.35;
   overflow-wrap: anywhere;
 }
 
 .messageCard.ask_user {
-  background: color-mix(in srgb, var(--bubble-assistant) 88%, #eef4ff);
+  background: color-mix(in srgb, var(--bubble-assistant) 88%, var(--message-card-tool-bg));
 }
 
 .messageCard.reasoning {
-  background: color-mix(in srgb, #f6efe3 70%, white);
+  background: var(--message-card-reasoning-bg);
+  border-color: var(--message-card-reasoning-border);
 }
 
 .messageCard.tool {
-  background: color-mix(in srgb, #edf5ff 76%, white);
+  background: var(--message-card-tool-bg);
+  border-color: var(--message-card-tool-border);
 }
 
 .messageCard.tool_result {
-  background: color-mix(in srgb, #eef8ef 76%, white);
-  border-color: color-mix(in srgb, #a7c9ac 48%, var(--legacy-border));
+  background: var(--message-card-tool-result-bg);
+  border-color: var(--message-card-tool-result-border);
 }
 
 .messageCard.tool_result.isError {
-  border-color: rgba(185, 28, 28, 0.28);
-  background: color-mix(in srgb, #fff2f2 82%, white);
+  border-color: var(--message-card-tool-error-border);
+  background: var(--message-card-tool-error-bg);
 }
 
 .messageCard.subagent {
-  background: color-mix(in srgb, #f3f0ff 74%, white);
+  background: var(--message-card-subagent-bg);
+  border-color: var(--message-card-subagent-border);
 }
 
 .messageCard.todo_snapshot {
-  background: color-mix(in srgb, #f2f7ea 78%, white);
-  border-color: color-mix(in srgb, #cad7b4 52%, var(--legacy-border));
+  background: var(--message-card-todo-bg);
+  border-color: var(--message-card-todo-border);
 }
 
 .messageCard.system,
@@ -1070,7 +1069,8 @@ select {
 .messageCard.pi_thinking_level_change,
 .messageCard.pi_event,
 .messageCard.event {
-  background: color-mix(in srgb, #f3f4f6 78%, white);
+  background: var(--message-card-system-bg);
+  border-color: var(--message-card-system-border);
 }
 
 .messageCardHeader {
@@ -1123,8 +1123,9 @@ select {
   box-sizing: border-box;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  background: #0b1220;
-  color: #e5e7eb;
+  background: var(--markdown-code-bg);
+  color: var(--markdown-code-fg);
+  border: 1px solid var(--markdown-code-border);
 }
 
 .messageExpandable {
@@ -1158,8 +1159,8 @@ select {
 
 .messageExpandButton {
   align-self: flex-start;
-  border: 1px solid rgba(15, 23, 42, 0.1);
-  background: rgba(255, 255, 255, 0.75);
+  border: 1px solid var(--control-border);
+  background: var(--control-surface);
   color: var(--text);
   border-radius: 999px;
   padding: 6px 10px;
@@ -1168,7 +1169,7 @@ select {
 }
 
 .messageExpandButton:hover {
-  background: rgba(255, 255, 255, 0.92);
+  background: var(--control-surface-hover);
 }
 
 .messageMetaList {
@@ -1184,8 +1185,8 @@ select {
   gap: 6px;
   padding: 6px 10px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.66);
-  border: 1px solid rgba(15, 23, 42, 0.08);
+  background: var(--control-surface);
+  border: 1px solid var(--control-border);
   font-size: 0.84rem;
 }
 
@@ -1247,13 +1248,79 @@ select {
   margin-bottom: 0;
 }
 
+.messageBody h1,
+.messageBody h2,
+.messageBody h3,
+.messageBody h4,
+.messageBody h5,
+.messageBody h6 {
+  margin: 1rem 0 0.45rem;
+  color: var(--markdown-heading);
+  line-height: 1.18;
+}
+
+.messageBody h1:first-child,
+.messageBody h2:first-child,
+.messageBody h3:first-child,
+.messageBody h4:first-child,
+.messageBody h5:first-child,
+.messageBody h6:first-child {
+  margin-top: 0;
+}
+
+.messageBody a {
+  color: var(--markdown-link);
+  font-weight: 600;
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 0.16em;
+}
+
+.messageBody a:hover {
+  color: var(--markdown-link-hover);
+}
+
+.messageBody a[data-file-path] {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.08rem 0.45rem;
+  border-radius: 999px;
+  border: 1px solid var(--markdown-file-link-border);
+  background: var(--markdown-file-link-bg);
+}
+
+.messageBody ul,
+.messageBody ol {
+  margin: 0.7rem 0 0.95rem;
+}
+
+.messageBody li + li {
+  margin-top: 0.25rem;
+}
+
+.messageBody blockquote {
+  margin: 0.9rem 0;
+  padding: 0.8rem 1rem;
+  border-radius: 0.95rem;
+  background: var(--markdown-blockquote-bg);
+  border-left: 3px solid var(--markdown-blockquote-border);
+  color: var(--markdown-blockquote-fg);
+}
+
+.messageBody hr {
+  margin: 1rem 0;
+  border: 0;
+  border-top: 1px solid var(--markdown-rule);
+}
+
 .messageBody code {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   font-size: 13px;
   padding: 1px 6px;
   border-radius: 8px;
-  background: rgba(15, 23, 42, 0.06);
-  border: 1px solid rgba(15, 23, 42, 0.08);
+  background: var(--markdown-inline-code-bg);
+  border: 1px solid var(--markdown-inline-code-border);
+  color: var(--markdown-inline-code-fg);
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -1267,8 +1334,9 @@ select {
   box-sizing: border-box;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  background: #0b1220;
-  color: #e5e7eb;
+  background: var(--markdown-code-bg);
+  color: var(--markdown-code-fg);
+  border: 1px solid var(--markdown-code-border);
 }
 
 .messageBody pre code {
@@ -1277,6 +1345,35 @@ select {
   background: transparent;
   color: inherit;
   white-space: inherit;
+}
+
+.messageBody table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--markdown-table-bg);
+}
+
+.messageBody th,
+.messageBody td {
+  padding: 0.72rem 0.85rem;
+  border: 1px solid var(--markdown-table-border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.messageBody th {
+  background: var(--markdown-table-header-bg);
+  color: var(--markdown-heading);
+  font-weight: 700;
+}
+
+.messageBody tbody tr:nth-child(even) {
+  background: var(--markdown-table-row-alt);
+}
+
+.messageBody img {
+  display: block;
+  margin: 0.95rem 0;
 }
 
 .messageBubbleActions {
@@ -1292,9 +1389,9 @@ select {
   min-height: 34px;
   min-width: 34px;
   padding: 6px;
-  border: 1px solid rgba(15, 23, 42, 0.1);
+  border: 1px solid var(--control-border);
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.74);
+  background: var(--control-surface);
   color: var(--text);
   font-size: 0.82rem;
   line-height: 1;
@@ -1302,7 +1399,7 @@ select {
 }
 
 .messageCopyButton:hover {
-  background: rgba(255, 255, 255, 0.92);
+  background: var(--control-surface-hover);
 }
 
 .messageCopyButton.isCopied {
@@ -1609,17 +1706,17 @@ select {
   inset: 0;
   display: grid;
   place-items: center;
-  background: rgba(15, 23, 42, 0.28);
+  background: var(--dialog-backdrop);
   z-index: 80;
 }
 
 .dialogCard.legacyDialog {
   width: min(640px, calc(100vw - 24px));
   padding: 18px;
-  border: 1px solid var(--legacy-border);
+  border: 1px solid var(--chrome-border);
   border-radius: 16px;
-  background: var(--panel);
-  box-shadow: 0 12px 36px rgba(15, 23, 42, 0.12);
+  background: var(--chrome-elevated);
+  box-shadow: var(--shadow);
 }
 
 .dialogHeader h2,
@@ -1672,7 +1769,7 @@ select {
 }
 
 .newSessionFooter {
-  background: color-mix(in srgb, var(--panel) 92%, white);
+  background: var(--chrome-elevated);
   flex: 0 0 auto;
 }
 
@@ -1706,7 +1803,7 @@ select {
 .fieldLabel {
   font-size: 0.82rem;
   font-weight: 700;
-  color: rgba(17, 24, 39, 0.82);
+  color: var(--field-label);
 }
 
 .fieldBlock input,
@@ -1714,24 +1811,24 @@ select {
   width: 100%;
   min-height: 40px;
   padding: 0.72rem 0.85rem;
-  border: 1px solid rgba(15, 23, 42, 0.14);
+  border: 1px solid var(--field-border);
   border-radius: 14px;
-  background: rgba(255, 255, 255, 0.96);
+  background: var(--field-surface);
   color: var(--text);
   outline: none;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.65);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, white 24%, transparent);
 }
 
 .fieldBlock input:focus,
 .fieldBlock select:focus {
-  border-color: rgba(29, 78, 216, 0.42);
-  box-shadow: 0 0 0 3px rgba(29, 78, 216, 0.12);
+  border-color: var(--field-focus-border);
+  box-shadow: 0 0 0 3px var(--field-focus);
 }
 
 .fieldBlock input:disabled,
 .fieldBlock select:disabled {
-  color: rgba(17, 24, 39, 0.42);
-  background: rgba(15, 23, 42, 0.04);
+  color: color-mix(in srgb, var(--text) 42%, transparent);
+  background: var(--field-surface-disabled);
 }
 
 .toggleField {
@@ -1744,9 +1841,9 @@ select {
   gap: 0.55rem;
   min-height: 40px;
   padding: 0.72rem 0.85rem;
-  border: 1px solid rgba(15, 23, 42, 0.14);
+  border: 1px solid var(--field-border);
   border-radius: 14px;
-  background: rgba(255, 255, 255, 0.96);
+  background: var(--field-surface);
   color: var(--text);
 }
 
