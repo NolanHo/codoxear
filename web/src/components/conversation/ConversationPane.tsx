@@ -33,6 +33,7 @@ const MAIN_TIMELINE_KINDS = new Set([
   "event",
 ]);
 
+const MACHINE_TRACE_KINDS = new Set(["reasoning", "tool", "tool_result"]);
 const CHAT_GROUPABLE_KINDS = new Set(["user", "assistant", "ask_user"]);
 const COLLAPSIBLE_LINE_THRESHOLD = 8;
 const COLLAPSIBLE_CHAR_THRESHOLD = 420;
@@ -524,6 +525,10 @@ function canGroupEvent(kind: string): boolean {
   return CHAT_GROUPABLE_KINDS.has(kind);
 }
 
+function isMachineTraceKind(kind: string): kind is "reasoning" | "tool" | "tool_result" {
+  return MACHINE_TRACE_KINDS.has(kind);
+}
+
 function eventLabel(kind: string): string {
   return EVENT_LABELS[kind] || kind.replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
 }
@@ -643,12 +648,6 @@ function compactSingleLine(value: string, maxLength = 140): string {
     return normalized;
   }
   return `${normalized.slice(0, maxLength - 1).trimEnd()}...`;
-}
-
-function toolSummaryText(event: MessageEvent): string {
-  return compactSingleLine(
-    firstNonEmptyText(event.summary, event.text, event.context, detailsSummary(event.details)),
-  );
 }
 
 function ExpandableRichText({
@@ -862,83 +861,157 @@ function renderReasoningCard(event: MessageEvent, options: MarkdownRenderOptions
   );
 }
 
-function CompactToolSurface({
-  kind,
-  title,
-  summary,
-  ts,
-  isError = false,
-  children,
-}: {
-  kind: "tool" | "tool_result";
-  title: string;
-  summary: string;
-  ts?: number;
-  isError?: boolean;
-  children?: ComponentChildren;
-}) {
-  const [expanded, setExpanded] = useState(false);
-  const showTimestamp = isDisplayableEpochTs(ts);
-
+function ToolCallIcon() {
   return (
-    <MessageSurface kind={kind} isError={isError} compact>
-      <div className="messageToolBlock space-y-2">
-        <div
-          className={cn(
-            "messageToolRow flex items-center gap-3 rounded-xl border px-3 py-2",
-            kind === "tool"
-              ? "border-sky-200/80 bg-sky-50/80"
-              : isError
-                ? "border-red-200/80 bg-red-50/80"
-                : "border-emerald-200/80 bg-emerald-50/80",
-          )}
-        >
-          <Badge variant={surfaceBadgeVariant(kind)} className="shrink-0">{eventLabel(kind)}</Badge>
-          <div className="min-w-0 flex-1 flex items-center gap-2 overflow-hidden">
-            <span className="shrink-0 text-sm font-semibold text-foreground">{title}</span>
-            {summary ? <span className="messageToolSummary min-w-0 flex-1 truncate text-sm text-muted-foreground">{summary}</span> : null}
-          </div>
-          {showTimestamp ? (
-            <time className="shrink-0 text-xs text-muted-foreground" dateTime={new Date(ts * 1000).toISOString()}>
-              {formatMessageTimestamp(ts)}
-            </time>
-          ) : null}
-          <button
-            type="button"
-            className="messageToolToggle inline-flex items-center rounded-full border border-border/70 px-3 py-1 text-xs font-medium text-muted-foreground transition hover:bg-accent hover:text-accent-foreground"
-            aria-expanded={expanded ? "true" : "false"}
-            onClick={() => setExpanded((current) => !current)}
-          >
-            {expanded ? "Collapse" : "Expand"}
-          </button>
-        </div>
-        {expanded ? <div className="messageToolDetails rounded-xl border border-border/60 bg-background/75 p-3">{children}</div> : null}
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M14.5 6.5a4.5 4.5 0 0 0 3.9 6.64l-7.26 7.26a1.5 1.5 0 0 1-2.12 0l-.42-.42a1.5 1.5 0 0 1 0-2.12l7.26-7.26A4.5 4.5 0 0 1 10.5 5.5l2.07 2.07 1.93-1.07z" />
+    </svg>
+  );
+}
+
+function ToolResultIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="4" y="5" width="16" height="14" rx="2" />
+      <path d="M8 10.5h8M8 14h5" />
+    </svg>
+  );
+}
+
+function ReasoningIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M9.5 18c-2.5 0-4.5-2.06-4.5-4.6 0-1.56.79-2.94 1.99-3.77A5.5 5.5 0 0 1 12 4a5.5 5.5 0 0 1 5.01 5.63A4.6 4.6 0 0 1 19 13.4c0 2.54-2 4.6-4.5 4.6" />
+      <path d="M10 10.5c.3-.74 1.03-1.25 1.88-1.25 1.11 0 2.02.91 2.02 2.03 0 .82-.5 1.53-1.2 1.84-.5.22-.83.7-.83 1.24V15" />
+      <path d="M12 18.5h.01" />
+    </svg>
+  );
+}
+
+function machineTraceTitle(event: MessageEvent, kind: "reasoning" | "tool" | "tool_result") {
+  if (kind === "reasoning") {
+    return firstNonEmptyText(event.summary, "Reasoning");
+  }
+  if (kind === "tool") {
+    return firstNonEmptyText(event.name, "Tool");
+  }
+  return firstNonEmptyText(event.name, event.summary, "Tool result");
+}
+
+function machineTraceSummary(event: MessageEvent, kind: "reasoning" | "tool" | "tool_result") {
+  if (kind === "reasoning") {
+    return compactSingleLine(firstNonEmptyText(event.summary, event.text), 90);
+  }
+  if (kind === "tool") {
+    return compactSingleLine(firstNonEmptyText(event.summary, event.text, event.context), 90);
+  }
+  const detailsText = !event.text && event.details ? JSON.stringify(event.details, null, 2) : "";
+  return compactSingleLine(firstNonEmptyText(event.summary, event.text, detailsSummary(event.details), detailsText), 90);
+}
+
+function hasTrailingUnresolvedTool(events: MessageEvent[]) {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const kind = eventKind(events[index]);
+    if (kind === "tool_result") {
+      return false;
+    }
+    if (kind === "tool") {
+      return true;
+    }
+  }
+  return false;
+}
+
+function machineTraceRunningIndex(events: MessageEvent[], isBusy: boolean) {
+  if (!isBusy || !hasTrailingUnresolvedTool(events)) {
+    return -1;
+  }
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    if (eventKind(events[index]) === "tool") {
+      return index;
+    }
+  }
+  return -1;
+}
+
+function renderMachineTraceDetail(event: MessageEvent, kind: "reasoning" | "tool" | "tool_result", options: MarkdownRenderOptions) {
+  if (kind === "reasoning") {
+    const summary = firstNonEmptyText(event.summary);
+    const body = firstNonEmptyText(event.text, summary);
+    return (
+      <div className="machineTraceDetailBody space-y-3">
+        {renderCardHeader("reasoning", undefined, summary && summary !== body ? summary : undefined, event.ts)}
+        {body ? <ExpandableRichText key={body} value={body} options={options} /> : null}
       </div>
-    </MessageSurface>
-  );
-}
+    );
+  }
 
-function renderToolCard(event: MessageEvent, options: MarkdownRenderOptions) {
-  const body = firstNonEmptyText(event.text, event.summary, event.context);
-  const summary = toolSummaryText(event);
+  if (kind === "tool") {
+    const body = firstNonEmptyText(event.text, event.summary, event.context);
+    return (
+      <div className="machineTraceDetailBody space-y-3">
+        {renderCardHeader("tool", machineTraceTitle(event, kind), event.summary || undefined, event.ts)}
+        {body ? renderRichText(body, "messageBody", options) : <div className="messageCardFooterText text-sm text-muted-foreground">No additional tool input.</div>}
+      </div>
+    );
+  }
 
-  return (
-    <CompactToolSurface kind="tool" title={firstNonEmptyText(event.name, "Unnamed tool")} summary={summary} ts={event.ts}>
-      {body ? renderRichText(body, "messageBody", options) : <div className="messageCardFooterText text-sm text-muted-foreground">No additional tool input.</div>}
-    </CompactToolSurface>
-  );
-}
-
-function renderToolResultCard(event: MessageEvent, options: MarkdownRenderOptions) {
   const body = firstNonEmptyText(event.text, detailsSummary(event.details));
   const detailsText = !event.text && event.details ? JSON.stringify(event.details, null, 2) : "";
-  const summary = toolSummaryText(event) || compactSingleLine(detailsText);
-
   return (
-    <CompactToolSurface kind="tool_result" title={firstNonEmptyText(event.name, "Tool result")} summary={summary} ts={event.ts} isError={Boolean(event.is_error)}>
+    <div className="machineTraceDetailBody space-y-3">
+      {renderCardHeader("tool_result", machineTraceTitle(event, kind), event.summary || undefined, event.ts)}
       {body ? renderRichText(body, "messageBody", options) : null}
       {detailsText ? <pre className="messageCardPre overflow-x-auto rounded-xl bg-background/80 p-3 text-sm">{detailsText}</pre> : null}
-    </CompactToolSurface>
+    </div>
+  );
+}
+
+function CompactMachineTrace({ events, options, isBusy }: { events: MessageEvent[]; options: MarkdownRenderOptions; isBusy: boolean }) {
+  const runningIndex = machineTraceRunningIndex(events, isBusy);
+  const initialSelected = runningIndex >= 0 ? runningIndex : null;
+  const [selectedIndex, setSelectedIndex] = useState<number | null>(initialSelected);
+  const selectedEvent = selectedIndex == null ? null : events[selectedIndex] ?? null;
+  const selectedKind = selectedEvent ? eventKind(selectedEvent) : null;
+
+  return (
+    <MessageSurface kind="event" compact className="machineTraceSurface" contentClassName="space-y-3">
+      <div className="machineTraceStrip" data-testid="machine-trace-strip">
+        {events.map((event, index) => {
+          const kind = eventKind(event);
+          if (!isMachineTraceKind(kind)) {
+            return null;
+          }
+          const isSelected = selectedIndex === index;
+          const isRunning = index === runningIndex;
+          const summary = machineTraceSummary(event, kind);
+          const title = machineTraceTitle(event, kind);
+          const statusLabel = kind === "tool_result" ? (event.is_error ? "error" : "complete") : isRunning ? "running" : kind;
+          return (
+            <button
+              key={`${kind}-${index}-${title}`}
+              type="button"
+              data-kind={kind}
+              data-status={statusLabel}
+              className={cn("machineTraceToken", kind, isSelected && "isSelected", isRunning && "isRunning", event.is_error && "isError")}
+              aria-expanded={isSelected ? "true" : "false"}
+              title={summary ? `${title}: ${summary}` : title}
+              onClick={() => setSelectedIndex((current) => (current === index ? null : index))}
+            >
+              <span className="machineTraceTokenIcon" aria-hidden="true">
+                {kind === "tool" ? <ToolCallIcon /> : kind === "tool_result" ? <ToolResultIcon /> : <ReasoningIcon />}
+              </span>
+              {isRunning ? <span className="machineTraceTokenPulse" aria-hidden="true" /> : null}
+            </button>
+          );
+        })}
+      </div>
+      {selectedEvent && selectedKind && isMachineTraceKind(selectedKind) ? (
+        <div className={cn("machineTraceDetail", selectedKind, selectedEvent.is_error && "isError")} data-testid="machine-trace-detail">
+          {renderMachineTraceDetail(selectedEvent, selectedKind, options)}
+        </div>
+      ) : null}
+    </MessageSurface>
   );
 }
 
@@ -1066,9 +1139,8 @@ function renderConversationEvent(
     case "reasoning":
       return renderReasoningCard(event, options);
     case "tool":
-      return renderToolCard(event, options);
     case "tool_result":
-      return renderToolResultCard(event, options);
+      return renderSystemCard(event, kind, options);
     case "subagent":
       return renderSubagentCard(event, options);
     case "todo_snapshot":
@@ -1249,6 +1321,54 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
   const pendingMessages = activeSessionId ? pendingBySessionId[activeSessionId] ?? [] : [];
   const rawMessages = [...persistedMessages, ...pendingMessages];
   const messages = rawMessages.filter(shouldRenderInMainConversation);
+  const rows = messages.reduce<Array<{
+    key: string;
+    kind: string;
+    grouped: boolean;
+    events: MessageEvent[];
+    firstTs: number | null;
+    lastTs: number | null;
+    allowFuzzyLiveMatch: boolean;
+    allowLegacyFallback: boolean;
+  }>>((out, message, index) => {
+    const kind = eventKind(message);
+    if (isMachineTraceKind(kind)) {
+      const last = out[out.length - 1];
+      const ts = typeof message.ts === "number" ? message.ts : null;
+      if (last && last.kind === "machine_trace") {
+        last.events.push(message);
+        last.lastTs = ts;
+        return out;
+      }
+      const rowKey = messageRowKey(message, kind, index);
+      out.push({
+        key: `machine:${rowKey}`,
+        kind: "machine_trace",
+        grouped: false,
+        events: [message],
+        firstTs: ts,
+        lastTs: ts,
+        allowFuzzyLiveMatch: true,
+        allowLegacyFallback: false,
+      });
+      return out;
+    }
+
+    const prevKind = index > 0 ? eventKind(messages[index - 1]) : null;
+    const rowKey = messageRowKey(message, kind, index);
+    const ts = typeof message.ts === "number" ? message.ts : null;
+    out.push({
+      key: rowKey,
+      kind,
+      grouped: prevKind === kind && canGroupEvent(kind),
+      events: [message],
+      firstTs: ts,
+      lastTs: ts,
+      allowFuzzyLiveMatch: kind === "ask_user" ? shouldAllowFuzzyAskUserMatch(messages, index) : true,
+      allowLegacyFallback: kind === "ask_user" ? allowLegacyAskUserFallback : false,
+    });
+    return out;
+  }, []);
   const sectionRef = useRef<HTMLElement | null>(null);
   const historyAnchorRef = useRef<{ key: string; top: number } | null>(null);
   const scrollModeRef = useRef<"bottom" | "preserve" | null>(null);
@@ -1414,17 +1534,13 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
                 </div>
               </div>
             ) : null}
-            {messages.length ? (
-              messages.map((message, index) => {
-                const kind = eventKind(message);
-                const prevKind = index > 0 ? eventKind(messages[index - 1]) : null;
-                const grouped = prevKind === kind && canGroupEvent(kind);
-                const rowKey = messageRowKey(message, kind, index);
-                const ts = typeof message.ts === "number" ? message.ts : null;
-                const prevTs = index > 0 && typeof messages[index - 1]?.ts === "number" ? messages[index - 1].ts as number : null;
+            {rows.length ? (
+              rows.map((row, index) => {
+                const ts = row.firstTs;
+                const prevTs = index > 0 ? rows[index - 1]?.lastTs ?? null : null;
                 const showDaySeparator = isDisplayableEpochTs(ts) && (!isDisplayableEpochTs(prevTs) || messageDayKey(prevTs) !== messageDayKey(ts));
                 return (
-                  <Fragment key={rowKey}>
+                  <Fragment key={row.key}>
                     {showDaySeparator ? (
                       <div className="daySeparator flex items-center gap-3 py-1 text-xs uppercase tracking-[0.16em] text-muted-foreground">
                         <span className="h-px flex-1 bg-border/60" />
@@ -1432,15 +1548,17 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
                         <span className="h-px flex-1 bg-border/60" />
                       </div>
                     ) : null}
-                    <div data-row-key={rowKey} className={cn("messageRow flex", kind, grouped && "grouped")}>
-                      {renderConversationEvent(
-                        message,
-                        kind,
-                        activeSessionId || undefined,
-                        markdownOptions,
-                        kind === "ask_user" ? shouldAllowFuzzyAskUserMatch(messages, index) : true,
-                        kind === "ask_user" ? allowLegacyAskUserFallback : false,
-                      )}
+                    <div data-row-key={row.key} className={cn("messageRow flex", row.kind, row.grouped && "grouped")}>
+                      {row.kind === "machine_trace"
+                        ? <CompactMachineTrace events={row.events} options={markdownOptions} isBusy={isBusy && index === rows.length - 1} />
+                        : renderConversationEvent(
+                          row.events[0],
+                          row.kind,
+                          activeSessionId || undefined,
+                          markdownOptions,
+                          row.allowFuzzyLiveMatch,
+                          row.allowLegacyFallback,
+                        )}
                     </div>
                   </Fragment>
                 );

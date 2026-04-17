@@ -133,7 +133,7 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
   const { activeSessionId, bootstrapLoaded, items, newSessionDefaults, recentCwds, tmuxAvailable } = useSessionsStore();
   const sessionsStoreApi = useSessionsStoreApi();
   const [cwd, setCwd] = useState("");
-  const [backend, setBackend] = useState("codex");
+  const [backend, setBackend] = useState("pi");
   const [sessionName, setSessionName] = useState("");
   const [model, setModel] = useState("");
   const [providerChoice, setProviderChoice] = useState("");
@@ -203,7 +203,7 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
       return;
     }
     wasOpenRef.current = true;
-    const initialBackend = newSessionDefaults?.default_backend || "codex";
+    const initialBackend = newSessionDefaults?.default_backend || "pi";
     const initialDefaults = newSessionDefaults?.backends?.[initialBackend] || {};
     const initialProviders = providerChoicesForDefaults(initialDefaults);
     const initialReasoning = reasoningChoicesForDefaults(initialDefaults);
@@ -238,7 +238,7 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
     }
 
     hydratedDefaultsRef.current = true;
-    const defaultBackend = newSessionDefaults?.default_backend || backendNames[0] || "codex";
+    const defaultBackend = newSessionDefaults?.default_backend || backendNames[0] || "pi";
     const selectedBackend = touchedLaunchSettingsRef.current.backend && backend ? backend : defaultBackend;
     const defaultValues = newSessionDefaults?.backends?.[selectedBackend] || {};
     const providerDefaults = providerChoicesForDefaults(defaultValues);

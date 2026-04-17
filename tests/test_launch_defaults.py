@@ -319,7 +319,7 @@ base_url = "https://example.com/v1"
             ):
                 defaults = _read_new_session_defaults()
 
-        self.assertEqual(defaults["default_backend"], "codex")
+        self.assertEqual(defaults["default_backend"], "pi")
         self.assertIn("codex", defaults["backends"])
         self.assertIn("pi", defaults["backends"])
         self.assertEqual(defaults["backends"]["pi"]["provider_choice"], "macaron")

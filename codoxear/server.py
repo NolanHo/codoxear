@@ -192,7 +192,7 @@ PI_SETTINGS_PATH = PI_HOME / "agent" / "settings.json"
 PI_MODELS_PATH = PI_HOME / "agent" / "models.json"
 PI_AUTH_PATH = PI_HOME / "agent" / "auth.json"
 DEFAULT_AGENT_BACKEND = normalize_agent_backend(
-    os.environ.get("CODEX_WEB_DEFAULT_AGENT_BACKEND"), default="codex"
+    os.environ.get("CODEX_WEB_DEFAULT_AGENT_BACKEND"), default="pi"
 )
 SUPPORTED_REASONING_EFFORTS = ("xhigh", "high", "medium", "low")
 SUPPORTED_PI_REASONING_EFFORTS = ("off", "minimal", "low", "medium", "high", "xhigh")

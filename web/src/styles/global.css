@@ -994,6 +994,134 @@ select {
   margin-top: 2px;
 }
 
+.machineTraceSurface {
+  width: min(820px, 100%);
+}
+
+.machineTraceStrip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  align-items: center;
+  padding: 0.5rem 0.25rem;
+}
+
+.machineTraceToken {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.2rem;
+  height: 2.2rem;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid var(--control-border);
+  background: var(--control-surface);
+  color: var(--text-muted);
+  transition: transform 140ms ease, border-color 140ms ease, background-color 140ms ease, color 140ms ease, box-shadow 140ms ease;
+}
+
+.machineTraceToken:hover,
+.machineTraceToken:focus-visible {
+  color: var(--text);
+  background: var(--control-surface-hover);
+  transform: translateY(-1px);
+}
+
+.machineTraceToken.tool {
+  background: var(--message-card-tool-bg);
+  border-color: var(--message-card-tool-border);
+  color: var(--markdown-link);
+}
+
+.machineTraceToken.tool_result {
+  background: var(--message-card-tool-result-bg);
+  border-color: var(--message-card-tool-result-border);
+  color: var(--text);
+}
+
+.machineTraceToken.tool_result.isError {
+  background: var(--message-card-tool-error-bg);
+  border-color: var(--message-card-tool-error-border);
+  color: hsl(var(--destructive));
+}
+
+.machineTraceToken.reasoning {
+  background: var(--message-card-reasoning-bg);
+  border-color: var(--message-card-reasoning-border);
+  color: var(--markdown-inline-code-fg);
+}
+
+.machineTraceToken.isSelected {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary) 32%, transparent);
+}
+
+.machineTraceToken.isRunning {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--primary) 52%, var(--message-card-tool-border));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 18%, transparent);
+}
+
+.machineTraceTokenIcon {
+  width: 1rem;
+  height: 1rem;
+  display: inline-flex;
+}
+
+.machineTraceTokenIcon svg {
+  width: 100%;
+  height: 100%;
+}
+
+.machineTraceTokenPulse {
+  position: absolute;
+  inset: -3px;
+  border-radius: inherit;
+  border: 1px solid color-mix(in srgb, var(--primary) 44%, transparent);
+  animation: machine-trace-pulse 1.4s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.machineTraceDetail {
+  border: 1px solid var(--chrome-border);
+  border-radius: 1.1rem;
+  padding: 0.95rem 1rem;
+  background: var(--message-card-base);
+  box-shadow: var(--shadow-sm);
+}
+
+.machineTraceDetail.tool {
+  background: var(--message-card-tool-bg);
+  border-color: var(--message-card-tool-border);
+}
+
+.machineTraceDetail.tool_result {
+  background: var(--message-card-tool-result-bg);
+  border-color: var(--message-card-tool-result-border);
+}
+
+.machineTraceDetail.tool_result.isError {
+  background: var(--message-card-tool-error-bg);
+  border-color: var(--message-card-tool-error-border);
+}
+
+.machineTraceDetail.reasoning {
+  background: var(--message-card-reasoning-bg);
+  border-color: var(--message-card-reasoning-border);
+}
+
+@keyframes machine-trace-pulse {
+  0%,
+  100% {
+    opacity: 0.2;
+    transform: scale(0.98);
+  }
+  50% {
+    opacity: 0.82;
+    transform: scale(1.04);
+  }
+}
+
 .messageBubble {
   max-width: min(820px, 100%);
   min-width: 0;

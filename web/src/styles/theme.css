@@ -70,12 +70,12 @@
   --control-border: rgba(36, 46, 66, 0.12);
 
   --message-card-base: color-mix(in srgb, var(--panel) 92%, #f8fafc);
-  --message-card-reasoning-bg: color-mix(in srgb, #f8efe2 78%, white);
-  --message-card-reasoning-border: color-mix(in srgb, #d8c3a5 54%, var(--legacy-border));
-  --message-card-tool-bg: color-mix(in srgb, #eef6ff 82%, white);
-  --message-card-tool-border: color-mix(in srgb, #b8d1ee 58%, var(--legacy-border));
-  --message-card-tool-result-bg: color-mix(in srgb, #edf8ef 82%, white);
-  --message-card-tool-result-border: color-mix(in srgb, #b6d2bd 56%, var(--legacy-border));
+  --message-card-reasoning-bg: color-mix(in srgb, #f7efe5 86%, white);
+  --message-card-reasoning-border: color-mix(in srgb, #d5c0a6 48%, var(--legacy-border));
+  --message-card-tool-bg: color-mix(in srgb, #edf5fb 86%, white);
+  --message-card-tool-border: color-mix(in srgb, #afcae3 52%, var(--legacy-border));
+  --message-card-tool-result-bg: color-mix(in srgb, #eef7f1 86%, white);
+  --message-card-tool-result-border: color-mix(in srgb, #b2cfba 50%, var(--legacy-border));
   --message-card-tool-error-bg: color-mix(in srgb, #fff2f2 84%, white);
   --message-card-tool-error-border: rgba(185, 28, 28, 0.28);
   --message-card-subagent-bg: color-mix(in srgb, #f2efff 78%, white);
@@ -168,12 +168,12 @@
   --control-border: rgba(14, 210, 247, 0.12);
 
   --message-card-base: color-mix(in srgb, var(--panel) 96%, #100e17);
-  --message-card-reasoning-bg: color-mix(in srgb, #241d1a 82%, var(--panel));
-  --message-card-reasoning-border: color-mix(in srgb, #6b5841 36%, var(--legacy-border));
-  --message-card-tool-bg: color-mix(in srgb, #111f2a 84%, var(--panel));
-  --message-card-tool-border: color-mix(in srgb, #1c6072 34%, var(--legacy-border));
-  --message-card-tool-result-bg: color-mix(in srgb, #11201b 84%, var(--panel));
-  --message-card-tool-result-border: color-mix(in srgb, #30594f 32%, var(--legacy-border));
+  --message-card-reasoning-bg: color-mix(in srgb, #211b18 86%, var(--panel));
+  --message-card-reasoning-border: color-mix(in srgb, #64523d 30%, var(--legacy-border));
+  --message-card-tool-bg: color-mix(in srgb, #121d25 88%, var(--panel));
+  --message-card-tool-border: color-mix(in srgb, #245362 28%, var(--legacy-border));
+  --message-card-tool-result-bg: color-mix(in srgb, #121d1a 88%, var(--panel));
+  --message-card-tool-result-border: color-mix(in srgb, #33564d 26%, var(--legacy-border));
   --message-card-tool-error-bg: color-mix(in srgb, #2b131b 88%, var(--panel));
   --message-card-tool-error-border: rgba(244, 86, 157, 0.24);
   --message-card-subagent-bg: color-mix(in srgb, #1c1730 84%, var(--panel));

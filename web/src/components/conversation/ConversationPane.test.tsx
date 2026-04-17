@@ -137,18 +137,14 @@ describe("ConversationPane", () => {
     );
 
     const text = root.textContent || "";
-    expect(root.querySelectorAll(".messageRow")).toHaveLength(8);
-    expect(root.querySelector("[data-testid='message-surface'][data-kind='reasoning']")).not.toBeNull();
-    expect(root.querySelector("[data-testid='message-surface'][data-kind='tool']")).not.toBeNull();
-    expect(root.querySelector("[data-testid='message-surface'][data-kind='tool_result']")).not.toBeNull();
+    expect(root.querySelectorAll(".messageRow")).toHaveLength(6);
+    const traceStrip = root.querySelector("[data-testid='machine-trace-strip']") as HTMLElement | null;
+    expect(traceStrip).not.toBeNull();
+    expect(traceStrip?.querySelectorAll(".machineTraceToken")).toHaveLength(3);
     expect(root.querySelector("[data-testid='message-surface'][data-kind='subagent']")).not.toBeNull();
     expect(root.querySelector("[data-testid='message-surface'][data-kind='todo_snapshot']")).not.toBeNull();
     expect(root.querySelector("[data-testid='message-surface'][data-kind='pi_model_change']")).not.toBeNull();
     expect(text).toContain("Please fix this");
-    expect(text).toContain("thinking...");
-    expect(text).toContain("Inspecting current state");
-    expect(text).toContain("read");
-    expect(text).toContain('{"ok":true}');
     expect(text).toContain("reviewer");
     expect(text).toContain("Check the patch");
     expect(text).toContain("Looks good");
@@ -560,16 +556,14 @@ describe("ConversationPane", () => {
       root,
     );
 
-    const firstButton = root.querySelector("[data-testid='message-surface'][data-kind='reasoning'] .messageExpandButton") as HTMLButtonElement | null;
-    const firstContent = root.querySelector("[data-testid='message-surface'][data-kind='reasoning'] .messageExpandableContent") as HTMLDivElement | null;
+    const firstToken = root.querySelector(".machineTraceToken.reasoning") as HTMLButtonElement | null;
 
-    expect(firstButton?.getAttribute("aria-expanded")).toBe("false");
+    expect(root.querySelector("[data-testid='machine-trace-detail']")).toBeNull();
     await act(async () => {
-      firstButton?.click();
+      firstToken?.click();
       await Promise.resolve();
     });
-    expect(firstButton?.getAttribute("aria-expanded")).toBe("true");
-    expect(firstContent?.classList.contains("isCollapsed")).toBe(false);
+    expect(root.querySelector("[data-testid='machine-trace-detail'] .messageExpandableContent")).not.toBeNull();
 
     await act(async () => {
       render(
@@ -587,15 +581,11 @@ describe("ConversationPane", () => {
       await Promise.resolve();
     });
 
-    const nextButton = root.querySelector("[data-testid='message-surface'][data-kind='reasoning'] .messageExpandButton") as HTMLButtonElement | null;
-    const nextContent = root.querySelector("[data-testid='message-surface'][data-kind='reasoning'] .messageExpandableContent") as HTMLDivElement | null;
-
-    expect(nextButton?.getAttribute("aria-expanded")).toBe("false");
-    expect(nextContent?.classList.contains("isCollapsed")).toBe(true);
-    expect(root.textContent).toContain("session B reasoning 1");
+    expect(root.querySelector("[data-testid='machine-trace-detail']")).toBeNull();
+    expect(root.textContent).not.toContain("session A reasoning 1");
   });
 
-  it("collapses long reasoning and tool-result cards with expandable toggles", async () => {
+  it("expands compact machine-trace details and keeps long reasoning collapsible", async () => {
     const sessionsStore = createStaticStore(
       { items: [], activeSessionId: "sess-6", loading: false, newSessionDefaults: null },
       { refresh: () => Promise.resolve(), select: () => undefined },
@@ -625,31 +615,42 @@ describe("ConversationPane", () => {
       root,
     );
 
-    const reasoningButton = root.querySelector("[data-testid='message-surface'][data-kind='reasoning'] .messageExpandButton") as HTMLButtonElement | null;
-    const reasoningContent = root.querySelector("[data-testid='message-surface'][data-kind='reasoning'] .messageExpandableContent") as HTMLDivElement | null;
-    const toolButton = root.querySelector("[data-testid='message-surface'][data-kind='tool_result'] .messageToolToggle") as HTMLButtonElement | null;
-    const toolContent = root.querySelector("[data-testid='message-surface'][data-kind='tool_result'] .messageToolDetails") as HTMLDivElement | null;
+    const traceTokens = Array.from(root.querySelectorAll(".machineTraceToken")) as HTMLButtonElement[];
+    const reasoningToken = traceTokens.find((node) => node.dataset.kind === "reasoning") || null;
+    const toolResultToken = traceTokens.find((node) => node.dataset.kind === "tool_result") || null;
 
+    expect(traceTokens).toHaveLength(2);
+    expect(root.querySelector("[data-testid='machine-trace-detail']")).toBeNull();
+
+    await act(async () => {
+      reasoningToken?.click();
+      await Promise.resolve();
+    });
+
+    const reasoningButton = root.querySelector("[data-testid='machine-trace-detail'] .messageExpandButton") as HTMLButtonElement | null;
+    const reasoningContent = root.querySelector("[data-testid='machine-trace-detail'] .messageExpandableContent") as HTMLDivElement | null;
     expect(reasoningButton?.textContent).toBe("Show more");
     expect(reasoningButton?.getAttribute("aria-expanded")).toBe("false");
     expect(reasoningContent?.classList.contains("isCollapsed")).toBe(true);
-    expect(toolButton?.textContent).toBe("Expand");
-    expect(toolButton?.getAttribute("aria-expanded")).toBe("false");
-    expect(toolContent).toBeNull();
 
-    reasoningButton?.click();
-    toolButton?.click();
-    await Promise.resolve();
+    await act(async () => {
+      reasoningButton?.click();
+      await Promise.resolve();
+    });
 
     expect(reasoningButton?.textContent).toBe("Show less");
     expect(reasoningButton?.getAttribute("aria-expanded")).toBe("true");
     expect(reasoningContent?.classList.contains("isCollapsed")).toBe(false);
-    expect(toolButton?.textContent).toBe("Collapse");
-    expect(toolButton?.getAttribute("aria-expanded")).toBe("true");
-    expect(root.querySelector("[data-testid='message-surface'][data-kind='tool_result'] .messageToolDetails")).not.toBeNull();
+
+    await act(async () => {
+      toolResultToken?.click();
+      await Promise.resolve();
+    });
+
+    expect(root.querySelector("[data-testid='machine-trace-detail'] .messageBody")?.textContent).toContain("result line 1");
   });
 
-  it("shows tool and tool-result cards as one-line summaries until expanded", async () => {
+  it("shows compact machine-trace tokens and switches detail selection", async () => {
     const sessionsStore = createStaticStore(
       { items: [], activeSessionId: "sess-tool-compact", loading: false, newSessionDefaults: null },
       { refresh: () => Promise.resolve(), select: () => undefined },
@@ -677,32 +678,73 @@ describe("ConversationPane", () => {
       root,
     );
 
-    const toolSurface = root.querySelector("[data-testid='message-surface'][data-kind='tool']") as HTMLElement | null;
-    const toolResultSurface = root.querySelector("[data-testid='message-surface'][data-kind='tool_result']") as HTMLElement | null;
-    const toolToggle = toolSurface?.querySelector(".messageToolToggle") as HTMLButtonElement | null;
-    const toolResultToggle = toolResultSurface?.querySelector(".messageToolToggle") as HTMLButtonElement | null;
+    const traceStrip = root.querySelector("[data-testid='machine-trace-strip']") as HTMLElement | null;
+    const tokens = Array.from(root.querySelectorAll(".machineTraceToken")) as HTMLButtonElement[];
+    const toolToken = tokens.find((node) => node.dataset.kind === "tool") || null;
+    const toolResultToken = tokens.find((node) => node.dataset.kind === "tool_result") || null;
 
-    expect(toolSurface?.className).not.toContain("messageCard");
-    expect(toolResultSurface?.className).not.toContain("messageCard");
-    expect(toolSurface?.querySelector(".messageToolSummary")?.textContent).toContain("web/src/components/conversation/ConversationPane.tsx");
-    expect(toolResultSurface?.querySelector(".messageToolSummary")?.textContent).toContain('{"ok":true,"path":"ConversationPane.tsx"}');
-    expect(toolSurface?.querySelector(".messageToolRow")).not.toBeNull();
-    expect(toolResultSurface?.querySelector(".messageToolRow")).not.toBeNull();
-    expect(toolSurface?.querySelector(".messageToolDetails")).toBeNull();
-    expect(toolResultSurface?.querySelector(".messageToolDetails")).toBeNull();
-    expect(toolToggle?.getAttribute("aria-expanded")).toBe("false");
-    expect(toolResultToggle?.getAttribute("aria-expanded")).toBe("false");
+    expect(traceStrip).not.toBeNull();
+    expect(tokens).toHaveLength(2);
+    expect(toolToken?.getAttribute("aria-expanded")).toBe("false");
+    expect(toolResultToken?.getAttribute("aria-expanded")).toBe("false");
+    expect(root.querySelector("[data-testid='machine-trace-detail']")).toBeNull();
 
     await act(async () => {
-      toolToggle?.click();
-      toolResultToggle?.click();
+      toolToken?.click();
       await Promise.resolve();
     });
 
-    expect(toolSurface?.querySelector(".messageToolDetails .messageBody")?.textContent).toContain("web/src/components/conversation/ConversationPane.tsx");
-    expect(toolResultSurface?.querySelector(".messageToolDetails .messageBody")?.textContent).toContain('{"ok":true,"path":"ConversationPane.tsx"}');
-    expect(toolToggle?.getAttribute("aria-expanded")).toBe("true");
-    expect(toolResultToggle?.getAttribute("aria-expanded")).toBe("true");
+    expect(root.querySelector("[data-testid='machine-trace-detail'] .messageBody")?.textContent).toContain("web/src/components/conversation/ConversationPane.tsx");
+    expect(toolToken?.getAttribute("aria-expanded")).toBe("true");
+    expect(toolResultToken?.getAttribute("aria-expanded")).toBe("false");
+
+    await act(async () => {
+      toolResultToken?.click();
+      await Promise.resolve();
+    });
+
+    expect(root.querySelector("[data-testid='machine-trace-detail'] .messageBody")?.textContent).toContain('{"ok":true,"path":"ConversationPane.tsx"}');
+    expect(toolToken?.getAttribute("aria-expanded")).toBe("false");
+    expect(toolResultToken?.getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("marks the latest unfinished tool token as running while the session is busy", () => {
+    const sessionsStore = createStaticStore(
+      { items: [{ session_id: "sess-trace-running", busy: true }], activeSessionId: "sess-trace-running", loading: false, newSessionDefaults: null },
+      { refresh: () => Promise.resolve(), select: () => undefined },
+    );
+    const liveSessionStore = createStaticStore(
+      { offsetsBySessionId: {}, liveOffsetsBySessionId: {}, requestsBySessionId: {}, requestVersionsBySessionId: {}, busyBySessionId: { "sess-trace-running": true }, loadingBySessionId: {} },
+      { loadInitial: () => Promise.resolve(), poll: () => Promise.resolve() },
+    );
+    const messagesStore = createStaticStore(
+      {
+        bySessionId: {
+          "sess-trace-running": [
+            { type: "tool", name: "read", text: "package.json" },
+            { type: "tool_result", name: "read", text: '{"ok":true}' },
+            { type: "reasoning", text: "next step" },
+            { type: "tool", name: "bash", text: "npm test" },
+          ],
+        },
+        offsetsBySessionId: { "sess-trace-running": 4 },
+        loading: false,
+      },
+      { loadInitial: () => Promise.resolve(), poll: () => Promise.resolve() },
+    );
+
+    root = document.createElement("div");
+    document.body.appendChild(root);
+    render(
+      <AppProviders sessionsStore={sessionsStore as any} liveSessionStore={liveSessionStore as any} messagesStore={messagesStore as any}>
+        <ConversationPane />
+      </AppProviders>,
+      root,
+    );
+
+    const runningTokens = Array.from(root.querySelectorAll(".machineTraceToken.isRunning")) as HTMLButtonElement[];
+    expect(runningTokens).toHaveLength(1);
+    expect(runningTokens[0]?.dataset.kind).toBe("tool");
   });
 
   it("scrolls the conversation pane to the bottom on initial render when messages exist", async () => {
