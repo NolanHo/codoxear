@@ -517,6 +517,7 @@ def _wait_for_spawned_broker_meta(
     spawn_nonce: str, *, timeout_s: float = TMUX_META_WAIT_SECONDS
 ) -> dict[str, Any]:
     deadline = time.time() + max(timeout_s, 0.0)
+    last_meta: dict[str, Any] | None = None
     while time.time() <= deadline:
         for meta_path in sorted(SOCK_DIR.glob("*.json")):
             try:
@@ -530,8 +531,15 @@ def _wait_for_spawned_broker_meta(
             broker_pid = meta.get("broker_pid")
             if not isinstance(broker_pid, int):
                 continue
+            last_meta = meta
+            backend = normalize_agent_backend(meta.get("backend"), default="codex")
+            session_id = _clean_optional_text(meta.get("session_id"))
+            if backend == "pi" and session_id is None:
+                continue
             return meta
         time.sleep(0.05)
+    if last_meta is not None:
+        return last_meta
     raise RuntimeError(
         f"tmux launch did not publish broker metadata within {timeout_s:.1f}s"
     )
@@ -8643,11 +8651,13 @@ class SessionManager:
                 backend="pi",
                 resume_session_id=resume_session_id,
             )
-            self.list_sessions()
+            self._discover_existing(force=True, skip_invalid_sidecars=True)
             live_runtime_id = _clean_optional_text(spawn_res.get("runtime_id"))
             live_session_id = _clean_optional_text(spawn_res.get("session_id"))
             if live_runtime_id is None or live_session_id is None:
                 raise RuntimeError("spawned session did not return session identities")
+            if self._runtime_session_id_for_identifier(live_runtime_id) is None:
+                raise RuntimeError("spawned session is not yet discoverable")
             resp = self.send(live_runtime_id, text)
             out = dict(resp)
             out["session_id"] = live_session_id
@@ -8708,11 +8718,13 @@ class SessionManager:
                 backend="pi",
                 resume_session_id=resume_session_id,
             )
-            self.list_sessions()
+            self._discover_existing(force=True, skip_invalid_sidecars=True)
             live_runtime_id = _clean_optional_text(spawn_res.get("runtime_id"))
             live_session_id = _clean_optional_text(spawn_res.get("session_id"))
             if live_runtime_id is None or live_session_id is None:
                 raise RuntimeError("spawned session did not return session identities")
+            if self._runtime_session_id_for_identifier(live_runtime_id) is None:
+                raise RuntimeError("spawned session is not yet discoverable")
             resp = self.enqueue(live_runtime_id, text)
             out = dict(resp)
             out["session_id"] = live_session_id
@@ -11122,8 +11134,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 if not _require_auth(self):
                     self._unauthorized()
                     return
-                parts = path.split("/")
-                session_id = parts[3] if len(parts) >= 4 else ""
+                session_id = _match_session_route(path, "rename")
+                if session_id is None:
+                    _json_response(self, 404, {"error": "unknown session"})
+                    return
                 body = _read_body(self)
                 body_text = body.decode("utf-8")
                 if not body_text.strip():
@@ -11147,8 +11161,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 if not _require_auth(self):
                     self._unauthorized()
                     return
-                parts = path.split("/")
-                session_id = parts[3] if len(parts) >= 4 else ""
+                session_id = _match_session_route(path, "focus")
+                if session_id is None:
+                    _json_response(self, 404, {"error": "unknown session"})
+                    return
                 body = _read_body(self)
                 body_text = body.decode("utf-8")
                 if not body_text.strip():
@@ -11171,8 +11187,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 if not _require_auth(self):
                     self._unauthorized()
                     return
-                parts = path.split("/")
-                session_id = parts[3] if len(parts) >= 4 else ""
+                session_id = _match_session_route(path, "send")
+                if session_id is None:
+                    _json_response(self, 404, {"error": "unknown session"})
+                    return
                 body = _read_body(self)
                 body_text = body.decode("utf-8")
                 if not body_text.strip():
@@ -11199,8 +11217,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 if not _require_auth(self):
                     self._unauthorized()
                     return
-                parts = path.split("/")
-                session_id = parts[3] if len(parts) >= 4 else ""
+                session_id = _match_session_route(path, "ui_response")
+                if session_id is None:
+                    _json_response(self, 404, {"error": "unknown session"})
+                    return
                 body = _read_body(self)
                 body_text = body.decode("utf-8")
                 if not body_text.strip():
@@ -11223,8 +11243,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 if not _require_auth(self):
                     self._unauthorized()
                     return
-                parts = path.split("/")
-                session_id = parts[3] if len(parts) >= 4 else ""
+                session_id = _match_session_route(path, "enqueue")
+                if session_id is None:
+                    _json_response(self, 404, {"error": "unknown session"})
+                    return
                 body = _read_body(self)
                 body_text = body.decode("utf-8")
                 if not body_text.strip():

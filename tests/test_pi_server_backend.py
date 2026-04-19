@@ -1517,6 +1517,7 @@ class TestPiBackendRouting(unittest.TestCase):
             }
         ])
         mgr.send = SessionManager.send.__get__(mgr, SessionManager)
+        mgr._discover_existing = Mock()
         mgr._runtime_session_id_for_identifier = Mock(side_effect=lambda session_id: session_id if session_id == "live-runtime" else None)
         mgr._sessions = {
             "live-runtime": Session(
@@ -1540,10 +1541,31 @@ class TestPiBackendRouting(unittest.TestCase):
         res = mgr.send("history:pi:resume-1", "resume me")
 
         mgr.spawn_web_session.assert_called_once_with(cwd="/tmp/project", backend="pi", resume_session_id="resume-1")
+        mgr._discover_existing.assert_called_once_with(force=True, skip_invalid_sidecars=True)
         self.assertEqual(res["session_id"], "live-session")
         self.assertEqual(res["runtime_id"], "live-runtime")
         self.assertEqual(res["backend"], "pi")
         self.assertTrue(bool(res.get("accepted")))
+
+    def test_send_route_url_decodes_historical_session_id(self) -> None:
+        mgr = _make_manager()
+        mgr.send = Mock(return_value={"ok": True, "accepted": True})
+        encoded = urllib.parse.quote("history:pi:resume-1", safe="")
+        handler = _HandlerHarness(
+            f"/api/sessions/{encoded}/send",
+            body=json.dumps({"text": "resume me"}).encode("utf-8"),
+        )
+
+        with (
+            patch("codoxear.server._require_auth", return_value=True),
+            patch("codoxear.server.MANAGER", mgr),
+        ):
+            Handler.do_POST(handler)  # type: ignore[arg-type]
+
+        payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(handler.status, 200)
+        self.assertEqual(payload, {"ok": True, "accepted": True})
+        mgr.send.assert_called_once_with("history:pi:resume-1", "resume me")
 
     def test_ui_state_route_returns_pending_requests_for_pi_session(self) -> None:
         mgr = _make_manager()
