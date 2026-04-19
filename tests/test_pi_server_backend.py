@@ -2828,9 +2828,9 @@ class TestPiBackendRouting(unittest.TestCase):
         self.assertEqual(handler.status, 200)
         self.assertEqual(
             [row["session_id"] for row in payload["sessions"]],
-            ["docs-1", "docs-2", "docs-3", "docs-4", "docs-5", "api-1"],
+            ["docs-1", "docs-2", "docs-3", "docs-4", "docs-5", "docs-6", "docs-7", "api-1"],
         )
-        self.assertEqual(payload["remaining_by_group"], {docs_cwd: 2})
+        self.assertEqual(payload["remaining_by_group"], {})
 
     def test_list_sessions_supports_loading_more_rows_for_one_group(self) -> None:
         docs_cwd = str(Path("/work/docs").resolve(strict=False))
@@ -2909,9 +2909,9 @@ class TestPiBackendRouting(unittest.TestCase):
         self.assertEqual(handler.status, 200)
         self.assertEqual(
             [row["session_id"] for row in payload["sessions"]],
-            ["old-busy", "recent-1", "recent-2"],
+            ["old-busy", "recent-1", "recent-2", "recent-3", "old-idle"],
         )
-        self.assertEqual(payload["omitted_group_count"], 2)
+        self.assertEqual(payload["omitted_group_count"], 0)
 
     def test_list_sessions_orders_groups_by_busy_then_recent_activity(self) -> None:
         handler = _HandlerHarness("/api/sessions")
