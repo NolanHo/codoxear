@@ -52,6 +52,26 @@ class TestBackendSeamsSource(unittest.TestCase):
         for module in modules:
             self.assertIs(module._sv(), server_module)
 
+    def test_seam_modules_support_explicit_runtime_rebind(self) -> None:
+        modules = [
+            assets_routes,
+            auth_routes,
+            file_routes,
+            notification_routes,
+            session_read_routes,
+            session_write_routes,
+            payloads,
+            live_payloads,
+            sidebar_state,
+            pi_ui_bridge,
+        ]
+        sentinel = object()
+        for module in modules:
+            module.bind_server_runtime(sentinel)
+            self.assertIs(module._sv(), sentinel)
+            module.bind_server_runtime(server_module)
+            self.assertIs(module._sv(), server_module)
+
     def test_voice_push_uses_attention_namespace(self) -> None:
         source = VOICE_PUSH.read_text(encoding="utf-8")
         self.assertIn("from .attention.derive import compact_notification_state", source)
