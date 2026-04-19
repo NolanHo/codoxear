@@ -166,6 +166,48 @@ describe("FileViewerDialog", () => {
     expect((api as any).getFiles).toHaveBeenCalledTimes(2);
   });
 
+  it("opens explicit files in file mode on compact viewports and exposes the browser toggle", async () => {
+    const originalMatchMedia = window.matchMedia;
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: vi.fn().mockImplementation((query: string) => ({
+        matches: query === "(max-width: 880px), (pointer: coarse)",
+        media: query,
+        onchange: null,
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        dispatchEvent: vi.fn().mockReturnValue(false),
+      })),
+    });
+
+    const { api } = await import("../../lib/api");
+    (api as any).getFiles.mockResolvedValue({ ok: true, path: "", entries: [] });
+    (api as any).getFileRead.mockResolvedValue({ ok: true, kind: "text", text: "# Hello\n\nBody" });
+
+    root = document.createElement("div");
+    document.body.appendChild(root);
+    try {
+      await act(async () => {
+        render(
+          <FileViewerDialog open sessionId="sess-mobile-file" initialPath="README.md" onClose={() => undefined} />,
+          root!,
+        );
+        await settle(8);
+      });
+
+      expect((api as any).getFileRead).toHaveBeenCalledWith("sess-mobile-file", "README.md", expect.any(AbortSignal));
+      expect(root.textContent).toContain("Browser");
+      expect(root.textContent).toContain("README.md");
+    } finally {
+      Object.defineProperty(window, "matchMedia", {
+        configurable: true,
+        value: originalMatchMedia,
+      });
+    }
+  });
+
   it("can switch from diff mode to file and markdown preview modes", async () => {
     const { api } = await import("../../lib/api");
     (api as any).getFiles.mockResolvedValue({ ok: true, path: "", entries: [] });

@@ -298,7 +298,7 @@ describe("AppShell", () => {
     expect(announcementsButton?.querySelector("svg")).not.toBeNull();
   });
 
-  it("renders the conversation tools trigger in the Sessions slot on narrow viewports", () => {
+  it("renders bottom navigation on narrow viewports and defaults to the sessions page without an active session", () => {
     const originalMatchMedia = window.matchMedia;
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
@@ -316,11 +316,12 @@ describe("AppShell", () => {
 
     try {
       renderAppShell({ activeSessionId: null, diagnostics: null });
-      const trigger = findButtonByAriaLabel("Conversation tools");
-      expect(trigger).not.toBeNull();
-      expect(trigger?.disabled).toBe(false);
-      expect(trigger?.closest(".conversationToolbarGroupPrimary")).not.toBeNull();
-      expect(getRoot().querySelector(".mobileSheetTrigger")).toBeNull();
+      expect(getRoot().querySelector('[data-testid="mobile-shell"]')).not.toBeNull();
+      expect(findButtonByText("Sessions")).not.toBeNull();
+      expect(findButtonByText("Chat")).not.toBeNull();
+      expect(findButtonByText("Tools")).not.toBeNull();
+      expect(findButtonByAriaLabel("Conversation tools")).toBeNull();
+      expect(getRoot().querySelector('[data-testid="sessions-surface"]')).not.toBeNull();
     } finally {
       Object.defineProperty(window, "matchMedia", {
         configurable: true,
@@ -340,7 +341,7 @@ describe("AppShell", () => {
     expect(findButtonByAriaLabel("Interrupt (Esc)")?.querySelector("svg")).not.toBeNull();
   });
 
-  it("renders a grouped toolbar menu on narrow viewports", async () => {
+  it("switches to the tools page on narrow viewports", async () => {
     const originalMatchMedia = window.matchMedia;
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
@@ -360,35 +361,19 @@ describe("AppShell", () => {
       renderAppShell({ diagnostics: { status: "ok" } });
       await flush();
 
-      const menuButton = findButtonByAriaLabel("Conversation tools");
-      expect(menuButton).not.toBeNull();
-      expect(findButtonByAriaLabel("Files")).toBeNull();
-      expect(findButtonByAriaLabel("Workspace")).toBeNull();
+      expect(getRoot().textContent).toContain("Active session");
+      expect(findButtonByAriaLabel("Conversation tools")).toBeNull();
 
       act(() => {
-        menuButton?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+        findButtonByText("Tools")?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
       });
       await flush();
 
-      const sessionsButton = findButtonByAriaLabel("Sessions");
-      const filesButton = findButtonByAriaLabel("Files");
-      const workspaceButton = findButtonByAriaLabel("Workspace");
-      const harnessButton = findButtonByAriaLabel("Harness mode");
-      const interruptButton = findButtonByAriaLabel("Interrupt (Esc)");
-
-      expect(sessionsButton).not.toBeNull();
-      expect(filesButton).not.toBeNull();
-      expect(workspaceButton).not.toBeNull();
-      expect(harnessButton).not.toBeNull();
-      expect(interruptButton).not.toBeNull();
-      expect(sessionsButton?.querySelector("svg")).not.toBeNull();
-      expect(filesButton?.querySelector("svg")).not.toBeNull();
-      expect(workspaceButton?.querySelector("svg")).not.toBeNull();
-      expect(harnessButton?.querySelector("svg")).not.toBeNull();
-      expect(interruptButton?.querySelector("svg")).not.toBeNull();
-      expect(interruptButton?.className).toContain("conversationMenuItemDanger");
-      expect(sessionsButton?.className).toContain("conversationMenuItem");
-      expect(filesButton?.className).toContain("conversationMenuItem");
+      expect(getRoot().textContent).toContain("Secondary actions");
+      expect(findButtonByText("Files")).not.toBeNull();
+      expect(findButtonByText("Workspace")).not.toBeNull();
+      expect(findButtonByText("Harness")).not.toBeNull();
+      expect(findButtonByText("Settings")).not.toBeNull();
     } finally {
       Object.defineProperty(window, "matchMedia", {
         configurable: true,
@@ -415,7 +400,7 @@ describe("AppShell", () => {
     expect(dialog?.textContent).toContain("Diagnostics");
   });
 
-  it("opens workspace details in the mobile sheet on narrow viewports", async () => {
+  it("opens workspace details from the tools page on narrow viewports", async () => {
     const originalMatchMedia = window.matchMedia;
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
@@ -435,25 +420,23 @@ describe("AppShell", () => {
       renderAppShell({ diagnostics: { status: "ok" } });
       await flush();
 
-      const menuButton = findButtonByAriaLabel("Conversation tools");
-      expect(menuButton).not.toBeNull();
       act(() => {
-        menuButton?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+        findButtonByText("Tools")?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
       });
       await flush();
 
-      const button = findButtonByAriaLabel("Workspace");
+      const button = findButtonByText("Workspace");
       expect(button).not.toBeNull();
       act(() => {
         button?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
       });
       await flush();
 
-      const mobileSheet = getRoot().querySelector('[role="dialog"][aria-labelledby="mobile-workspace-title"]');
-      expect(mobileSheet).not.toBeNull();
-      expect(getRoot().querySelector("[data-testid='workspace-dialog']")).toBeNull();
-      expect(mobileSheet?.textContent).toContain("Workspace");
-      expect(mobileSheet?.textContent).toContain("Diagnostics");
+      const dialog = getRoot().querySelector("[data-testid='workspace-dialog']");
+      expect(dialog).not.toBeNull();
+      expect(getRoot().querySelector('[role="dialog"][aria-labelledby="mobile-workspace-title"]')).toBeNull();
+      expect(dialog?.textContent).toContain("Workspace");
+      expect(dialog?.textContent).toContain("Diagnostics");
     } finally {
       Object.defineProperty(window, "matchMedia", {
         configurable: true,
@@ -462,7 +445,7 @@ describe("AppShell", () => {
     }
   });
 
-  it("opens the sessions sheet from the grouped toolbar menu on narrow viewports", async () => {
+  it("switches back to the sessions page from bottom navigation on narrow viewports", async () => {
     const originalMatchMedia = window.matchMedia;
     Object.defineProperty(window, "matchMedia", {
       configurable: true,
@@ -482,23 +465,14 @@ describe("AppShell", () => {
       renderAppShell({ diagnostics: { status: "ok" } });
       await flush();
 
-      const menuButton = findButtonByAriaLabel("Conversation tools");
-      expect(menuButton).not.toBeNull();
+      expect(getRoot().textContent).toContain("Active session");
       act(() => {
-        menuButton?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+        findButtonByText("Sessions")?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
       });
       await flush();
 
-      const sessionsButton = findButtonByAriaLabel("Sessions");
-      expect(sessionsButton).not.toBeNull();
-      act(() => {
-        sessionsButton?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
-      });
-      await flush();
-
-      const mobileSheet = getRoot().querySelector('[role="dialog"][aria-labelledby="mobile-sessions-title"]');
-      expect(mobileSheet).not.toBeNull();
-      expect(mobileSheet?.textContent).toContain("Sessions");
+      expect(getRoot().querySelector('[data-testid="sessions-surface"]')).not.toBeNull();
+      expect(getRoot().textContent).toContain("Continue where you left off");
     } finally {
       Object.defineProperty(window, "matchMedia", {
         configurable: true,

@@ -95,7 +95,7 @@ export function AppShellWorkspaceOverlays({
           onCloseWorkspace();
         }
       }}>
-        <DialogContent className="workspaceDialog max-w-none" titleId="workspace-dialog-title">
+        <DialogContent className="workspaceDialog mobileDetailDialog max-w-none" titleId="workspace-dialog-title">
           <div data-testid="workspace-dialog" className="workspaceDialogBody">
             <DialogHeader className="workspaceDialogHeader">
               <div className="flex items-center justify-between gap-3">
@@ -117,7 +117,7 @@ export function AppShellWorkspaceOverlays({
           onCloseTodoViewer();
         }
       }}>
-        <DialogContent className="todoViewerDialog max-w-2xl" titleId="todo-viewer-dialog-title">
+        <DialogContent className="todoViewerDialog mobileDetailDialog max-w-2xl" titleId="todo-viewer-dialog-title">
           <div className="todoViewerDialogFrame">
             <DialogHeader className="todoViewerDialogHeader">
               <div className="flex items-center justify-between gap-3">
