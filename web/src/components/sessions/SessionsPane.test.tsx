@@ -10,7 +10,6 @@ vi.mock("../../lib/api", () => ({
   api: {
     createSession: vi.fn().mockResolvedValue({ ok: true, session_id: "sess-2", broker_pid: 42 }),
     editSession: vi.fn().mockResolvedValue({ ok: true, alias: "Updated session" }),
-    editCwdGroup: vi.fn().mockResolvedValue({ ok: true }),
     deleteSession: vi.fn().mockResolvedValue({ ok: true }),
     setSessionFocus: vi.fn().mockResolvedValue({ ok: true, focused: true }),
     getSessionDetails: vi.fn().mockResolvedValue({ ok: true, session: { session_id: "sess-1", alias: "Inbox cleanup", agent_backend: "pi", priority_offset: 0 } }),
@@ -27,20 +26,6 @@ async function flush() {
 async function click(element: Element) {
   await act(async () => {
     (element as HTMLElement).dispatchEvent(new MouseEvent("click", { bubbles: true }));
-  });
-}
-
-async function setInputValue(element: HTMLInputElement, value: string) {
-  await act(async () => {
-    element.value = value;
-    element.dispatchEvent(new Event("input", { bubbles: true }));
-    element.dispatchEvent(new Event("change", { bubbles: true }));
-  });
-}
-
-async function pressKey(element: Element, key: string) {
-  await act(async () => {
-    element.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
   });
 }
 
@@ -123,7 +108,7 @@ describe("SessionsPane", () => {
     expect(root?.querySelector("[data-testid='session-card'][aria-current='true']")).not.toBeNull();
     expect(root?.textContent).toContain("Inbox cleanup");
     expect(root?.textContent).toContain("pi");
-    expect(root?.textContent).toContain("web");
+    expect(root?.textContent).not.toContain("web");
   });
 
   it("uses first user message as title and hides cwd in compact row", () => {
@@ -364,7 +349,7 @@ describe("SessionsPane", () => {
     expect(sessionsStore.refresh).toHaveBeenCalled();
   });
 
-  it("groups by cwd preserving first appearance order", () => {
+  it("renders a flat session list without cwd grouping", () => {
     renderSessionsPane({
       items: [
         { session_id: "sess-1", alias: "Docs polish", cwd: "/work/docs", agent_backend: "pi", updated_ts: 30 },
@@ -379,9 +364,12 @@ describe("SessionsPane", () => {
       tmuxAvailable: false,
     });
 
-    const groups = Array.from(root?.querySelectorAll<HTMLElement>(".sessionGroup") || []);
-    expect(groups).toHaveLength(2);
-    expect(groups.map((group) => group.querySelector(".sessionGroupTitle")?.textContent?.trim())).toEqual(["docs", "api"]);
+    expect(root?.querySelectorAll<HTMLElement>(".sessionGroup")).toHaveLength(0);
+    expect(Array.from(root?.querySelectorAll<HTMLElement>(".sessionTitle") || []).map((node) => node.textContent?.trim())).toEqual([
+      "Docs polish",
+      "Bug bash",
+      "Release notes",
+    ]);
   });
 
   it("selects grouped session on card click", async () => {
@@ -405,66 +393,7 @@ describe("SessionsPane", () => {
     expect(sessionsStore.select).toHaveBeenCalledWith("sess-2");
   });
 
-  it("renames cwd group and refreshes bootstrap", async () => {
-    const sessionsStore = renderSessionsPane(
-      {
-        items: [{ session_id: "sess-1", alias: "Docs polish", cwd: "/work/docs", agent_backend: "pi" }],
-        activeSessionId: null,
-        loading: false,
-        newSessionDefaults: null,
-        recentCwds: [],
-        cwdGroups: {},
-        tmuxAvailable: false,
-      },
-      {
-        onRefresh: () => {
-          sessionsStore.setState({ ...sessionsStore.getState(), cwdGroups: { "/work/docs": { label: "Knowledge Base" } } });
-        },
-      },
-    );
-
-    const renameButton = root?.querySelector<HTMLButtonElement>(".sessionGroupRenameButton");
-    expect(renameButton).not.toBeNull();
-    await click(renameButton!);
-
-    const input = root?.querySelector<HTMLInputElement>(".sessionGroupRenameInput");
-    expect(input).not.toBeNull();
-    await setInputValue(input!, "Knowledge Base");
-    await pressKey(input!, "Enter");
-    await flush();
-
-    expect(api.editCwdGroup).toHaveBeenCalledWith({ cwd: "/work/docs", label: "Knowledge Base" });
-    expect(sessionsStore.refreshBootstrap).toHaveBeenCalledTimes(1);
-  });
-
-  it("collapses cwd group and hides cards", async () => {
-    const sessionsStore = renderSessionsPane(
-      {
-        items: [{ session_id: "sess-1", alias: "Docs polish", cwd: "/work/projects/docs", agent_backend: "pi" }],
-        activeSessionId: null,
-        loading: false,
-        newSessionDefaults: null,
-        recentCwds: [],
-        cwdGroups: {},
-        tmuxAvailable: false,
-      },
-      {
-        onRefresh: () => {
-          sessionsStore.setState({ ...sessionsStore.getState(), cwdGroups: { "/work/projects/docs": { collapsed: true } } });
-        },
-      },
-    );
-
-    const titleButton = root?.querySelector<HTMLButtonElement>(".sessionGroupTitleButton");
-    expect(titleButton).not.toBeNull();
-    await click(titleButton!);
-    await flush();
-
-    expect(api.editCwdGroup).toHaveBeenCalledWith({ cwd: "/work/projects/docs", collapsed: true });
-    expect(root?.querySelectorAll("[data-testid='session-card']")).toHaveLength(0);
-  });
-
-  it("loads more sessions and directories when pagination controls are clicked", async () => {
+  it("loads more sessions with a single flat-list control", async () => {
     const sessionsStore = renderSessionsPane({
       items: [{ session_id: "sess-1", alias: "Session 1", cwd: "/work/docs", agent_backend: "pi" }],
       activeSessionId: null,
@@ -473,25 +402,22 @@ describe("SessionsPane", () => {
       recentCwds: [],
       cwdGroups: {},
       tmuxAvailable: false,
-      remainingByGroup: { "/work/docs": 1 },
+      remainingByGroup: { "/work/docs": 1, "/work/api": 2 },
       omittedGroupCount: 2,
     });
 
-    const groupMore = Array.from(root?.querySelectorAll<HTMLButtonElement>("button") || []).find((button) => (button.textContent || "").trim() === "...");
-    const dirsMore = Array.from(root?.querySelectorAll<HTMLButtonElement>("button") || []).find((button) => (button.textContent || "").includes("Load 2 more directories"));
+    const loadMore = Array.from(root?.querySelectorAll<HTMLButtonElement>("button") || []).find((button) => (button.textContent || "").includes("Load more sessions"));
+    expect(loadMore).toBeDefined();
 
-    expect(groupMore).toBeDefined();
-    expect(dirsMore).toBeDefined();
-
-    await click(groupMore!);
-    await click(dirsMore!);
+    await click(loadMore!);
     await flush();
 
     expect(sessionsStore.loadMoreGroup).toHaveBeenCalledWith("/work/docs");
+    expect(sessionsStore.loadMoreGroup).toHaveBeenCalledWith("/work/api");
     expect(sessionsStore.loadMoreGroups).toHaveBeenCalledTimes(1);
   });
 
-  it("renders fallback group without rename/toggle controls", () => {
+  it("does not render cwd group controls in the flat rail", () => {
     renderSessionsPane({
       items: [{ session_id: "sess-1", alias: "Inbox", agent_backend: "pi" }],
       activeSessionId: null,
@@ -502,8 +428,7 @@ describe("SessionsPane", () => {
       tmuxAvailable: false,
     });
 
-    const group = root?.querySelector<HTMLElement>(".sessionGroup");
-    expect(group?.querySelector(".sessionGroupTitle")?.textContent).toContain("No working directory");
-    expect(group?.querySelector(".sessionGroupRenameButton")).toBeNull();
+    expect(root?.querySelector(".sessionGroupTitle")).toBeNull();
+    expect(root?.querySelector(".sessionGroupRenameButton")).toBeNull();
   });
 });

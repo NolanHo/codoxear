@@ -9,9 +9,10 @@ import { Separator } from "@/components/ui/separator";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 
-import { useLiveSessionStore, useLiveSessionStoreApi, useSessionUiStore, useSessionUiStoreApi } from "../../app/providers";
+import { useLiveSessionStore, useLiveSessionStoreApi, useSessionUiStore, useSessionUiStoreApi, useSessionsStore } from "../../app/providers";
 import { api } from "../../lib/api";
-import type { SessionUiRequest, TodoSnapshot, TodoSnapshotItem } from "../../lib/types";
+import { getSessionDisplayName } from "../../lib/session-display";
+import type { SessionSummary, SessionUiRequest, TodoSnapshot, TodoSnapshotItem } from "../../lib/types";
 
 type DraftValue = string | string[];
 type OptionInput = { label?: string; value?: string; title?: string; description?: string } | string;
@@ -255,6 +256,54 @@ function renderTodoSnapshotSection(snapshot: TodoSnapshot) {
   );
 }
 
+function metadataEntriesFromSession(session: SessionSummary | null, sessionId: string | null, runtimeId: string | null) {
+  const entries: Array<[string, unknown]> = [];
+  const push = (key: string, value: unknown) => {
+    if (value == null) {
+      return;
+    }
+    if (typeof value === "string" && value.trim().length === 0) {
+      return;
+    }
+    entries.push([key, value]);
+  };
+
+  if (session) {
+    push("display_name", getSessionDisplayName(session));
+  }
+  push("session_id", session?.session_id ?? sessionId);
+  push("runtime_id", session?.runtime_id ?? runtimeId);
+  push("agent_backend", session?.agent_backend);
+  push("transport", session?.transport);
+  push("cwd", session?.cwd);
+  push("git_branch", session?.git_branch);
+  push("model", session?.model);
+  push("reasoning_effort", session?.reasoning_effort);
+  push("service_tier", session?.service_tier);
+  push("busy", session?.busy);
+  push("focused", session?.focused);
+  push("queue_len", session?.queue_len);
+  push("historical", session?.historical);
+  return entries;
+}
+
+function isMonospaceMetadataKey(key: string) {
+  return key.endsWith("_id") || key.endsWith("_path") || key === "cwd" || key === "git_branch";
+}
+
+function renderKeyValueList(entries: Array<[string, unknown]>) {
+  return (
+    <dl className="space-y-3">
+      {entries.map(([key, value]) => (
+        <div key={key} className="grid gap-1 sm:grid-cols-[minmax(7rem,auto)_1fr] sm:gap-3">
+          <dt className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">{formatDiagnosticLabel(key)}</dt>
+          <dd className={`m-0 text-sm text-foreground${isMonospaceMetadataKey(key) ? " break-all font-mono" : ""}`}>{formatDiagnosticValue(key, value)}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
 function mergeFreeformValue(request: SessionUiRequest, normalizedValue: string | string[] | undefined, freeformValue: string) {
   const trimmedFreeform = freeformValue.trim();
 
@@ -318,6 +367,7 @@ export function SessionWorkspace({ mode = "default" }: SessionWorkspaceProps) {
     files?: string[];
   };
   const { sessionId, runtimeId, diagnostics, queue, loading } = sessionUiState;
+  const { items } = useSessionsStore();
   const liveSessionState = useLiveSessionStore();
   const liveSessionStoreApi = useLiveSessionStoreApi();
   const liveRequests = sessionId ? liveSessionState.requestsBySessionId[sessionId] ?? [] : [];
@@ -331,6 +381,8 @@ export function SessionWorkspace({ mode = "default" }: SessionWorkspaceProps) {
   const [requestErrorById, setRequestErrorById] = useState<Record<string, string>>({});
   const requestSubmittingIdsRef = useRef(new Set<string>());
   const diagnosticsEntries = entriesFromRecord(diagnostics);
+  const activeSession = sessionId ? items.find((item) => item.session_id === sessionId) ?? null : null;
+  const metadataEntries = metadataEntriesFromSession(activeSession, sessionId, runtimeId);
   const todoSnapshot = normalizeTodoSnapshot(diagnostics && typeof diagnostics === "object" ? (diagnostics as { todo_snapshot?: unknown }).todo_snapshot : null);
   const detailEntries = diagnosticsEntries.filter(([key]) => key !== "todo_snapshot");
   const prioritizedDetailKeys = new Set(["session_file_path", "log_path", "updated_ts"]);
@@ -338,17 +390,19 @@ export function SessionWorkspace({ mode = "default" }: SessionWorkspaceProps) {
   const genericDetailEntries = detailEntries.filter(([key]) => !prioritizedDetailKeys.has(key));
   const queueItems = queueItemsFromValue(queue);
   const showDetails = mode === "details";
-  const hasWorkspaceData = diagnosticsEntries.length > 0 || queueItems.length > 0;
+  const hasWorkspaceData = metadataEntries.length > 0 || diagnosticsEntries.length > 0 || queueItems.length > 0;
   const showTabs = showDetails || hasWorkspaceData || requests.length > 0;
   const defaultTab = showDetails
     ? "overview"
     : requests.length > 0
       ? "requests"
-      : diagnosticsEntries.length > 0
-        ? "diagnostics"
-        : queueItems.length > 0
-          ? "queue"
-          : "requests";
+      : metadataEntries.length > 0
+        ? "metadata"
+        : diagnosticsEntries.length > 0
+          ? "diagnostics"
+          : queueItems.length > 0
+            ? "queue"
+            : "requests";
 
   const submitRequestResponse = async (requestId: string, payload: Record<string, unknown>) => {
     if (!sessionId || requestSubmittingIdsRef.current.has(requestId)) {
@@ -397,6 +451,7 @@ export function SessionWorkspace({ mode = "default" }: SessionWorkspaceProps) {
               <TabsList className="workspaceTabsList flex h-auto flex-wrap items-center gap-2 rounded-2xl bg-muted/60 p-1">
                 {showDetails ? <TabsTrigger value="overview">Overview</TabsTrigger> : null}
                 <TabsTrigger value="requests">UI Requests</TabsTrigger>
+                <TabsTrigger value="metadata">Metadata</TabsTrigger>
                 <TabsTrigger value="diagnostics">Diagnostics</TabsTrigger>
                 <TabsTrigger value="queue">Queue</TabsTrigger>
                 {files.length ? <TabsTrigger value="files">Files</TabsTrigger> : null}
@@ -407,30 +462,15 @@ export function SessionWorkspace({ mode = "default" }: SessionWorkspaceProps) {
                   <TabsContent value="overview" className="min-h-0">
                     <ScrollArea className="workspaceScroll h-full pr-1">
                       <div className="workspacePanelGrid grid gap-4 lg:grid-cols-2">
+                        <WorkspaceSection title="Metadata" badge={metadataEntries.length ? `${metadataEntries.length}` : undefined}>
+                          {metadataEntries.length ? renderKeyValueList(metadataEntries) : <p className="text-sm text-muted-foreground">No metadata available.</p>}
+                        </WorkspaceSection>
                         <WorkspaceSection title="Diagnostics" badge={diagnosticsEntries.length ? `${diagnosticsEntries.length}` : undefined}>
                           {detailEntries.length || todoSnapshot.available || todoSnapshot.error ? (
                             <div className="space-y-4">
-                              {priorityDetailEntries.length ? (
-                                <dl className="space-y-3">
-                                  {priorityDetailEntries.map(([key, value]) => (
-                                    <div key={key} className="grid gap-1 sm:grid-cols-[minmax(7rem,auto)_1fr] sm:gap-3">
-                                      <dt className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">{formatDiagnosticLabel(key)}</dt>
-                                      <dd className="m-0 break-all font-mono text-sm text-foreground">{formatDiagnosticValue(key, value)}</dd>
-                                    </div>
-                                  ))}
-                                </dl>
-                              ) : null}
+                              {priorityDetailEntries.length ? renderKeyValueList(priorityDetailEntries) : null}
                               {todoSnapshot.available || todoSnapshot.error ? renderTodoSnapshotSection(todoSnapshot) : null}
-                              {genericDetailEntries.length ? (
-                                <dl className="space-y-3">
-                                  {genericDetailEntries.map(([key, value]) => (
-                                    <div key={key} className="grid gap-1 sm:grid-cols-[minmax(7rem,auto)_1fr] sm:gap-3">
-                                      <dt className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">{formatDiagnosticLabel(key)}</dt>
-                                      <dd className="m-0 text-sm text-foreground">{formatDiagnosticValue(key, value)}</dd>
-                                    </div>
-                                  ))}
-                                </dl>
-                              ) : null}
+                              {genericDetailEntries.length ? renderKeyValueList(genericDetailEntries) : null}
                             </div>
                           ) : (
                             <p className="text-sm text-muted-foreground">No diagnostics available.</p>
@@ -689,37 +729,26 @@ export function SessionWorkspace({ mode = "default" }: SessionWorkspaceProps) {
                     </div>
                   </ScrollArea>
                 </TabsContent>
+                <TabsContent value="metadata" className="min-h-0">
+                  <ScrollArea className="workspaceScroll h-full pr-1">
+                    <WorkspaceSection title="Metadata" badge={metadataEntries.length ? `${metadataEntries.length}` : undefined}>
+                      {metadataEntries.length ? renderKeyValueList(metadataEntries) : <p className="text-sm text-muted-foreground">No metadata available.</p>}
+                    </WorkspaceSection>
+                  </ScrollArea>
+                </TabsContent>
                 <TabsContent value="diagnostics" className="min-h-0">
                   <ScrollArea className="workspaceScroll h-full pr-1">
-                        <WorkspaceSection title="Diagnostics" badge={diagnosticsEntries.length ? `${diagnosticsEntries.length}` : undefined}>
-                          {detailEntries.length || todoSnapshot.available || todoSnapshot.error ? (
-                            <div className="space-y-4">
-                              {priorityDetailEntries.length ? (
-                                <dl className="space-y-3">
-                                  {priorityDetailEntries.map(([key, value]) => (
-                                    <div key={key} className="grid gap-1 sm:grid-cols-[minmax(7rem,auto)_1fr] sm:gap-3">
-                                      <dt className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">{formatDiagnosticLabel(key)}</dt>
-                                      <dd className="m-0 break-all font-mono text-sm text-foreground">{formatDiagnosticValue(key, value)}</dd>
-                                    </div>
-                                  ))}
-                                </dl>
-                              ) : null}
-                              {todoSnapshot.available || todoSnapshot.error ? renderTodoSnapshotSection(todoSnapshot) : null}
-                              {genericDetailEntries.length ? (
-                                <dl className="space-y-3">
-                                  {genericDetailEntries.map(([key, value]) => (
-                                    <div key={key} className="grid gap-1 sm:grid-cols-[minmax(7rem,auto)_1fr] sm:gap-3">
-                                      <dt className="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">{formatDiagnosticLabel(key)}</dt>
-                                      <dd className="m-0 text-sm text-foreground">{formatDiagnosticValue(key, value)}</dd>
-                                    </div>
-                                  ))}
-                                </dl>
-                              ) : null}
-                            </div>
-                          ) : (
-                            <p className="text-sm text-muted-foreground">No diagnostics available.</p>
-                          )}
-                        </WorkspaceSection>
+                    <WorkspaceSection title="Diagnostics" badge={diagnosticsEntries.length ? `${diagnosticsEntries.length}` : undefined}>
+                      {detailEntries.length || todoSnapshot.available || todoSnapshot.error ? (
+                        <div className="space-y-4">
+                          {priorityDetailEntries.length ? renderKeyValueList(priorityDetailEntries) : null}
+                          {todoSnapshot.available || todoSnapshot.error ? renderTodoSnapshotSection(todoSnapshot) : null}
+                          {genericDetailEntries.length ? renderKeyValueList(genericDetailEntries) : null}
+                        </div>
+                      ) : (
+                        <p className="text-sm text-muted-foreground">No diagnostics available.</p>
+                      )}
+                    </WorkspaceSection>
                   </ScrollArea>
                 </TabsContent>
                 <TabsContent value="queue" className="min-h-0">

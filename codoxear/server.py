@@ -1738,6 +1738,7 @@ def _canonical_session_cwd(cwd: Any) -> str | None:
 
 SESSION_LIST_ROW_KEYS = (
     "session_id",
+    "runtime_id",
     "thread_id",
     "display_name",
     "title",
@@ -4137,18 +4138,19 @@ class SessionManager:
         with self._lock:
             if target in self._sessions:
                 return target
-            matches: list[str] = []
+            matches: list[tuple[float, str]] = []
             for runtime_id, session in self._sessions.items():
                 ref = self._page_state_ref_for_session(session)
                 if ref is not None and ref[1] == target:
-                    matches.append(runtime_id)
+                    matches.append((float(session.start_ts or 0.0), runtime_id))
                     continue
                 thread_id = _clean_optional_text(session.thread_id)
                 if thread_id == target:
-                    matches.append(runtime_id)
-            if len(matches) == 1:
-                return matches[0]
-        return None
+                    matches.append((float(session.start_ts or 0.0), runtime_id))
+            if not matches:
+                return None
+            matches.sort(key=lambda item: (-item[0], item[1]))
+            return matches[0][1]
 
     def _catalog_record_for_ref(self, ref: SessionRef) -> DurableSessionRecord | None:
         backend, durable_session_id = ref

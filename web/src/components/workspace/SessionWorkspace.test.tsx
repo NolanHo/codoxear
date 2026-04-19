@@ -329,10 +329,11 @@ describe("SessionWorkspace", () => {
     expect(root.textContent).toContain("Queue");
   });
 
-  it("can render diagnostics in details mode when explicitly requested", () => {
+  it("can render metadata and diagnostics in details mode when explicitly requested", () => {
     const sessionUiStore = createStaticStore(
       {
         sessionId: "sess-9",
+        runtimeId: "runtime-9",
         diagnostics: { status: "ok", queue_len: 2 },
         queue: { items: [{ text: "next task" }] },
         files: ["src/main.tsx"],
@@ -341,16 +342,41 @@ describe("SessionWorkspace", () => {
       },
       { refresh: vi.fn() },
     );
+    const sessionsStore = createStaticStore(
+      {
+        items: [
+          {
+            session_id: "sess-9",
+            runtime_id: "runtime-9",
+            alias: "Workflow",
+            cwd: "/work/docs",
+            git_branch: "main",
+            agent_backend: "pi",
+            transport: "pi-rpc",
+            busy: false,
+            focused: true,
+            queue_len: 2,
+          },
+        ],
+        activeSessionId: "sess-9",
+        loading: false,
+      },
+      { refresh: vi.fn(), refreshBootstrap: vi.fn(), loadMoreGroup: vi.fn(), loadMoreGroups: vi.fn(), select: vi.fn() },
+    );
 
     root = document.createElement("div");
     document.body.appendChild(root);
     render(
-      <AppProviders sessionUiStore={sessionUiStore as any}>
+      <AppProviders sessionUiStore={sessionUiStore as any} sessionsStore={sessionsStore as any}>
         <SessionWorkspace mode="details" />
       </AppProviders>,
       root,
     );
 
+    expect(root.textContent).toContain("Metadata");
+    expect(root.textContent).toContain("Workflow");
+    expect(root.textContent).toContain("runtime-9");
+    expect(root.textContent).toContain("/work/docs");
     expect(root.textContent).toContain("Diagnostics");
     expect(root.textContent).toContain("Status");
     expect(root.textContent).toContain("Queue");

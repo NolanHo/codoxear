@@ -2808,6 +2808,7 @@ class TestPiBackendRouting(unittest.TestCase):
             manager.list_sessions.return_value = [
                 {
                     "session_id": f"docs-{index}",
+                    "runtime_id": f"docs-runtime-{index}",
                     "alias": f"Docs {index}",
                     "cwd": docs_cwd,
                     "agent_backend": "pi",
@@ -2816,6 +2817,7 @@ class TestPiBackendRouting(unittest.TestCase):
             ] + [
                 {
                     "session_id": "api-1",
+                    "runtime_id": "api-runtime-1",
                     "alias": "API 1",
                     "cwd": "/work/api",
                     "agent_backend": "codex",
@@ -2830,6 +2832,7 @@ class TestPiBackendRouting(unittest.TestCase):
             [row["session_id"] for row in payload["sessions"]],
             ["docs-1", "docs-2", "docs-3", "docs-4", "docs-5", "docs-6", "docs-7", "api-1"],
         )
+        self.assertEqual(payload["sessions"][0]["runtime_id"], "docs-runtime-1")
         self.assertEqual(payload["remaining_by_group"], {})
 
     def test_list_sessions_supports_loading_more_rows_for_one_group(self) -> None:

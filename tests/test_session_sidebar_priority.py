@@ -402,6 +402,39 @@ class TestSessionSidebarPriority(unittest.TestCase):
             ["shared-thread", "other-thread"],
         )
 
+    def test_runtime_session_id_for_identifier_prefers_newest_live_match(self) -> None:
+        mgr = _make_manager()
+        now = time.time()
+        newest = Session(
+            session_id="broker-new",
+            thread_id="shared-thread",
+            broker_pid=100,
+            codex_pid=200,
+            agent_backend="pi",
+            backend="pi",
+            owned=True,
+            start_ts=now,
+            cwd="/tmp/repo",
+            log_path=None,
+            sock_path=Path("/tmp/broker-new.sock"),
+        )
+        older = Session(
+            session_id="broker-old",
+            thread_id="shared-thread",
+            broker_pid=101,
+            codex_pid=201,
+            agent_backend="pi",
+            backend="pi",
+            owned=True,
+            start_ts=now - 30,
+            cwd="/tmp/repo",
+            log_path=None,
+            sock_path=Path("/tmp/broker-old.sock"),
+        )
+        mgr._sessions = {older.session_id: older, newest.session_id: newest}
+
+        self.assertEqual(mgr._runtime_session_id_for_identifier("shared-thread"), "broker-new")
+
     def test_delete_session_kills_terminal_owned_and_clears_dependents(self) -> None:
         mgr = _make_manager()
         now = time.time()

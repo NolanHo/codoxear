@@ -71,7 +71,6 @@ export function SessionCard({ session, active, onSelect, onToggleFocus, onEdit, 
     title,
     session.agent_backend || "codex",
     isHistorical ? "historical" : session.busy ? "busy" : "idle",
-    !isHistorical && session.owned ? "web-owned" : null,
     !isHistorical && session.focused ? "focused" : null,
     !isHistorical && session.queue_len ? `${session.queue_len} queued` : null,
   ].filter(Boolean);
@@ -108,7 +107,6 @@ export function SessionCard({ session, active, onSelect, onToggleFocus, onEdit, 
                   {!isHistorical ? <span className={cn("stateDot", session.busy && "busy")} /> : null}
                   <Badge variant="secondary" className="backendBadge">{session.agent_backend || "codex"}</Badge>
                   {isHistorical ? <Badge variant="outline" className="ownerBadge">history</Badge> : null}
-                  {!isHistorical && session.owned ? <Badge variant="outline" className="ownerBadge">web</Badge> : null}
                   {!isHistorical && session.focused ? <Badge variant="outline" className="ownerBadge">Focus</Badge> : null}
                   {!isHistorical && session.queue_len ? <Badge className="queueBadge">{session.queue_len}</Badge> : null}
                 </div>

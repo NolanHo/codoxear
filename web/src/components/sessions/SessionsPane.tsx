@@ -8,29 +8,15 @@ import { api } from "../../lib/api";
 import { normalizeLaunchBackend, providerChoiceToSettings } from "../../lib/launch";
 import { getSessionRuntimeId } from "../../lib/session-identity";
 import { getSessionDisplayName } from "../../lib/session-display";
-import type { CwdGroupMeta, SessionSummary } from "../../lib/types";
+import type { SessionSummary } from "../../lib/types";
 import { EditSessionDialog } from "./EditSessionDialog";
 import { SessionCard } from "./SessionCard";
-import { SessionGroup } from "./SessionGroup";
 
 interface SessionsPaneProps {
   onNewSession?: () => void;
 }
 
 type SessionsSurfaceTab = "sessions" | "focus";
-
-const FALLBACK_GROUP_KEY = "__no_working_directory__";
-const FALLBACK_GROUP_TITLE = "No working directory";
-const FALLBACK_GROUP_SUBTITLE = "Sessions without a cwd";
-
-interface GroupedSessions {
-  key: string;
-  cwd: string | null;
-  title: string;
-  subtitle: string;
-  collapsed: boolean;
-  sessions: SessionSummary[];
-}
 
 function shortSessionId(sessionId: string) {
   const match = sessionId.match(/^([0-9a-f]{8})[0-9a-f-]{20,}$/i);
@@ -47,61 +33,53 @@ function deleteSessionConfirmText(session: SessionSummary) {
   return `Delete this terminal-owned session${target}? This will also stop the corresponding terminal session.`;
 }
 
-function getGroupTitle(cwd: string | null) {
-  if (!cwd) {
-    return FALLBACK_GROUP_TITLE;
-  }
-  const parts = cwd.split(/[\\/]+/).filter(Boolean);
-  return parts[parts.length - 1] || cwd;
-}
-
-function groupSessions(items: SessionSummary[], cwdGroups: Record<string, CwdGroupMeta>) {
-  const groups = new Map<string, GroupedSessions>();
-
-  items.forEach((session) => {
-    const cwd = session.cwd?.trim() || null;
-    const key = cwd || FALLBACK_GROUP_KEY;
-    const meta = cwd ? cwdGroups[cwd] : undefined;
-    const existing = groups.get(key);
-
-    if (existing) {
-      existing.sessions.push(session);
-      return;
-    }
-
-    groups.set(key, {
-      key,
-      cwd,
-      title: meta?.label?.trim() || getGroupTitle(cwd),
-      subtitle: cwd || FALLBACK_GROUP_SUBTITLE,
-      collapsed: Boolean(meta?.collapsed),
-      sessions: [session],
-    });
-  });
-
-  return Array.from(groups.values());
-}
-
 export function SessionsPane({ onNewSession }: SessionsPaneProps) {
-  const { items, activeSessionId, cwdGroups = {}, remainingByGroup = {}, omittedGroupCount = 0 } = useSessionsStore();
+  const { items, activeSessionId, remainingByGroup = {}, omittedGroupCount = 0 } = useSessionsStore();
   const sessionsStoreApi = useSessionsStoreApi();
   const [editingSession, setEditingSession] = useState<SessionSummary | null>(null);
   const [actionError, setActionError] = useState("");
-  const [pendingGroupKey, setPendingGroupKey] = useState<string | null>(null);
-  const [groupErrors, setGroupErrors] = useState<Record<string, string>>({});
   const [surfaceTab, setSurfaceTab] = useState<SessionsSurfaceTab>("sessions");
+  const [loadingMore, setLoadingMore] = useState(false);
 
   const focusedItems = useMemo(
     () => items.filter((session) => session.focused === true && session.historical !== true),
     [items],
   );
-  const groupedSessions = useMemo(() => groupSessions(items, cwdGroups), [cwdGroups, items]);
-  const groupedFocusedSessions = useMemo(() => groupSessions(focusedItems, cwdGroups), [cwdGroups, focusedItems]);
+  const visibleSessions = surfaceTab === "focus" ? focusedItems : items;
+  const remainingSessionCount = useMemo(
+    () => Object.values(remainingByGroup).reduce((sum, value) => sum + Math.max(0, Number(value || 0)), 0),
+    [remainingByGroup],
+  );
+  const canLoadMoreSessions = surfaceTab === "sessions" && (remainingSessionCount > 0 || omittedGroupCount > 0);
 
   const switchSurfaceTab = (nextTab: SessionsSurfaceTab) => {
     setSurfaceTab(nextTab);
     if (nextTab === "focus") {
       void sessionsStoreApi.refresh().catch(() => undefined);
+    }
+  };
+
+  const loadMoreSessions = async () => {
+    const pendingGroupKeys = Object.entries(remainingByGroup)
+      .filter(([, value]) => Number(value || 0) > 0)
+      .map(([groupKey]) => groupKey);
+    if (pendingGroupKeys.length === 0 && omittedGroupCount <= 0) {
+      return;
+    }
+
+    setLoadingMore(true);
+    setActionError("");
+    try {
+      for (const groupKey of pendingGroupKeys) {
+        await sessionsStoreApi.loadMoreGroup(groupKey);
+      }
+      if (omittedGroupCount > 0) {
+        await sessionsStoreApi.loadMoreGroups();
+      }
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Failed to load more sessions");
+    } finally {
+      setLoadingMore(false);
     }
   };
 
@@ -216,27 +194,6 @@ export function SessionsPane({ onNewSession }: SessionsPaneProps) {
     }
   };
 
-  async function saveGroupChange(group: GroupedSessions, payload: { label?: string; collapsed?: boolean }) {
-    if (!group.cwd) {
-      return false;
-    }
-
-    setPendingGroupKey(group.key);
-    setGroupErrors((current) => ({ ...current, [group.key]: "" }));
-
-    try {
-      await api.editCwdGroup({ cwd: group.cwd, ...payload });
-      await sessionsStoreApi.refreshBootstrap();
-      return true;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to save group changes.";
-      setGroupErrors((current) => ({ ...current, [group.key]: message }));
-      return false;
-    } finally {
-      setPendingGroupKey((current) => (current === group.key ? null : current));
-    }
-  }
-
   return (
     <>
       <aside className="sessionsPane" data-testid="sessions-surface">
@@ -276,86 +233,49 @@ export function SessionsPane({ onNewSession }: SessionsPaneProps) {
         {actionError ? <p className="px-1 pb-2 text-sm font-medium text-red-600">{actionError}</p> : null}
         <ScrollArea className="sessionsSurfaceBody">
           <div className="sessionsList">
-            {(surfaceTab === "focus" ? groupedFocusedSessions : groupedSessions).map((group) => {
-              const visibleSessions = group.sessions;
-              const hiddenSessionCount = Math.max(0, Number(remainingByGroup[group.key] || 0));
-              const hasHiddenSessions = surfaceTab === "sessions" && hiddenSessionCount > 0;
-
-              return (
-                <SessionGroup
-                  key={group.key}
-                  title={group.title}
-                  subtitle={group.subtitle}
-                  collapsed={group.collapsed}
-                  canRename={Boolean(group.cwd)}
-                  isSaving={pendingGroupKey === group.key}
-                  errorMessage={groupErrors[group.key]}
-                  onRename={
-                    group.cwd
-                      ? async (label) => saveGroupChange(group, { label: label.trim() })
-                      : undefined
+            {visibleSessions.map((session) => (
+              <SessionCard
+                key={session.session_id}
+                session={session}
+                active={session.session_id === activeSessionId}
+                onSelect={() => {
+                  if (session.historical && normalizeLaunchBackend(session.agent_backend) !== "pi") {
+                    void resumeHistoricalSession(session);
+                    return;
                   }
-                  onToggle={
-                    group.cwd
-                      ? () => {
-                          void saveGroupChange(group, { collapsed: !group.collapsed });
-                        }
-                      : undefined
-                  }
-                >
-                  {visibleSessions.map((session) => (
-                    <SessionCard
-                      key={session.session_id}
-                      session={session}
-                      active={session.session_id === activeSessionId}
-                      onSelect={() => {
-                        if (session.historical && normalizeLaunchBackend(session.agent_backend) !== "pi") {
-                          void resumeHistoricalSession(session);
-                          return;
-                        }
-                        sessionsStoreApi.select(session.session_id);
-                      }}
-                      onToggleFocus={session.historical ? undefined : () => { void toggleSessionFocus(session); }}
-                      onDuplicate={session.historical ? undefined : () => { void duplicateSession(session); }}
-                      onDelete={() => { void deleteSession(session); }}
-                      onEdit={session.historical ? undefined : () => {
-                        setActionError("");
-                        void api.getSessionDetails(session.session_id)
-                          .then((details) => setEditingSession(details.session))
-                          .catch((error) => {
-                            setActionError(error instanceof Error ? error.message : "Failed to load session details");
-                          });
-                      }}
-                    />
-                  ))}
-                  {hasHiddenSessions ? (
-                    <button
-                      type="button"
-                      className="sessionGroupMoreButton"
-                      aria-label={`Load ${hiddenSessionCount} more sessions in ${group.title}`}
-                      onClick={() => {
-                        void sessionsStoreApi.loadMoreGroup(group.key);
-                      }}
-                    >
-                      ...
-                    </button>
-                  ) : null}
-                </SessionGroup>
-              );
-            })}
-            {surfaceTab === "focus" && groupedFocusedSessions.length === 0 ? (
+                  sessionsStoreApi.select(session.session_id);
+                }}
+                onToggleFocus={session.historical ? undefined : () => { void toggleSessionFocus(session); }}
+                onDuplicate={session.historical ? undefined : () => { void duplicateSession(session); }}
+                onDelete={() => { void deleteSession(session); }}
+                onEdit={session.historical ? undefined : () => {
+                  setActionError("");
+                  void api.getSessionDetails(session.session_id)
+                    .then((details) => setEditingSession(details.session))
+                    .catch((error) => {
+                      setActionError(error instanceof Error ? error.message : "Failed to load session details");
+                    });
+                }}
+              />
+            ))}
+            {surfaceTab === "focus" && focusedItems.length === 0 ? (
               <div className="focusRailEmpty">No sessions are in Focus.</div>
             ) : null}
-            {surfaceTab === "sessions" && omittedGroupCount > 0 ? (
+            {canLoadMoreSessions ? (
               <button
                 type="button"
                 className="sessionGroupMoreButton"
-                aria-label={`Load ${omittedGroupCount} more directories`}
+                aria-label={`Load more sessions${omittedGroupCount > 0 ? ` and ${omittedGroupCount} more directories` : ""}`}
+                disabled={loadingMore}
                 onClick={() => {
-                  void sessionsStoreApi.loadMoreGroups();
+                  void loadMoreSessions();
                 }}
               >
-                Load {omittedGroupCount} more directories
+                {loadingMore
+                  ? "Loading..."
+                  : omittedGroupCount > 0
+                    ? `Load more sessions (${remainingSessionCount} pending, ${omittedGroupCount} more directories)`
+                    : `Load ${remainingSessionCount} more sessions`}
               </button>
             ) : null}
           </div>
