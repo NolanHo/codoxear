@@ -8,17 +8,58 @@ from codoxear.pi_log import read_pi_run_settings
 
 
 class TestPiLogRunSettings(unittest.TestCase):
-    def test_pi_model_context_window_falls_back_to_unique_model_match(self) -> None:
+    def test_pi_model_context_window_prefers_builtin_provider_match(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             models_path = Path(td) / "models.json"
+            builtin_models_path = Path(td) / "models.generated.ts"
             models_path.write_text(json.dumps({
                 "providers": {
                     "macaron": {"models": [{"id": "gpt-5.4", "contextWindow": 1000000}]},
-                    "openai": {"models": []},
+                    "openai": {"baseUrl": "https://example.invalid/v1", "api": "openai-responses"},
                 }
             }), encoding="utf-8")
+            builtin_models_path.write_text(
+                '"gpt-5.4": { provider: "openai", contextWindow: 272000 } satisfies Model<"openai-responses">,\n',
+                encoding="utf-8",
+            )
 
-            self.assertEqual(pi_model_context_window("openai", "gpt-5.4", models_path=models_path), 1000000)
+            self.assertEqual(
+                pi_model_context_window(
+                    "openai",
+                    "gpt-5.4",
+                    models_path=models_path,
+                    builtin_models_path=builtin_models_path,
+                ),
+                272000,
+            )
+
+    def test_pi_model_context_window_applies_model_overrides(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            models_path = Path(td) / "models.json"
+            builtin_models_path = Path(td) / "models.generated.ts"
+            models_path.write_text(json.dumps({
+                "providers": {
+                    "openai": {
+                        "baseUrl": "https://example.invalid/v1",
+                        "api": "openai-responses",
+                        "modelOverrides": {"gpt-5.4": {"contextWindow": 300000}},
+                    }
+                }
+            }), encoding="utf-8")
+            builtin_models_path.write_text(
+                '"gpt-5.4": { provider: "openai", contextWindow: 272000 } satisfies Model<"openai-responses">,\n',
+                encoding="utf-8",
+            )
+
+            self.assertEqual(
+                pi_model_context_window(
+                    "openai",
+                    "gpt-5.4",
+                    models_path=models_path,
+                    builtin_models_path=builtin_models_path,
+                ),
+                300000,
+            )
 
     def test_read_pi_run_settings_recovers_early_model_events_from_large_file(self) -> None:
         with tempfile.TemporaryDirectory() as td:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import functools
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -39,32 +40,79 @@ def _default_pi_models_path() -> Path:
     return get_agent_backend("pi").home().joinpath("agent", "models.json")
 
 
+def _default_pi_builtin_models_path() -> Path | None:
+    workspace_root = Path(__file__).resolve().parents[2]
+    candidate = workspace_root / "pi-mono" / "packages" / "ai" / "src" / "models.generated.ts"
+    return candidate if candidate.is_file() else None
+
+
 @functools.lru_cache(maxsize=8)
-def _pi_context_windows(models_path_str: str, mtime_ns: int) -> dict[tuple[str, str], int]:
+def _pi_builtin_context_windows(models_path_str: str, mtime_ns: int) -> dict[tuple[str, str], int]:
+    text = Path(models_path_str).read_text(encoding="utf-8")
+    blocks = re.finditer(r'"(?P<model_id>[^"]+)":\s*\{(?P<body>.*?)\}\s*satisfies\s+Model<', text, re.DOTALL)
+    out: dict[tuple[str, str], int] = {}
+    for match in blocks:
+        body = match.group("body")
+        provider_match = re.search(r'provider:\s*"(?P<provider>[^"]+)"', body)
+        context_match = re.search(r'contextWindow:\s*(?P<context_window>\d+)', body)
+        if provider_match is None or context_match is None:
+            continue
+        provider_name = provider_match.group("provider").strip()
+        model_id = match.group("model_id").strip()
+        context_window = int(context_match.group("context_window"))
+        if not provider_name or not model_id or context_window <= 0:
+            continue
+        out[(provider_name, model_id)] = context_window
+    return out
+
+
+@functools.lru_cache(maxsize=8)
+def _pi_context_windows(
+    models_path_str: str | None,
+    mtime_ns: int,
+    builtin_models_path_str: str | None,
+    builtin_mtime_ns: int,
+) -> dict[tuple[str, str], int]:
+    out: dict[tuple[str, str], int] = {}
+    if builtin_models_path_str:
+        out.update(_pi_builtin_context_windows(builtin_models_path_str, builtin_mtime_ns))
+    if not models_path_str:
+        return out
     path = Path(models_path_str)
     data = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(data, dict):
-        return {}
+        return out
     providers = data.get("providers")
     if not isinstance(providers, dict):
-        return {}
-    out: dict[tuple[str, str], int] = {}
+        return out
     for provider_name, provider_cfg in providers.items():
         if not isinstance(provider_name, str) or not isinstance(provider_cfg, dict):
             continue
-        models = provider_cfg.get("models")
-        if not isinstance(models, list):
+        provider_key = provider_name.strip()
+        if not provider_key:
             continue
-        for row in models:
-            if not isinstance(row, dict):
+        models = provider_cfg.get("models")
+        if isinstance(models, list):
+            for row in models:
+                if not isinstance(row, dict):
+                    continue
+                model_id = row.get("id")
+                context_window = row.get("contextWindow")
+                if not isinstance(model_id, str) or not model_id.strip():
+                    continue
+                if not isinstance(context_window, int) or context_window <= 0:
+                    continue
+                out[(provider_key, model_id.strip())] = int(context_window)
+        model_overrides = provider_cfg.get("modelOverrides")
+        if not isinstance(model_overrides, dict):
+            continue
+        for model_id, override in model_overrides.items():
+            if not isinstance(model_id, str) or not model_id.strip() or not isinstance(override, dict):
                 continue
-            model_id = row.get("id")
-            context_window = row.get("contextWindow")
-            if not isinstance(model_id, str) or not model_id.strip():
-                continue
+            context_window = override.get("contextWindow")
             if not isinstance(context_window, int) or context_window <= 0:
                 continue
-            out[(provider_name.strip(), model_id.strip())] = int(context_window)
+            out[(provider_key, model_id.strip())] = int(context_window)
     return out
 
 
@@ -78,24 +126,49 @@ def _fallback_context_window_for_model(index: dict[tuple[str, str], int], model:
     return None
 
 
-def pi_model_context_window(provider: str | None, model: str | None, *, models_path: Path | None = None) -> int | None:
+def pi_model_context_window(
+    provider: str | None,
+    model: str | None,
+    *,
+    models_path: Path | None = None,
+    builtin_models_path: Path | None = None,
+) -> int | None:
     if not isinstance(model, str) or not model.strip():
         return None
     path = _default_pi_models_path() if models_path is None else models_path
+    builtin_path = _default_pi_builtin_models_path() if builtin_models_path is None else builtin_models_path
+    models_path_str: str | None = None
+    models_mtime_ns = 0
     try:
         stat = path.stat()
     except FileNotFoundError:
-        return None
+        path = None
     except Exception:
-        return None
+        path = None
+    else:
+        models_path_str = str(path.resolve())
+        models_mtime_ns = int(stat.st_mtime_ns)
+    builtin_path_str: str | None = None
+    builtin_mtime_ns = 0
+    if builtin_path is not None:
+        try:
+            builtin_stat = builtin_path.stat()
+        except FileNotFoundError:
+            builtin_path = None
+        except Exception:
+            builtin_path = None
+        else:
+            builtin_path_str = str(builtin_path.resolve())
+            builtin_mtime_ns = int(builtin_stat.st_mtime_ns)
     try:
-        index = _pi_context_windows(str(path.resolve()), int(stat.st_mtime_ns))
+        index = _pi_context_windows(models_path_str, models_mtime_ns, builtin_path_str, builtin_mtime_ns)
     except Exception:
         return None
     if isinstance(provider, str) and provider.strip():
         direct = index.get((provider.strip(), model.strip()))
         if direct is not None:
             return direct
+        return None
     return _fallback_context_window_for_model(index, model)
 
 
