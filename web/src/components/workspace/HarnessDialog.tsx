@@ -86,7 +86,7 @@ export function HarnessDialog({ open, sessionId, runtimeId = null, onClose }: Ha
 
   return (
     <Dialog open={open}>
-      <DialogContent className="max-w-2xl" titleId="harness-dialog-title">
+      <DialogContent className="harnessDialog mobileDetailDialog max-w-2xl" titleId="harness-dialog-title">
         <DialogHeader>
           <div className="flex items-start justify-between gap-3">
             <div>

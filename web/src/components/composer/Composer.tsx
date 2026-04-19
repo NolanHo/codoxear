@@ -51,6 +51,14 @@ function shouldUseMobileComposerAutosize() {
   return window.matchMedia(MOBILE_COMPOSER_QUERY).matches;
 }
 
+function isCompactMobileViewport() {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+    return false;
+  }
+
+  return window.matchMedia("(max-width: 880px), (pointer: coarse)").matches;
+}
+
 function syncComposerTextareaHeight(textarea: HTMLTextAreaElement | null, enabled: boolean) {
   if (!textarea) {
     return;
@@ -323,6 +331,52 @@ export function Composer() {
   useLayoutEffect(() => {
     syncComposerTextareaHeight(textareaRef.current, mobileComposerAutosize);
   }, [draft, mobileComposerAutosize]);
+
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) {
+      return;
+    }
+
+    if (document.activeElement === textarea) {
+      textarea.blur();
+    }
+    syncComposerTextareaHeight(textarea, mobileComposerAutosize);
+  }, [activeSessionId, mobileComposerAutosize]);
+
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea || typeof window === "undefined") {
+      return;
+    }
+
+    const alignIntoView = () => {
+      if (document.activeElement !== textarea || !isCompactMobileViewport()) {
+        return;
+      }
+      window.requestAnimationFrame(() => {
+        textarea.scrollIntoView({ block: "nearest", inline: "nearest" });
+      });
+    };
+
+    const handleFocus = () => {
+      alignIntoView();
+      window.setTimeout(alignIntoView, 120);
+    };
+    const handleViewportResize = () => {
+      syncComposerTextareaHeight(textarea, mobileComposerAutosize);
+      alignIntoView();
+    };
+
+    textarea.addEventListener("focus", handleFocus);
+    window.visualViewport?.addEventListener("resize", handleViewportResize);
+    window.addEventListener("resize", handleViewportResize);
+    return () => {
+      textarea.removeEventListener("focus", handleFocus);
+      window.visualViewport?.removeEventListener("resize", handleViewportResize);
+      window.removeEventListener("resize", handleViewportResize);
+    };
+  }, [activeSessionId, mobileComposerAutosize]);
 
   useEffect(() => {
     if (!activeSessionId || !activeSessionIsPi || activeSessionPending || slashQuery === null) {

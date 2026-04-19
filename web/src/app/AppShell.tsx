@@ -8,6 +8,7 @@ import { TodoPopover } from "../components/workspace/TodoPopover";
 import { AppShellSidebar } from "./app-shell/AppShellSidebar";
 import { AppShellToolbar } from "./app-shell/AppShellToolbar";
 import { AppShellWorkspaceOverlays } from "./app-shell/AppShellWorkspaceOverlays";
+import { MobileShell } from "./app-shell/MobileShell";
 import { VoiceSettingsDialog } from "./app-shell/VoiceSettingsDialog";
 import { useAppShellAudio } from "./app-shell/useAppShellAudio";
 import { useAppShellNotifications } from "./app-shell/useAppShellNotifications";
@@ -184,8 +185,33 @@ export function AppShell() {
 
   const sessionUiMatchesActiveSession = !!activeSessionId && sessionUiSessionId === activeSessionId;
   const showInterruptAction = !activeSessionId || activeSessionBusy;
-  const showMobileSessionsTrigger = shouldUseMobileWorkspaceSheet();
-  const showMobileToolbarMenu = showMobileSessionsTrigger;
+  const [mobileLayout, setMobileLayout] = useState(() => shouldUseMobileWorkspaceSheet());
+
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+      return;
+    }
+
+    const mediaQuery = window.matchMedia("(max-width: 880px)");
+    const update = () => {
+      setMobileLayout(mediaQuery.matches);
+    };
+
+    update();
+    if (typeof mediaQuery.addEventListener === "function") {
+      mediaQuery.addEventListener("change", update);
+    } else {
+      mediaQuery.addListener?.(update);
+    }
+
+    return () => {
+      if (typeof mediaQuery.removeEventListener === "function") {
+        mediaQuery.removeEventListener("change", update);
+      } else {
+        mediaQuery.removeListener?.(update);
+      }
+    };
+  }, []);
 
   const openFileViewer = (path = "", line: number | null = null, mode: FileViewMode | null = null) => {
     setFileViewerPath(path);
@@ -237,10 +263,6 @@ export function AppShell() {
   );
 
   const openWorkspace = () => {
-    if (shouldUseMobileWorkspaceSheet()) {
-      setDetailsOpen(true);
-      return;
-    }
     setWorkspaceOpen(true);
   };
 
@@ -334,30 +356,66 @@ export function AppShell() {
     <>
       <div className={shellClassName} data-testid="app-shell">
         <audio ref={liveAudioRef} className="liveAudioElement" preload="none" />
-        <aside className="sidebarColumn desktopSessionsRail">{renderSessionsRail()}</aside>
-        <section className="conversationColumn">
-          <AppShellToolbar
+        {mobileLayout ? (
+          <MobileShell
             activeSessionId={activeSessionId}
             activeTitle={activeTitle}
+            announcementEnabled={announcementEnabled}
+            announcementLabel={announcementLabel}
             canInterrupt={Boolean(activeSessionId && activeSessionBusy)}
-            showInterruptAction={showInterruptAction}
-            showMobileSessionsTrigger={showMobileSessionsTrigger}
-            showMobileToolbarMenu={showMobileToolbarMenu}
+            notificationLabel={notificationLabel}
+            notificationsEnabled={notificationsEnabled}
             onInterrupt={() => {
               void interruptActiveSession();
             }}
+            onLogout={() => {
+              void logout();
+            }}
+            onNewSession={() => setNewSessionOpen(true)}
+            onOpenFilePath={(path, line) => openFileViewer(path, line ?? null, "file")}
             onOpenFiles={() => openFileViewer()}
             onOpenHarness={() => setHarnessOpen(true)}
-            onOpenSessions={() => setSidebarOpen(true)}
+            onOpenSettings={() => openVoiceSettings()}
             onOpenTodo={() => setTodoViewerOpen(true)}
             onOpenWorkspace={openWorkspace}
+            onToggleAnnouncements={() => {
+              void toggleAnnouncements();
+              if (!announcementEnabled) {
+                void startAnnouncementPlayback(voiceSettings, { resetSource: true, force: true });
+              }
+            }}
+            onToggleNotifications={() => {
+              void toggleNotifications();
+            }}
           />
-          <ConversationPane
-            key={activeSessionId || "no-session"}
-            onOpenFilePath={(path, line) => openFileViewer(path, line ?? null, "file")}
-          />
-          <Composer />
-        </section>
+        ) : (
+          <>
+            <aside className="sidebarColumn desktopSessionsRail">{renderSessionsRail()}</aside>
+            <section className="conversationColumn">
+              <AppShellToolbar
+                activeSessionId={activeSessionId}
+                activeTitle={activeTitle}
+                canInterrupt={Boolean(activeSessionId && activeSessionBusy)}
+                showInterruptAction={showInterruptAction}
+                showMobileSessionsTrigger={false}
+                showMobileToolbarMenu={false}
+                onInterrupt={() => {
+                  void interruptActiveSession();
+                }}
+                onOpenFiles={() => openFileViewer()}
+                onOpenHarness={() => setHarnessOpen(true)}
+                onOpenSessions={() => setSidebarOpen(true)}
+                onOpenTodo={() => setTodoViewerOpen(true)}
+                onOpenWorkspace={openWorkspace}
+              />
+              <ConversationPane
+                key={activeSessionId || "no-session"}
+                onOpenFilePath={(path, line) => openFileViewer(path, line ?? null, "file")}
+              />
+              <Composer />
+            </section>
+          </>
+        )}
       </div>
       <AppShellWorkspaceOverlays
         activeSessionId={activeSessionId}
