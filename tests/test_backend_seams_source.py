@@ -1,6 +1,18 @@
 import unittest
 from pathlib import Path
 
+from codoxear import server as server_module
+from codoxear.http.routes import assets as assets_routes
+from codoxear.http.routes import auth as auth_routes
+from codoxear.http.routes import files as file_routes
+from codoxear.http.routes import notifications as notification_routes
+from codoxear.http.routes import sessions_read as session_read_routes
+from codoxear.http.routes import sessions_write as session_write_routes
+from codoxear.pi import ui_bridge as pi_ui_bridge
+from codoxear.sessions import live_payloads as live_payloads
+from codoxear.sessions import payloads as payloads
+from codoxear.sessions import sidebar_state as sidebar_state
+
 
 ROOT = Path(__file__).resolve().parents[1] / "codoxear"
 SERVER = ROOT / "server.py"
@@ -19,16 +31,33 @@ class TestBackendSeamsSource(unittest.TestCase):
         source = SERVER.read_text(encoding="utf-8")
         self.assertIn("from .sessions import payloads as _session_payloads", source)
         self.assertIn("from .sessions import live_payloads as _session_live_payloads", source)
-        self.assertIn("from .sessions.sidebar_state import SidebarStateFacade", source)
+        self.assertIn("from .sessions import sidebar_state as _sidebar_state_module", source)
         self.assertIn("from .pi import ui_bridge as _pi_ui_bridge", source)
         self.assertIn("self._sidebar_state_facade().persist_session_ui_state()", source)
         self.assertIn("return _pi_ui_bridge.submit_ui_response(self, session_id, payload)", source)
+
+    def test_seam_modules_bind_to_loaded_server_runtime(self) -> None:
+        modules = [
+            assets_routes,
+            auth_routes,
+            file_routes,
+            notification_routes,
+            session_read_routes,
+            session_write_routes,
+            payloads,
+            live_payloads,
+            sidebar_state,
+            pi_ui_bridge,
+        ]
+        for module in modules:
+            self.assertIs(module._sv(), server_module)
 
     def test_voice_push_uses_attention_namespace(self) -> None:
         source = VOICE_PUSH.read_text(encoding="utf-8")
         self.assertIn("from .attention.derive import compact_notification_state", source)
         self.assertIn("from .attention.derive import final_response_attention_feed", source)
         self.assertIn("return final_response_attention_feed(", source)
+        self.assertNotIn("from codoxear import server as sv", source)
 
 
 if __name__ == "__main__":

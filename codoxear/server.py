@@ -73,8 +73,23 @@ from .http.routes import sessions_read as _http_session_read_routes
 from .http.routes import sessions_write as _http_session_write_routes
 from .sessions import live_payloads as _session_live_payloads
 from .sessions import payloads as _session_payloads
+from .sessions import sidebar_state as _sidebar_state_module
 from .sessions.sidebar_state import SidebarStateFacade
 from .pi import ui_bridge as _pi_ui_bridge
+
+for _seam_module in (
+    _http_assets_routes,
+    _http_auth_routes,
+    _http_file_routes,
+    _http_notification_routes,
+    _http_session_read_routes,
+    _http_session_write_routes,
+    _session_live_payloads,
+    _session_payloads,
+    _sidebar_state_module,
+    _pi_ui_bridge,
+):
+    _seam_module.bind_server_runtime(sys.modules[__name__])
 
 
 LOG = logging.getLogger(__name__)

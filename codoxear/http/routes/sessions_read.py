@@ -7,10 +7,19 @@ import urllib.parse
 from typing import Any
 
 
-def _sv():
-    from codoxear import server as sv
+_SERVER = None
 
-    return sv
+
+def bind_server_runtime(runtime) -> None:
+    global _SERVER
+    _SERVER = runtime
+
+
+
+def _sv():
+    if _SERVER is None:
+        raise RuntimeError("server runtime not bound")
+    return _SERVER
 
 
 
