@@ -2474,6 +2474,14 @@ def _parse_create_session_request(obj: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(cwd, str) or not cwd.strip():
         raise ValueError("cwd required")
 
+    name_raw = obj.get("name")
+    if name_raw is None:
+        name = None
+    elif isinstance(name_raw, str):
+        name = name_raw
+    else:
+        raise ValueError("name must be a string")
+
     backend = normalize_agent_backend(
         obj.get("backend"),
         default=normalize_agent_backend(obj.get("agent_backend"), default="codex"),
@@ -2512,6 +2520,7 @@ def _parse_create_session_request(obj: dict[str, Any]) -> dict[str, Any]:
         )
         return {
             "cwd": cwd,
+            "name": name,
             "backend": backend,
             "args": args_list,
             "resume_session_id": resume_session_id,
@@ -2563,6 +2572,7 @@ def _parse_create_session_request(obj: dict[str, Any]) -> dict[str, Any]:
 
     return {
         "cwd": cwd,
+        "name": name,
         "backend": backend,
         "args": args_list,
         "resume_session_id": resume_session_id,
@@ -4978,6 +4988,47 @@ class SessionManager:
                 changed = True
         if changed:
             self._save_hidden_sessions()
+
+    def set_created_session_name(
+        self,
+        *,
+        session_id: Any,
+        runtime_id: Any = None,
+        backend: Any = None,
+        name: Any,
+    ) -> str:
+        alias = _clean_alias(name)
+        if not alias:
+            return ""
+        session_id_clean = _clean_optional_text(session_id)
+        runtime_id_clean = _clean_optional_text(runtime_id)
+        ref = None
+        if session_id_clean is not None:
+            ref = self._page_state_ref_for_session_id(session_id_clean)
+        if ref is None and runtime_id_clean is not None:
+            ref = self._page_state_ref_for_session_id(runtime_id_clean)
+        backend_clean = (
+            normalize_agent_backend(backend, default="codex")
+            if backend is not None
+            else None
+        )
+        target: SessionRef | str | None = ref
+        if target is None and session_id_clean is not None and backend_clean is not None:
+            target = (backend_clean, session_id_clean)
+        if target is None and runtime_id_clean is not None and backend_clean is not None:
+            target = (backend_clean, runtime_id_clean)
+        if target is None:
+            raise KeyError("unknown session")
+        with self._lock:
+            self._aliases[target] = alias
+            if session_id_clean is not None:
+                self._aliases.pop(session_id_clean, None)
+            if runtime_id_clean is not None:
+                self._aliases.pop(runtime_id_clean, None)
+        save_aliases = getattr(self, "_save_aliases", None)
+        if callable(save_aliases):
+            save_aliases()
+        return alias
 
     def alias_set(self, session_id: str, name: str) -> str:
         alias = _clean_alias(name)
@@ -10686,13 +10737,25 @@ class Handler(http.server.BaseHTTPRequestHandler):
                         create_in_tmux=payload["create_in_tmux"],
                         backend=payload["backend"],
                     )
+                    alias = MANAGER.set_created_session_name(
+                        session_id=res.get("session_id"),
+                        runtime_id=res.get("runtime_id"),
+                        backend=res.get("backend") or payload["backend"],
+                        name=payload["name"],
+                    )
                 except ValueError as e:
-                    payload: dict[str, Any] = {"error": str(e)}
+                    payload = {"error": str(e)}
                     if str(e).startswith("cwd "):
                         payload["field"] = "cwd"
                     _json_response(self, 400, payload)
                     return
-                _json_response(self, 200, {"ok": True, **res})
+                except KeyError:
+                    _json_response(self, 404, {"error": "unknown session"})
+                    return
+                response_payload = {"ok": True, **res}
+                if alias:
+                    response_payload["alias"] = alias
+                _json_response(self, 200, response_payload)
                 return
 
             if path == "/api/files/read":

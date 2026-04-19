@@ -1147,6 +1147,14 @@ class TestPiBackendRouting(unittest.TestCase):
 
         self.assertEqual(payload["backend"], "codex")
         self.assertEqual(payload["cwd"], "/tmp/codex-cwd")
+        self.assertIsNone(payload["name"])
+
+    def test_create_session_preserves_optional_name(self) -> None:
+        payload = _parse_create_session_request(
+            {"cwd": "/tmp/codex-cwd", "name": "Inbox cleanup"}
+        )
+
+        self.assertEqual(payload["name"], "Inbox cleanup")
 
     def test_create_session_preserves_pi_fields_and_ignores_codex_only_fields(
         self,
@@ -1184,6 +1192,44 @@ class TestPiBackendRouting(unittest.TestCase):
                     "resume_session_id": 123,
                 }
             )
+
+    def test_create_session_route_sets_alias_atomically(self) -> None:
+        mgr = _make_manager()
+        mgr.spawn_web_session = Mock(
+            return_value={
+                "session_id": "pending-pi-session",
+                "runtime_id": None,
+                "backend": "pi",
+                "pending_startup": True,
+            }
+        )
+        mgr.set_created_session_name = Mock(return_value="Inbox cleanup")
+        handler = _HandlerHarness(
+            "/api/sessions",
+            body=json.dumps(
+                {
+                    "cwd": "/tmp/project",
+                    "backend": "pi",
+                    "name": "Inbox cleanup",
+                }
+            ).encode("utf-8"),
+        )
+
+        with (
+            patch("codoxear.server._require_auth", return_value=True),
+            patch("codoxear.server.MANAGER", mgr),
+        ):
+            Handler.do_POST(handler)  # type: ignore[arg-type]
+
+        payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(handler.status, 200)
+        self.assertEqual(payload["alias"], "Inbox cleanup")
+        mgr.set_created_session_name.assert_called_once_with(
+            session_id="pending-pi-session",
+            runtime_id=None,
+            backend="pi",
+            name="Inbox cleanup",
+        )
 
     def test_delete_session_uses_shutdown_for_pi_backend(self) -> None:
         mgr = _make_manager()

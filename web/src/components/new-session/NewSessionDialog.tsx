@@ -506,6 +506,7 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
                 const providerSettings = providerChoiceToSettings(providerChoice || backendDefaults.provider_choice || "", backend);
                 const response = await api.createSession({
                   cwd: trimmedCwd,
+                  name: sessionName.trim() || undefined,
                   backend,
                   resume_session_id: resumeSessionId || undefined,
                   worktree_branch: supportsWorktree && useWorktree && !resumeSessionId ? trimmedWorktreeBranch : undefined,
@@ -518,8 +519,7 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
                 });
                 await sessionsStoreApi.refresh();
                 const returnedSessionId = String(response.session_id || "").trim();
-                const renamedSessionId = returnedSessionId || "";
-                let createdSessionId = renamedSessionId;
+                let createdSessionId = returnedSessionId || "";
                 if (!createdSessionId) {
                   const brokerPid = typeof response.broker_pid === "number" ? response.broker_pid : null;
                   const matched = brokerPid === null
@@ -528,15 +528,6 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
                   createdSessionId = matched?.session_id || "";
                 }
                 await sessionsStoreApi.refreshBootstrap();
-                if (sessionName.trim() && createdSessionId) {
-                  try {
-                    await api.renameSession(createdSessionId, sessionName.trim());
-                    await sessionsStoreApi.refresh();
-                  } catch (renameError) {
-                    // Launch succeeded; keep the new session selected even if post-create rename fails.
-                    console.warn("Failed to rename new session", renameError);
-                  }
-                }
                 if (createdSessionId) {
                   sessionsStoreApi.select(createdSessionId);
                 }

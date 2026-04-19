@@ -110,7 +110,6 @@ describe("NewSessionDialog", () => {
       git_repo: false,
       sessions: [],
     } as any);
-    vi.mocked(api.renameSession).mockResolvedValue({ ok: true } as any);
     const sessionsStore = createSessionsStore({
       items: [
         { session_id: "old" },
@@ -201,6 +200,7 @@ describe("NewSessionDialog", () => {
 
     expect(api.createSession).toHaveBeenCalledWith({
       cwd: "/tmp/project",
+      name: "Inbox cleanup",
       backend: "codex",
       create_in_tmux: true,
       model: "gpt-5.4",
@@ -211,7 +211,7 @@ describe("NewSessionDialog", () => {
       service_tier: "fast",
       worktree_branch: "feature/inbox-cleanup",
     });
-    expect(api.renameSession).toHaveBeenCalledWith("new", "Inbox cleanup");
+    expect(api.renameSession).not.toHaveBeenCalled();
     expect(sessionsStore.select).toHaveBeenCalledWith("new");
     expect(onClose).toHaveBeenCalled();
   });
@@ -308,7 +308,7 @@ describe("NewSessionDialog", () => {
     expect(cwdInput.value).toBe("/Users/demo/current-project");
   });
 
-  it("still selects and closes when rename fails after launch", async () => {
+  it("selects and closes without a second rename request after launch", async () => {
     const { api } = await import("../../lib/api");
     vi.mocked(api.createSession).mockResolvedValue({ session_id: "new", broker_pid: 42, backend: "codex", ok: true } as any);
     vi.mocked(api.getSessionResumeCandidates).mockResolvedValue({
@@ -317,7 +317,6 @@ describe("NewSessionDialog", () => {
       git_repo: false,
       sessions: [],
     } as any);
-    vi.mocked(api.renameSession).mockRejectedValue(new Error("rename failed"));
     const sessionsStore = createSessionsStore({
       items: [
         { session_id: "old" },
@@ -360,11 +359,22 @@ describe("NewSessionDialog", () => {
     await submitForm(form);
     await flush();
 
-    expect(api.createSession).toHaveBeenCalled();
-    expect(api.renameSession).toHaveBeenCalledWith("new", "Inbox cleanup");
+    expect(api.createSession).toHaveBeenCalledWith({
+      cwd: "/tmp/project",
+      name: "Inbox cleanup",
+      backend: "codex",
+      create_in_tmux: undefined,
+      model: undefined,
+      model_provider: "openai",
+      preferred_auth_method: "chatgpt",
+      reasoning_effort: "high",
+      resume_session_id: undefined,
+      service_tier: undefined,
+      worktree_branch: undefined,
+    });
+    expect(api.renameSession).not.toHaveBeenCalled();
     expect(sessionsStore.select).toHaveBeenCalledWith("new");
     expect(onClose).toHaveBeenCalled();
-    expect(root.textContent).not.toContain("rename failed");
   });
 
   it("ignores duplicate submit events while launch is already in progress", async () => {
@@ -492,7 +502,7 @@ describe("NewSessionDialog", () => {
     expect((root.querySelector('input[name="model"]') as HTMLInputElement).value).toBe("custom-model");
   });
 
-  it("renames the returned new session instead of whatever tab is currently first", async () => {
+  it("selects the returned new session id without renaming some other tab", async () => {
     const { api } = await import("../../lib/api");
     vi.mocked(api.createSession).mockResolvedValue({ session_id: "new-from-server", broker_pid: 99, backend: "codex", ok: true } as any);
     vi.mocked(api.getSessionResumeCandidates).mockResolvedValue({
@@ -501,7 +511,6 @@ describe("NewSessionDialog", () => {
       git_repo: false,
       sessions: [],
     } as any);
-    vi.mocked(api.renameSession).mockResolvedValue({ ok: true } as any);
     const sessionsStore = createSessionsStore({
       items: [
         { session_id: "first-existing" },
@@ -541,10 +550,21 @@ describe("NewSessionDialog", () => {
     await flush();
     await flush();
 
-    expect(api.createSession).toHaveBeenCalled();
-    expect(api.renameSession).toHaveBeenCalledWith("new-from-server", "fresh-name");
+    expect(api.createSession).toHaveBeenCalledWith({
+      cwd: "/tmp/project",
+      name: "fresh-name",
+      backend: "codex",
+      create_in_tmux: undefined,
+      model: undefined,
+      model_provider: "openai",
+      preferred_auth_method: "chatgpt",
+      reasoning_effort: "high",
+      resume_session_id: undefined,
+      service_tier: undefined,
+      worktree_branch: undefined,
+    });
+    expect(api.renameSession).not.toHaveBeenCalled();
     expect(sessionsStore.select).toHaveBeenCalledWith("new-from-server");
-    expect(api.renameSession).not.toHaveBeenCalledWith("first-existing", "fresh-name");
   });
 
   it("updates Pi model suggestions when the provider changes", async () => {

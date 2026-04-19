@@ -77,6 +77,7 @@ export interface CreateSessionResponse {
   backend?: string;
   broker_pid?: number;
   pending_startup?: boolean;
+  alias?: string;
 }
 
 export interface DeleteSessionResponse {
