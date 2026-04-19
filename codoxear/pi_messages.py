@@ -7,6 +7,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from .pi_log import pi_token_update
 from .rollout_log import _read_jsonl_tail as _read_jsonl_tail
 from .util import read_jsonl_from_offset as _read_jsonl_from_offset
 
@@ -1430,6 +1431,15 @@ def _read_latest_claude_todo_snapshot(
     return _normalize_pi_todo_snapshot(tasks)
 
 
+def _latest_pi_token_update(entries: list[dict[str, Any]]) -> dict[str, Any] | None:
+    for entry in reversed(entries):
+        token_update = pi_token_update(entry)
+        if token_update is not None:
+            return token_update
+    return None
+
+
+
 def read_pi_message_tail_snapshot(
     session_path: Path,
     *,
@@ -1437,27 +1447,30 @@ def read_pi_message_tail_snapshot(
     initial_scan_bytes: int,
     max_scan_bytes: int,
     include_system: bool = False,
-) -> tuple[list[dict[str, Any]], int, int, bool, dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], dict[str, Any] | None, int, int, bool, dict[str, Any]]:
     if not session_path.exists():
-        return [], 0, max(_PI_CHAT_INIT_SEED_SCAN_BYTES, int(initial_scan_bytes)), False, {"tool_names": [], "last_tool": None}
+        return [], None, 0, max(_PI_CHAT_INIT_SEED_SCAN_BYTES, int(initial_scan_bytes)), False, {"tool_names": [], "last_tool": None}
     size = int(session_path.stat().st_size)
     scan_bytes = max(_PI_CHAT_INIT_SEED_SCAN_BYTES, int(initial_scan_bytes))
     scan_bytes = min(scan_bytes, max(_PI_CHAT_INIT_SEED_SCAN_BYTES, int(max_scan_bytes)))
     target_events = max(20, int(min_events))
     latest_events: list[dict[str, Any]] = []
+    latest_token: dict[str, Any] | None = None
     latest_diag: dict[str, Any] = {"tool_names": [], "last_tool": None}
     while True:
         entries = _read_jsonl_tail(session_path, min(scan_bytes, size if size > 0 else scan_bytes))
+        dict_entries = [obj for obj in entries if isinstance(obj, dict)]
         events, _meta, _flags, diag = normalize_pi_entries(
-            [obj for obj in entries if isinstance(obj, dict)],
+            dict_entries,
             include_system=include_system,
         )
         latest_events = events
+        latest_token = _latest_pi_token_update(dict_entries)
         latest_diag = diag
         if len(events) >= target_events or scan_bytes >= size or scan_bytes >= max_scan_bytes:
             break
         scan_bytes = min(max_scan_bytes, max(scan_bytes * 2, scan_bytes + _PI_CHAT_INIT_SEED_SCAN_BYTES))
-    return latest_events, size, scan_bytes, scan_bytes >= size, latest_diag
+    return latest_events, latest_token, size, scan_bytes, scan_bytes >= size, latest_diag
 
 
 def read_pi_message_page(

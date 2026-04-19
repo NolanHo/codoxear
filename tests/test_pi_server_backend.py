@@ -1567,6 +1567,33 @@ class TestPiBackendRouting(unittest.TestCase):
         self.assertEqual(payload, {"ok": True, "accepted": True})
         mgr.send.assert_called_once_with("history:pi:resume-1", "resume me")
 
+    def test_get_state_preserves_cached_token_when_broker_returns_none(self) -> None:
+        mgr = _make_manager()
+        with tempfile.TemporaryDirectory() as td:
+            sock = Path(td) / "pi.sock"
+            sock.touch()
+            mgr._sessions["pi-session"] = Session(
+                session_id="pi-session",
+                thread_id="pi-thread-001",
+                agent_backend="pi",
+                backend="pi",
+                broker_pid=os.getpid(),
+                codex_pid=os.getpid(),
+                owned=True,
+                start_ts=123.0,
+                cwd="/tmp/project",
+                log_path=None,
+                sock_path=sock,
+                session_path=Path("/tmp/pi-session.jsonl"),
+                token={"tokens_in_context": 123},
+            )
+            mgr._sock_call = Mock(return_value={"busy": False, "queue_len": 0, "token": None})
+
+            state = SessionManager.get_state(mgr, "pi-session")
+
+        self.assertEqual(state, {"busy": False, "queue_len": 0, "token": None})
+        self.assertEqual(mgr._sessions["pi-session"].token, {"tokens_in_context": 123})
+
     def test_ui_state_route_returns_pending_requests_for_pi_session(self) -> None:
         mgr = _make_manager()
         with tempfile.TemporaryDirectory() as td:

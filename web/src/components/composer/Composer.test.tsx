@@ -36,6 +36,7 @@ interface RenderComposerOptions {
   items?: Array<{ session_id: string; agent_backend: string; busy: boolean; historical?: boolean; pending_startup?: boolean }>;
   liveBusyBySessionId?: Record<string, boolean>;
   liveContextUsageBySessionId?: Record<string, { used_tokens?: number; total_tokens?: number; percent_used?: number } | null>;
+  messageEventsBySessionId?: Record<string, Array<Record<string, unknown>>>;
   sessionUiSessionId?: string | null;
   diagnostics?: Record<string, unknown> | null;
   draft?: string;
@@ -105,6 +106,7 @@ function renderComposer(options: RenderComposerOptions = {}) {
     items = [{ session_id: "sess-1", agent_backend: "pi", busy: false }],
     liveBusyBySessionId = {},
     liveContextUsageBySessionId = {},
+    messageEventsBySessionId = {},
     sessionUiSessionId = activeSessionId,
     diagnostics = null,
     draft = "Hello",
@@ -125,6 +127,19 @@ function renderComposer(options: RenderComposerOptions = {}) {
       errorBySessionId: {},
     },
     () => ({ loadInitial: vi.fn(), poll: vi.fn() }),
+  );
+  const messagesStore = createStore(
+    {
+      bySessionId: messageEventsBySessionId,
+      offsetsBySessionId: {},
+      hasOlderBySessionId: {},
+      olderBeforeBySessionId: {},
+      loadingOlderBySessionId: {},
+      loadingBySessionId: {},
+      loadedBySessionId: {},
+      loading: false,
+    },
+    () => ({ applyLive: vi.fn(), loadInitial: vi.fn(), poll: vi.fn(), loadOlder: vi.fn() }),
   );
   const sessionsStore = createStore(
     { items, activeSessionId, loading: false, newSessionDefaults: null },
@@ -166,6 +181,7 @@ function renderComposer(options: RenderComposerOptions = {}) {
     render(
       <AppProviders
         sessionsStore={sessionsStore as any}
+        messagesStore={messagesStore as any}
         composerStore={composerStore as any}
         liveSessionStore={liveSessionStore as any}
         sessionUiStore={sessionUiStore as any}
@@ -176,7 +192,7 @@ function renderComposer(options: RenderComposerOptions = {}) {
     );
   });
 
-  return { submit, sessionsStore, composerStore, liveSessionStore, sessionUiStore };
+  return { submit, sessionsStore, messagesStore, composerStore, liveSessionStore, sessionUiStore };
 }
 
 async function flushEffects() {
@@ -222,6 +238,59 @@ describe("Composer", () => {
     });
 
     expect(getRoot().textContent).toContain("0/200K 0%");
+  });
+
+  it("prefers diagnostics context usage when live usage is missing or still zero", async () => {
+    renderComposer({
+      items: [{ session_id: "sess-1", agent_backend: "pi", busy: false }],
+      liveContextUsageBySessionId: {
+        "sess-1": { used_tokens: 0, total_tokens: 272000, percent_used: 0 },
+      },
+      diagnostics: {
+        context_usage: { used_tokens: 91000, total_tokens: 272000, percent_used: 33 },
+      },
+    });
+
+    expect(getRoot().textContent).toContain("91K/272K 33%");
+  });
+
+  it("shows the active turn elapsed time in the composer gutter", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-19T10:00:12.000Z"));
+
+    renderComposer({
+      items: [{ session_id: "sess-1", agent_backend: "pi", busy: true }],
+      liveBusyBySessionId: { "sess-1": true },
+      messageEventsBySessionId: {
+        "sess-1": [
+          { role: "user", ts: Date.parse("2026-04-19T10:00:00.000Z") / 1000, text: "Run this" },
+          { type: "reasoning", ts: Date.parse("2026-04-19T10:00:05.000Z") / 1000, text: "thinking" },
+        ],
+      },
+    });
+
+    expect(getRoot().textContent).toContain("Turn 12s");
+
+    await act(async () => {
+      vi.advanceTimersByTime(3000);
+    });
+
+    expect(getRoot().textContent).toContain("Turn 15s");
+  });
+
+  it("freezes the latest turn duration after the round finishes", async () => {
+    renderComposer({
+      items: [{ session_id: "sess-1", agent_backend: "pi", busy: false }],
+      messageEventsBySessionId: {
+        "sess-1": [
+          { role: "user", ts: 100, text: "Run this" },
+          { type: "tool", ts: 104, text: "bash" },
+          { role: "assistant", ts: 109, text: "Finished" },
+        ],
+      },
+    });
+
+    expect(getRoot().textContent).toContain("Turn 9s");
   });
 
   it("keeps the textarea editable while a Pi session is still starting", () => {

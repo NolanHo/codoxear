@@ -666,6 +666,46 @@ class TestPiBroker(unittest.TestCase):
         finally:
             client_sock.close()
 
+    def test_sync_output_updates_token_usage_from_assistant_message(self) -> None:
+        rpc = _FakeRpc()
+        rpc.events = [
+            {
+                "type": "message",
+                "timestamp": "2026-04-19T18:21:49.160Z",
+                "message": {
+                    "role": "assistant",
+                    "provider": "openai",
+                    "model": "gpt-5.4",
+                    "usage": {"totalTokens": 196077},
+                    "content": [{"type": "text", "text": "Done"}],
+                },
+            }
+        ]
+        broker = PiBroker(cwd="/tmp")
+        broker.state = PiBrokerState(
+            session_id="pi-session-001",
+            codex_pid=123,
+            sock_path=Path("/tmp/pi.sock"),
+            session_path=Path("/tmp/pi-session.jsonl"),
+            start_ts=0.0,
+            rpc=rpc,
+        )
+
+        broker._sync_output_from_rpc()
+
+        assert broker.state is not None
+        self.assertEqual(
+            broker.state.token,
+            {
+                "context_window": 272000,
+                "tokens_in_context": 196077,
+                "tokens_remaining": 75923,
+                "percent_remaining": 29,
+                "baseline_tokens": 12000,
+                "as_of": "2026-04-19T18:21:49.160Z",
+            },
+        )
+
     def test_ui_state_returns_pending_requests_after_event_drain(self) -> None:
         rpc = _FakeRpc()
         rpc.events = [

@@ -6625,7 +6625,7 @@ class SessionManager:
                 s2.queue_len = int(resp.get("queue_len"))
                 if "token" in resp:
                     tok = resp.get("token")
-                    if isinstance(tok, dict) or tok is None:
+                    if isinstance(tok, dict):
                         s2.token = tok
         return True, None
 
@@ -7544,7 +7544,7 @@ class SessionManager:
         target_events = max(0, int(min_events) + max(0, int(before)))
         seed_diag = {"tool_names": [], "last_tool": None}
         if (not ready) or ((target_events > cached_count) and (not scan_complete)):
-            events, new_off, used_scan, complete, diag = _pi_messages.read_pi_message_tail_snapshot(
+            events, token_update, new_off, used_scan, complete, diag = _pi_messages.read_pi_message_tail_snapshot(
                 session_path,
                 min_events=max(20, target_events),
                 initial_scan_bytes=max(256 * 1024, scan_bytes),
@@ -7554,7 +7554,7 @@ class SessionManager:
             self._set_chat_index_snapshot(
                 session_id=session_id,
                 events=events,
-                token_update=None,
+                token_update=token_update,
                 scan_bytes=used_scan,
                 scan_complete=complete,
                 log_off=new_off,
@@ -8787,7 +8787,7 @@ class SessionManager:
                 s2.queue_len = int(resp.get("queue_len"))
                 if "token" in resp:
                     tok = resp.get("token")
-                    if isinstance(tok, dict) or tok is None:
+                    if isinstance(tok, dict):
                         s2.token = tok
         return resp
 

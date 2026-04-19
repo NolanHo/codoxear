@@ -10,6 +10,7 @@ import {
   useComposerStoreApi,
   useLiveSessionStore,
   useLiveSessionStoreApi,
+  useMessagesStore,
   useSessionUiStore,
   useSessionUiStoreApi,
   useSessionsStore,
@@ -17,7 +18,7 @@ import {
 } from "../../app/providers";
 import { api } from "../../lib/api";
 import { getSessionRuntimeId } from "../../lib/session-identity";
-import type { SessionCommand } from "../../lib/types";
+import type { ContextUsagePayload, MessageEvent, SessionCommand } from "../../lib/types";
 import { getDisplayableTodoSnapshot, TodoComposerPanel } from "./TodoComposerPanel";
 
 function enterToSendEnabled() {
@@ -95,7 +96,7 @@ function formatContextK(value: number) {
   return `${Math.round(normalized / 1000)}K`;
 }
 
-function getContextUsageLabel(contextUsage: { used_tokens?: number; total_tokens?: number; percent_used?: number } | null | undefined) {
+function getContextUsageLabel(contextUsage: ContextUsagePayload | null | undefined) {
   if (!contextUsage) {
     return null;
   }
@@ -112,6 +113,62 @@ function getContextUsageLabel(contextUsage: { used_tokens?: number; total_tokens
     ? Math.min(100, Math.max(0, Math.round(contextUsage.percent_used)))
     : Math.min(100, Math.max(0, Math.round((usedTokens / totalTokens) * 100)));
   return `${formatContextK(usedTokens)}/${formatContextK(totalTokens)} ${percentUsed}%`;
+}
+
+function getDiagnosticsContextUsage(diagnostics: Record<string, unknown> | null | undefined): ContextUsagePayload | null {
+  if (!diagnostics || typeof diagnostics !== "object") {
+    return null;
+  }
+  const usage = (diagnostics as { context_usage?: unknown }).context_usage;
+  return usage && typeof usage === "object" ? usage as ContextUsagePayload : null;
+}
+
+function formatElapsedSeconds(totalSeconds: number) {
+  const seconds = Math.max(0, Math.round(totalSeconds));
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const secs = seconds % 60;
+  if (hours > 0) {
+    return `${hours}h ${String(minutes).padStart(2, "0")}m`;
+  }
+  if (minutes > 0) {
+    return `${minutes}m ${String(secs).padStart(2, "0")}s`;
+  }
+  return `${secs}s`;
+}
+
+function getTurnElapsedLabel(events: MessageEvent[], busy: boolean, nowMs: number) {
+  let latestUserTsMs: number | null = null;
+  let latestFollowupTsMs: number | null = null;
+
+  for (const event of events) {
+    if (!event || event.display === false) {
+      continue;
+    }
+    const ts = typeof event.ts === "number" && Number.isFinite(event.ts) ? event.ts * 1000 : null;
+    if (ts === null) {
+      continue;
+    }
+    if (event.role === "user") {
+      latestUserTsMs = ts;
+      latestFollowupTsMs = null;
+      continue;
+    }
+    if (latestUserTsMs === null || ts < latestUserTsMs) {
+      continue;
+    }
+    latestFollowupTsMs = Math.max(latestFollowupTsMs ?? ts, ts);
+  }
+
+  if (latestUserTsMs === null) {
+    return null;
+  }
+  if (!busy && latestFollowupTsMs === null) {
+    return null;
+  }
+  const endTsMs = busy ? Math.max(nowMs, latestFollowupTsMs ?? latestUserTsMs) : (latestFollowupTsMs ?? latestUserTsMs);
+  const elapsedSeconds = Math.max(0, (endTsMs - latestUserTsMs) / 1000);
+  return `Turn ${formatElapsedSeconds(elapsedSeconds)}`;
 }
 
 function safeStem(name: string) {
@@ -219,9 +276,12 @@ async function toJpegBlob(file: File, options: { maxDim: number; quality: number
 
 export function Composer() {
   const { activeSessionId, items } = useSessionsStore();
+  const { bySessionId = {} } = useMessagesStore() as {
+    bySessionId?: Record<string, MessageEvent[]>;
+  };
   const { busyBySessionId = {}, contextUsageBySessionId = {} } = useLiveSessionStore() as {
     busyBySessionId?: Record<string, boolean>;
-    contextUsageBySessionId?: Record<string, { used_tokens?: number; total_tokens?: number; percent_used?: number } | null>;
+    contextUsageBySessionId?: Record<string, ContextUsagePayload | null>;
   };
   const composerState = useComposerStore();
   const sending = composerState.sending;
@@ -232,6 +292,7 @@ export function Composer() {
   const sessionUiStoreApi = useSessionUiStoreApi();
   const [todoExpandedBySessionId, setTodoExpandedBySessionId] = useState<Record<string, boolean>>({});
   const [commandsBySessionId, setCommandsBySessionId] = useState<Record<string, SessionCommand[]>>({});
+  const [turnNowMs, setTurnNowMs] = useState(() => Date.now());
   const [commandsLoadedBySessionId, setCommandsLoadedBySessionId] = useState<Record<string, boolean>>({});
   const [commandsLoadingBySessionId, setCommandsLoadingBySessionId] = useState<Record<string, boolean>>({});
   const [highlightedCommandIndex, setHighlightedCommandIndex] = useState(0);
@@ -274,8 +335,22 @@ export function Composer() {
     if (!activeSessionId || !activeSessionIsPi) {
       return null;
     }
-    return getContextUsageLabel(contextUsageBySessionId[activeSessionId] ?? null);
-  }, [activeSessionId, activeSessionIsPi, contextUsageBySessionId]);
+    const liveUsage = contextUsageBySessionId[activeSessionId] ?? null;
+    const diagnosticsUsage = sessionUiSessionId === activeSessionId ? getDiagnosticsContextUsage(diagnostics) : null;
+    const liveUsedTokens = liveUsage && typeof liveUsage.used_tokens === "number" ? liveUsage.used_tokens : null;
+    const diagnosticsUsedTokens = diagnosticsUsage && typeof diagnosticsUsage.used_tokens === "number" ? diagnosticsUsage.used_tokens : null;
+    const preferredUsage = liveUsedTokens && liveUsedTokens > 0
+      ? liveUsage
+      : (diagnosticsUsedTokens && diagnosticsUsedTokens > 0 ? diagnosticsUsage : (liveUsage ?? diagnosticsUsage));
+    return getContextUsageLabel(preferredUsage);
+  }, [activeSessionId, activeSessionIsPi, contextUsageBySessionId, diagnostics, sessionUiSessionId]);
+
+  const composerTurnElapsedLabel = useMemo(() => {
+    if (!activeSessionId || !activeSessionIsPi) {
+      return null;
+    }
+    return getTurnElapsedLabel(bySessionId[activeSessionId] ?? [], activeSessionBusy, turnNowMs);
+  }, [activeSessionBusy, activeSessionId, activeSessionIsPi, bySessionId, turnNowMs]);
 
   const visibleTodoExpanded = activeSessionId ? Boolean(todoExpandedBySessionId[activeSessionId]) : false;
   const visibleCommands = useMemo(() => {
@@ -327,6 +402,23 @@ export function Composer() {
     }
     postSendRefreshTimeoutsRef.current = [];
   }, []);
+
+  useEffect(() => {
+    setTurnNowMs(Date.now());
+  }, [activeSessionId]);
+
+  useEffect(() => {
+    if (!activeSessionBusy) {
+      setTurnNowMs(Date.now());
+      return;
+    }
+    const intervalId = window.setInterval(() => {
+      setTurnNowMs(Date.now());
+    }, 1000);
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [activeSessionBusy, activeSessionId]);
 
   useLayoutEffect(() => {
     syncComposerTextareaHeight(textareaRef.current, mobileComposerAutosize);
@@ -791,6 +883,7 @@ export function Composer() {
               ) : null}
             </div>
             <div className="composerControlsColumn">
+              {composerTurnElapsedLabel ? <div className="composerTurnTiming">{composerTurnElapsedLabel}</div> : null}
               {composerContextUsageLabel ? <div className="composerContextUsage">{composerContextUsageLabel}</div> : null}
               <div className="composerControlsRow">
                 <input ref={fileInputRef} type="file" hidden tabIndex={-1} onChange={handleAttachChange} />

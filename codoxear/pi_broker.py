@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .pi_log import pi_token_update as _pi_token_update
 from .pi_rpc import PiRpcClient
 from .util import _send_socket_json_line as _send_socket_json_line
 from .util import _socket_peer_disconnected as _socket_peer_disconnected
@@ -436,6 +437,9 @@ class PiBroker:
             event_type = _extract_event_type(event)
             event_turn_id = _extract_turn_id(event)
             stream_id = _live_stream_id(event_turn_id)
+            token_update = _pi_token_update(event)
+            if token_update is not None:
+                st.token = token_update
             if event_type == "message.delta":
                 delta = (
                     event.get("delta") if isinstance(event.get("delta"), str) else ""

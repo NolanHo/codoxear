@@ -2092,6 +2092,7 @@ select {
   flex-wrap: wrap;
 }
 
+.composerTurnTiming,
 .composerContextUsage {
   font-size: 0.75rem;
   line-height: 1;
@@ -2099,6 +2100,10 @@ select {
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.01em;
   white-space: nowrap;
+}
+
+.composerTurnTiming {
+  color: color-mix(in srgb, var(--legacy-text) 72%, var(--legacy-muted));
 }
 
 .composerInputWrap {
@@ -2587,6 +2592,7 @@ select {
     justify-content: flex-end;
   }
 
+  .composerTurnTiming,
   .composerContextUsage {
     text-align: right;
   }

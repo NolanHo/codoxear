@@ -5,6 +5,7 @@ from pathlib import Path
 
 from codoxear.pi_log import pi_model_context_window
 from codoxear.pi_log import read_pi_run_settings
+from codoxear.pi_messages import read_pi_message_tail_snapshot
 
 
 class TestPiLogRunSettings(unittest.TestCase):
@@ -88,3 +89,44 @@ class TestPiLogRunSettings(unittest.TestCase):
                 }) + "\n")
 
             self.assertEqual(read_pi_run_settings(path), ("openai", "gpt-5.4", "high"))
+
+    def test_read_pi_message_tail_snapshot_returns_latest_token_usage(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "session.jsonl"
+            with path.open("w", encoding="utf-8") as f:
+                f.write(json.dumps({
+                    "type": "session",
+                    "version": 3,
+                    "id": "sess-1",
+                    "timestamp": "2026-04-19T18:20:00.000Z",
+                    "cwd": "/tmp/project",
+                }) + "\n")
+                f.write(json.dumps({
+                    "type": "message",
+                    "timestamp": "2026-04-19T18:20:05.000Z",
+                    "message": {
+                        "role": "user",
+                        "content": [{"type": "text", "text": "hello"}],
+                    },
+                }) + "\n")
+                f.write(json.dumps({
+                    "type": "message",
+                    "timestamp": "2026-04-19T18:20:08.000Z",
+                    "message": {
+                        "role": "assistant",
+                        "provider": "openai",
+                        "model": "gpt-5.4",
+                        "usage": {"totalTokens": 196077},
+                        "content": [{"type": "text", "text": "done"}],
+                    },
+                }) + "\n")
+
+            _events, token_update, _off, _scan_bytes, _complete, _diag = read_pi_message_tail_snapshot(
+                path,
+                min_events=20,
+                initial_scan_bytes=4096,
+                max_scan_bytes=4096,
+            )
+
+            self.assertEqual(token_update["context_window"], 272000)
+            self.assertEqual(token_update["tokens_in_context"], 196077)
