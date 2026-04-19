@@ -133,8 +133,11 @@ def handle_post(handler, path: str, _u) -> bool:
             return True
         sv._json_response(handler, 200, {"ok": True, "alias": alias, **sidebar_meta})
         return True
-    session_id = sv._match_session_route(path, "rename")
-    if session_id is not None:
+    if path.startswith("/api/sessions/") and path.endswith("/rename"):
+        session_id = sv._match_session_route(path, "rename")
+        if session_id is None:
+            sv._json_response(handler, 404, {"error": "unknown session"})
+            return True
         if not sv._require_auth(handler):
             handler._unauthorized()
             return True
@@ -156,8 +159,11 @@ def handle_post(handler, path: str, _u) -> bool:
             return True
         sv._json_response(handler, 200, {"ok": True, "alias": alias})
         return True
-    session_id = sv._match_session_route(path, "focus")
-    if session_id is not None:
+    if path.startswith("/api/sessions/") and path.endswith("/focus"):
+        session_id = sv._match_session_route(path, "focus")
+        if session_id is None:
+            sv._json_response(handler, 404, {"error": "unknown session"})
+            return True
         if not sv._require_auth(handler):
             handler._unauthorized()
             return True
@@ -178,8 +184,11 @@ def handle_post(handler, path: str, _u) -> bool:
             return True
         sv._json_response(handler, 200, {"ok": True, "focused": focused})
         return True
-    session_id = sv._match_session_route(path, "send")
-    if session_id is not None:
+    if path.startswith("/api/sessions/") and path.endswith("/send"):
+        session_id = sv._match_session_route(path, "send")
+        if session_id is None:
+            sv._json_response(handler, 404, {"error": "unknown session"})
+            return True
         if not sv._require_auth(handler):
             handler._unauthorized()
             return True
@@ -204,8 +213,11 @@ def handle_post(handler, path: str, _u) -> bool:
             return True
         sv._json_response(handler, 200, res)
         return True
-    session_id = sv._match_session_route(path, "ui_response")
-    if session_id is not None:
+    if path.startswith("/api/sessions/") and path.endswith("/ui_response"):
+        session_id = sv._match_session_route(path, "ui_response")
+        if session_id is None:
+            sv._json_response(handler, 404, {"error": "unknown session"})
+            return True
         if not sv._require_auth(handler):
             handler._unauthorized()
             return True
@@ -226,8 +238,11 @@ def handle_post(handler, path: str, _u) -> bool:
             return True
         sv._json_response(handler, 200, {"ok": True})
         return True
-    session_id = sv._match_session_route(path, "enqueue")
-    if session_id is not None:
+    if path.startswith("/api/sessions/") and path.endswith("/enqueue"):
+        session_id = sv._match_session_route(path, "enqueue")
+        if session_id is None:
+            sv._json_response(handler, 404, {"error": "unknown session"})
+            return True
         if not sv._require_auth(handler):
             handler._unauthorized()
             return True
