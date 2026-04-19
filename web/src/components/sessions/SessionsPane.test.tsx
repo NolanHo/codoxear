@@ -140,6 +140,21 @@ describe("SessionsPane", () => {
     expect(root?.textContent).not.toContain("/Users/huapeixuan/Documents/Code/codoxear");
   });
 
+  it("prefers persisted title over first user message when alias is missing", () => {
+    renderSessionsPane({
+      items: [{ session_id: "sess-1", title: "Release checklist", first_user_message: "先整理一下今晚要发的内容", agent_backend: "pi" }],
+      activeSessionId: null,
+      loading: false,
+      newSessionDefaults: null,
+      recentCwds: [],
+      cwdGroups: {},
+      tmuxAvailable: false,
+    });
+
+    expect(root?.querySelector(".sessionTitle")?.textContent).toContain("Release checklist");
+    expect(root?.querySelector(".sessionTitle")?.textContent).not.toContain("先整理一下今晚要发的内容");
+  });
+
   it("deletes a session after confirmation", async () => {
     const confirm = vi.fn().mockReturnValue(true);
     vi.stubGlobal("confirm", confirm);

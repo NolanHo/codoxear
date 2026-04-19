@@ -141,7 +141,15 @@ function renderAppShell({
 }: {
   activeSessionId?: string | null;
   agentBackend?: string;
-  items?: Array<{ session_id: string; alias?: string; agent_backend: string; busy: boolean }>;
+  items?: Array<{
+    session_id: string;
+    alias?: string;
+    title?: string;
+    first_user_message?: string;
+    display_name?: string;
+    agent_backend: string;
+    busy: boolean;
+  }>;
   liveBusyBySessionId?: Record<string, boolean>;
   messages?: Record<string, unknown[]>;
   sessionUiSessionId?: string | null;
@@ -572,6 +580,14 @@ describe("AppShell", () => {
     await flush();
 
     expect(api.saveHarness).toHaveBeenCalledWith("sess-1", expect.objectContaining({ enabled: true, request: "Keep going" }));
+  });
+
+  it("shows persisted title in the active header before first user message", async () => {
+    renderAppShell({ items: [{ session_id: "sess-1", title: "Release checklist", first_user_message: "先整理一下今晚要发的内容", agent_backend: "pi", busy: false }] });
+    await flush();
+
+    expect(getRoot().querySelector(".conversationTitle")?.textContent).toContain("Release checklist");
+    expect(getRoot().querySelector(".conversationTitle")?.textContent).not.toContain("先整理一下今晚要发的内容");
   });
 
   it("interrupts the active busy session from the toolbar", async () => {

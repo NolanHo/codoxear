@@ -2657,6 +2657,7 @@ class TestPiBackendRouting(unittest.TestCase):
                     {
                         "session_id": "sess-1",
                         "thread_id": "thread-1",
+                        "display_name": "Active",
                         "cwd": expected_cwd,
                         "agent_backend": "pi",
                         "busy": True,

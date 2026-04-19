@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 
+import { getSessionDisplayName } from "../../lib/session-display";
 import type { SessionSummary } from "../../lib/types";
 
 interface SessionCardProps {
@@ -12,11 +13,6 @@ interface SessionCardProps {
   onEdit?: () => void;
   onDuplicate?: () => void;
   onDelete?: () => void;
-}
-
-function shortSessionId(sessionId: string) {
-  const match = sessionId.match(/^([0-9a-f]{8})[0-9a-f-]{20,}$/i);
-  return match ? match[1] : sessionId.slice(0, 8);
 }
 
 function ActionIcon({ kind }: { kind: "edit" | "duplicate" | "delete" }) {
@@ -55,7 +51,7 @@ export function useDesktopSessionActions() {
 }
 
 export function SessionCard({ session, active, onSelect, onEdit, onDuplicate, onDelete }: SessionCardProps) {
-  const title = session.alias || session.first_user_message || session.title || shortSessionId(session.session_id);
+  const title = getSessionDisplayName(session);
   const isHistorical = session.historical === true;
   const desktopActions = useDesktopSessionActions();
   const hasActions = Boolean(onEdit || onDuplicate || onDelete);

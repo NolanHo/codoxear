@@ -7,6 +7,7 @@ import { useSessionsStore, useSessionsStoreApi } from "../../app/providers";
 import { api } from "../../lib/api";
 import { normalizeLaunchBackend, providerChoiceToSettings } from "../../lib/launch";
 import { getSessionRuntimeId } from "../../lib/session-identity";
+import { getSessionDisplayName } from "../../lib/session-display";
 import type { CwdGroupMeta, SessionSummary } from "../../lib/types";
 import { EditSessionDialog } from "./EditSessionDialog";
 import { SessionCard } from "./SessionCard";
@@ -35,7 +36,7 @@ function shortSessionId(sessionId: string) {
 }
 
 function deleteSessionConfirmText(session: SessionSummary) {
-  const name = session.alias || session.first_user_message || session.title || "";
+  const name = getSessionDisplayName({ ...session, session_id: "" }, "");
   const sid = shortSessionId(session.session_id);
   const target = name ? ` \"${name}\" (${sid})` : ` ${sid}`;
   if (session.owned) {

@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 
 import { api } from "../../lib/api";
+import { getSessionDisplayName } from "../../lib/session-display";
 import type { SessionSummary } from "../../lib/types";
 
 interface EditSessionDialogProps {
@@ -18,13 +19,8 @@ interface EditSessionDialogProps {
 
 type SnoozeMode = "none" | "4h" | "tomorrow" | "custom";
 
-function shortSessionId(sessionId: string) {
-  const match = sessionId.match(/^([0-9a-f]{8})[0-9a-f-]{20,}$/i);
-  return match ? match[1] : sessionId.slice(0, 8);
-}
-
 function sessionLabel(session: SessionSummary) {
-  return session.alias || session.first_user_message || session.title || shortSessionId(session.session_id);
+  return getSessionDisplayName(session);
 }
 
 function formatPriorityOffset(value: number) {

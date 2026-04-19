@@ -21,6 +21,7 @@ import {
   writeThemeMode,
 } from "./app-shell/utils";
 import { getSessionRuntimeId } from "../lib/session-identity";
+import { getSessionDisplayName } from "../lib/session-display";
 
 function EmptyDetailsWorkspace() {
   return (
@@ -116,7 +117,7 @@ export function AppShell() {
     ? (diagnostics as { todo_snapshot?: unknown }).todo_snapshot ?? null
     : null;
   const activeTitle = activeSession
-    ? activeSession.alias || activeSession.first_user_message || activeSession.title || shortSessionId(activeSession.session_id)
+    ? getSessionDisplayName(activeSession, shortSessionId(activeSession.session_id))
     : "No session selected";
 
   const playReplyBeep = () => {

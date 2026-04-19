@@ -23,6 +23,7 @@ export interface SessionSummary {
   runtime_id?: string | null;
   thread_id?: string | null;
   resume_session_id?: string | null;
+  display_name?: string;
   title?: string;
   alias?: string;
   first_user_message?: string;

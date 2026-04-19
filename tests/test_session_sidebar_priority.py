@@ -10,6 +10,7 @@ from codoxear.page_state_sqlite import DurableSessionRecord
 from codoxear.page_state_sqlite import PageStateDB
 from codoxear.server import Session
 from codoxear.server import SessionManager
+from codoxear.server import _frontend_session_list_row
 
 
 def _make_manager() -> SessionManager:
@@ -102,6 +103,17 @@ class TestSessionSidebarPriority(unittest.TestCase):
         self.assertIsNone(rows[0]["snooze_until"])
         self.assertIsNone(rows[0]["dependency_session_id"])
 
+    def test_frontend_session_row_prefers_title_over_first_user_message(self) -> None:
+        row = _frontend_session_list_row(
+            {
+                "session_id": "sess-1",
+                "title": "Structured title",
+                "first_user_message": "draft prompt",
+            }
+        )
+
+        self.assertEqual(row["display_name"], "Structured title")
+
     def test_list_sessions_includes_pending_sqlite_sessions_as_live_placeholders(
         self,
     ) -> None:
@@ -141,6 +153,7 @@ class TestSessionSidebarPriority(unittest.TestCase):
         self.assertTrue(rows[0]["pending_startup"])
         self.assertEqual(rows[0]["alias"], "Recovered alias")
         self.assertEqual(rows[0]["title"], "Recovered")
+        self.assertEqual(rows[0]["display_name"], "Recovered alias")
 
     def test_list_sessions_includes_recovered_sqlite_sessions_when_no_live_sessions(
         self,
@@ -180,6 +193,7 @@ class TestSessionSidebarPriority(unittest.TestCase):
         self.assertEqual(rows[0]["alias"], "Recovered alias")
         self.assertEqual(rows[0]["title"], "Recovered")
         self.assertEqual(rows[0]["first_user_message"], "hello")
+        self.assertEqual(rows[0]["display_name"], "Recovered alias")
 
     def test_list_sessions_includes_historical_resumable_sessions_when_no_live_sessions(
         self,

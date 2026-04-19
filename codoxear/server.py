@@ -1738,6 +1738,7 @@ def _canonical_session_cwd(cwd: Any) -> str | None:
 SESSION_LIST_ROW_KEYS = (
     "session_id",
     "thread_id",
+    "display_name",
     "title",
     "alias",
     "first_user_message",
@@ -1758,14 +1759,28 @@ SESSION_LIST_RECENT_GROUP_LIMIT = 3
 SESSION_LIST_FALLBACK_GROUP_KEY = "__no_working_directory__"
 
 
+def _session_row_display_name(row: dict[str, Any], *, fallback: str = "Session") -> str:
+    if not isinstance(row, dict):
+        return fallback
+    for key in ("alias", "title", "first_user_message", "session_id"):
+        value = row.get(key)
+        if not isinstance(value, str):
+            continue
+        out = value.strip()
+        if out:
+            return out
+    return fallback
+
+
 def _normalize_session_cwd_row(row: dict[str, Any]) -> dict[str, Any]:
-    if not isinstance(row, dict) or "cwd" not in row:
-        return row
-    canonical_cwd = _canonical_session_cwd(row.get("cwd"))
-    if canonical_cwd is None:
+    if not isinstance(row, dict):
         return row
     normalized = dict(row)
-    normalized["cwd"] = canonical_cwd
+    if "cwd" in normalized:
+        canonical_cwd = _canonical_session_cwd(normalized.get("cwd"))
+        if canonical_cwd is not None:
+            normalized["cwd"] = canonical_cwd
+    normalized["display_name"] = _session_row_display_name(normalized)
     return normalized
 
 
@@ -5349,10 +5364,13 @@ class SessionManager:
                 return "Session"
             ref = self._page_state_ref_for_session(s)
             alias = self._aliases.get(ref) if ref is not None else None
-            if isinstance(alias, str) and alias.strip():
-                return alias.strip()
-            cwd_name = Path(s.cwd).expanduser().name.strip()
-            return cwd_name or "Session"
+            return _session_row_display_name(
+                {
+                    "session_id": self._durable_session_id_for_session(s),
+                    "alias": alias,
+                    "first_user_message": s.first_user_message or "",
+                }
+            )
 
     def _observe_rollout_delta(
         self, session_id: str, *, objs: list[dict[str, Any]], new_off: int
@@ -6450,7 +6468,7 @@ class SessionManager:
                 it.get("agent_backend"), default="codex"
             )
             if it.get("historical"):
-                out.append(dict(it))
+                out.append(_normalize_session_cwd_row(dict(it)))
                 continue
             log_exists = bool(it.get("log_exists"))
             state_busy = bool(it.get("state_busy"))
@@ -6475,7 +6493,7 @@ class SessionManager:
             it2.pop("log_exists", None)
             it2.pop("state_busy", None)
             it2["busy"] = bool(busy_out)
-            out.append(it2)
+            out.append(_normalize_session_cwd_row(it2))
         for item in out:
             if item.get("busy") or int(item.get("queue_len", 0)) <= 0:
                 continue
