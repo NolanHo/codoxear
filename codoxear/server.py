@@ -1897,7 +1897,7 @@ def _session_list_payload(
 
 
 def _listed_session_row(manager: "SessionManager", session_id: str) -> dict[str, Any] | None:
-    for row in manager.list_sessions(group_limit=1000, limit=5000):
+    for row in manager.list_sessions():
         if str(row.get("session_id") or "") == session_id:
             return dict(row)
     return None
