@@ -242,6 +242,17 @@ describe("Composer", () => {
     expect(getRoot().textContent).toContain("0/200K 0%");
   });
 
+  it("shows context usage above 100 percent when reported by Pi", async () => {
+    renderComposer({
+      items: [{ session_id: "sess-1", agent_backend: "pi", busy: false }],
+      liveContextUsageBySessionId: {
+        "sess-1": { used_tokens: 283891, total_tokens: 272000, percent_used: 104 },
+      },
+    });
+
+    expect(getRoot().textContent).toContain("284K/272K 104%");
+  });
+
   it("prefers diagnostics context usage when live usage is missing or still zero", async () => {
     renderComposer({
       items: [{ session_id: "sess-1", agent_backend: "pi", busy: false }],

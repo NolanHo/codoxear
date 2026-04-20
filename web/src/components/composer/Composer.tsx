@@ -107,11 +107,11 @@ function getContextUsageLabel(contextUsage: ContextUsagePayload | null | undefin
     return null;
   }
   const usedTokens = typeof contextUsage.used_tokens === "number" && Number.isFinite(contextUsage.used_tokens)
-    ? Math.min(totalTokens, Math.max(0, Math.round(contextUsage.used_tokens)))
+    ? Math.max(0, Math.round(contextUsage.used_tokens))
     : 0;
   const percentUsed = typeof contextUsage.percent_used === "number" && Number.isFinite(contextUsage.percent_used)
-    ? Math.min(100, Math.max(0, Math.round(contextUsage.percent_used)))
-    : Math.min(100, Math.max(0, Math.round((usedTokens / totalTokens) * 100)));
+    ? Math.max(0, Math.round(contextUsage.percent_used))
+    : Math.max(0, Math.round((usedTokens / totalTokens) * 100));
   return `${formatContextK(usedTokens)}/${formatContextK(totalTokens)} ${percentUsed}%`;
 }
 

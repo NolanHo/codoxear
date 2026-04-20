@@ -51,7 +51,7 @@ def session_context_usage_payload(s, token_val: dict[str, Any] | None) -> dict[s
         raw_used_tokens = token_val.get("tokens_in_context")
         if isinstance(raw_used_tokens, int) and raw_used_tokens > 0:
             used_tokens = raw_used_tokens
-    used_tokens = min(max(used_tokens, 0), context_window)
+    used_tokens = max(used_tokens, 0)
     percent_used = int(round((used_tokens / context_window) * 100.0)) if context_window > 0 else 0
     return {
         "used_tokens": used_tokens,
