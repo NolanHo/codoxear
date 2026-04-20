@@ -1501,6 +1501,69 @@ class TestPiBackendRouting(unittest.TestCase):
             s = mgr._sessions["pi-session"]
             self.assertTrue(isinstance(s.pi_busy_activity_floor, float))
 
+    def test_send_waits_for_pi_compaction_before_bridge_delivery(self) -> None:
+        mgr = _make_manager()
+        with tempfile.TemporaryDirectory() as td:
+            session_path = Path(td) / "pi-session.jsonl"
+            sock = Path(td) / "pi.sock"
+            sock.touch()
+            mgr._sessions["pi-session"] = Session(
+                session_id="pi-session",
+                thread_id="pi-thread-001",
+                agent_backend="pi",
+                backend="pi",
+                broker_pid=os.getpid(),
+                codex_pid=os.getpid(),
+                owned=True,
+                start_ts=123.0,
+                cwd=td,
+                log_path=None,
+                sock_path=sock,
+                session_path=session_path,
+                busy=False,
+            )
+            compacting = True
+            send_calls: list[str] = []
+
+            def _sock_call(
+                _sock: Path, req: dict[str, object], timeout_s: float = 0.0
+            ) -> dict[str, object]:
+                nonlocal compacting
+                if req.get("cmd") == "send":
+                    send_calls.append(str(req.get("text") or ""))
+                    return {"busy": True, "queue_len": 0, "token": None}
+                return {
+                    "busy": False,
+                    "queue_len": 0,
+                    "token": None,
+                    "isCompacting": compacting,
+                }
+
+            mgr._sock_call = _sock_call  # type: ignore[method-assign]
+
+            res = mgr.send("pi-session", "hello queued")
+
+            self.assertTrue(bool(res.get("accepted")))
+            self.assertEqual(res.get("delivery_state"), "queued")
+            self.assertEqual(len(mgr._outbound_requests["pi-session"]), 1)
+
+            drained = mgr._maybe_drain_outbound_request("pi-session")
+            self.assertFalse(drained)
+            self.assertEqual(send_calls, [])
+            self.assertEqual(
+                mgr._outbound_requests["pi-session"][0].state,
+                "buffered",
+            )
+            bridge_events = mgr._bridge_events.get("pi-thread-001", [])
+            self.assertTrue(bridge_events)
+            self.assertEqual(bridge_events[-1]["event"]["request_state"], "buffered")
+
+            compacting = False
+            drained = mgr._maybe_drain_outbound_request("pi-session")
+            self.assertTrue(drained)
+            self.assertEqual(send_calls, ["hello queued"])
+            self.assertEqual(len(mgr._outbound_requests.get("pi-session", [])), 0)
+
     def test_send_failure_surfaces_bridge_event_without_silence(self) -> None:
         mgr = _make_manager()
         with tempfile.TemporaryDirectory() as td:

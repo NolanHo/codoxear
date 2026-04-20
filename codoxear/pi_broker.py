@@ -71,10 +71,18 @@ def _extract_busy(obj: dict[str, Any]) -> bool:
     busy = obj.get("busy")
     if isinstance(busy, bool):
         return busy
+    compacting = obj.get("isCompacting")
+    if isinstance(compacting, bool) and compacting:
+        return True
     streaming = obj.get("isStreaming")
     if isinstance(streaming, bool):
         return streaming
     return False
+
+
+def _extract_is_compacting(obj: dict[str, Any]) -> bool:
+    compacting = obj.get("isCompacting")
+    return bool(compacting) if isinstance(compacting, bool) else False
 
 
 def _extract_event_type(obj: dict[str, Any]) -> str:
@@ -237,6 +245,69 @@ def _live_event_ts(st: "State", event: dict[str, Any]) -> float:
     return float(st.start_ts)
 
 
+def _live_pi_event(
+    st: "State",
+    *,
+    summary: str,
+    text: str | None = None,
+    is_error: bool = False,
+    event: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "type": "pi_event",
+        "summary": summary,
+        "ts": _live_event_ts(st, event or {}),
+    }
+    if text:
+        payload["text"] = text
+    if is_error:
+        payload["is_error"] = True
+    return payload
+
+
+def _compaction_live_event(st: "State", event: dict[str, Any]) -> dict[str, Any] | None:
+    event_type = _extract_event_type(event)
+    if event_type == "compaction_start":
+        reason = event.get("reason") if isinstance(event.get("reason"), str) else "manual"
+        if reason == "overflow":
+            summary = "Auto-compacting after context overflow"
+        elif reason == "threshold":
+            summary = "Auto-compacting context"
+        else:
+            summary = "Compacting context"
+        return _live_pi_event(
+            st,
+            summary=summary,
+            text="New bridge messages wait until compaction finishes.",
+            event=event,
+        )
+    if event_type != "compaction_end":
+        return None
+    if event.get("aborted") is True:
+        reason = event.get("reason") if isinstance(event.get("reason"), str) else "manual"
+        summary = "Auto-compaction cancelled" if reason != "manual" else "Compaction cancelled"
+        return _live_pi_event(st, summary=summary, event=event)
+    error_message = event.get("errorMessage") if isinstance(event.get("errorMessage"), str) else None
+    if error_message:
+        return _live_pi_event(
+            st,
+            summary="Compaction failed",
+            text=error_message,
+            is_error=True,
+            event=event,
+        )
+    result = event.get("result") if isinstance(event.get("result"), dict) else None
+    summary_text = result.get("summary") if isinstance(result, dict) and isinstance(result.get("summary"), str) else None
+    will_retry = event.get("willRetry") is True
+    text = summary_text or ("Retrying with compacted context." if will_retry else None)
+    return _live_pi_event(
+        st,
+        summary="Compaction finished",
+        text=text,
+        event=event,
+    )
+
+
 def _append_live_message_event(st: "State", event: dict[str, Any]) -> None:
     st.live_message_offset += 1
     st.live_message_events.append({"offset": st.live_message_offset, "event": event})
@@ -277,6 +348,7 @@ class State:
     output_tail_max: int = 64 * 1024
     token: dict[str, Any] | None = None
     last_turn_id: str | None = None
+    is_compacting: bool = False
     backend: str = "pi"
     # Monotonic timestamp of last successful prompt RPC.  Used to prevent
     # _sync_state_from_rpc from prematurely clearing the busy flag before
@@ -373,6 +445,7 @@ class PiBroker:
             if not st2:
                 return
             if isinstance(rpc_state, dict):
+                st2.is_compacting = _extract_is_compacting(rpc_state)
                 rpc_busy = _extract_busy(rpc_state)
                 # After a prompt is sent, Pi may not yet reflect busy=true
                 # in its state.  Keep the broker-side busy flag set for a
@@ -458,6 +531,16 @@ class PiBroker:
                     snapshot["text"] = f"{snapshot.get('text') or ''}{delta}"
                     snapshot["turn_id"] = event_turn_id
                     _append_live_message_event(st, dict(snapshot))
+            compaction_event = _compaction_live_event(st, event)
+            if compaction_event is not None:
+                _append_live_message_event(st, compaction_event)
+                if event_type == "compaction_start":
+                    st.is_compacting = True
+                    st.busy = True
+                elif event_type == "compaction_end":
+                    st.is_compacting = False
+                    if (not st.last_turn_id) and st.prompt_sent_at <= 0.0 and event.get("willRetry") is not True:
+                        st.busy = False
             if event_type == "extension_ui_request":
                 _record_ui_request(st, event)
             for request_id in _resolved_ui_request_ids(event):
@@ -666,10 +749,13 @@ class PiBroker:
             if cmd == "state":
                 with self._lock:
                     st = self.state
+                    if st is not None:
+                        self._drain_rpc_output_locked(st)
                     resp = {
                         "busy": bool(st.busy) if st else False,
                         "queue_len": 0,
                         "token": st.token if st else None,
+                        "isCompacting": bool(st.is_compacting) if st else False,
                     }
                 _send_socket_json_line(conn, resp)
                 return

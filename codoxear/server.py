@@ -4206,6 +4206,24 @@ class SessionManager:
         }
         self._append_bridge_event(request.durable_session_id, event)
 
+    def _mark_outbound_request_buffered_for_compaction(
+        self, request: BridgeOutboundRequest
+    ) -> None:
+        if request.state == "buffered":
+            return
+        request.state = "buffered"
+        event = {
+            "type": "pi_event",
+            "summary": "Bridge buffered prompt during compaction",
+            "text": "Waiting for Pi compaction to finish before delivering this prompt.\n\nQueued prompt:\n"
+            f"{request.text}",
+            "request_id": request.request_id,
+            "request_state": "buffered",
+            "pending_text": request.text,
+            "ts": time.time(),
+        }
+        self._append_bridge_event(request.durable_session_id, event)
+
     def _maybe_drain_outbound_request(self, runtime_id: str) -> bool:
         with self._lock:
             requests_by_runtime = getattr(self, "_outbound_requests", None)
@@ -4247,7 +4265,12 @@ class SessionManager:
                 self._fail_outbound_request(request, request.last_error)
                 return True
             return False
-        if not isinstance(st, dict) or bool(st.get("busy")) or int(st.get("queue_len") or 0) > 0:
+        if not isinstance(st, dict):
+            return False
+        if bool(st.get("isCompacting")):
+            self._mark_outbound_request_buffered_for_compaction(request)
+            return False
+        if bool(st.get("busy")) or int(st.get("queue_len") or 0) > 0:
             return False
         request.state = "sending"
         request.attempts += 1

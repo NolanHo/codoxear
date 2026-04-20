@@ -661,10 +661,42 @@ class TestPiBroker(unittest.TestCase):
             thread.join(1.0)
 
             self.assertEqual(
-                resp, {"busy": True, "queue_len": 0, "token": {"completion_tokens": 12}}
+                resp,
+                {
+                    "busy": True,
+                    "queue_len": 0,
+                    "token": {"completion_tokens": 12},
+                    "isCompacting": False,
+                },
             )
         finally:
             client_sock.close()
+
+    def test_state_treats_compaction_start_event_as_busy(self) -> None:
+        rpc = _FakeRpc()
+        rpc.events = [{"type": "compaction_start", "reason": "manual"}]
+        broker = PiBroker(cwd="/tmp")
+        broker.state = PiBrokerState(
+            session_id="pi-session-001",
+            codex_pid=123,
+            sock_path=Path("/tmp/pi.sock"),
+            session_path=Path("/tmp/pi-session.jsonl"),
+            start_ts=0.0,
+            rpc=rpc,
+            busy=False,
+        )
+
+        resp = _roundtrip_json(broker, {"cmd": "state"})
+
+        self.assertEqual(
+            resp,
+            {
+                "busy": True,
+                "queue_len": 0,
+                "token": None,
+                "isCompacting": True,
+            },
+        )
 
     def test_sync_output_updates_token_usage_from_assistant_message(self) -> None:
         rpc = _FakeRpc()
@@ -1323,7 +1355,15 @@ class TestPiBroker(unittest.TestCase):
             state_client.sendall((json.dumps({"cmd": "state"}) + "\n").encode("utf-8"))
             resp = json.loads(_recv_line(state_client).decode("utf-8"))
 
-            self.assertEqual(resp, {"busy": True, "queue_len": 0, "token": None})
+            self.assertEqual(
+                resp,
+                {
+                    "busy": True,
+                    "queue_len": 0,
+                    "token": None,
+                    "isCompacting": False,
+                },
+            )
 
             rpc.release_prompt.set()
             send_resp = json.loads(_recv_line(send_client).decode("utf-8"))
@@ -1585,7 +1625,15 @@ class TestPiBroker(unittest.TestCase):
             resp = json.loads(_recv_line(client_sock).decode("utf-8"))
             thread.join(1.0)
 
-            self.assertEqual(resp, {"busy": True, "queue_len": 0, "token": None})
+            self.assertEqual(
+                resp,
+                {
+                    "busy": True,
+                    "queue_len": 0,
+                    "token": None,
+                    "isCompacting": False,
+                },
+            )
         finally:
             client_sock.close()
 
@@ -1621,6 +1669,51 @@ class TestPiBroker(unittest.TestCase):
             self.assertEqual(rpc.calls, [])
         finally:
             client_sock.close()
+
+    def test_live_messages_surfaces_compaction_lifecycle_events(self) -> None:
+        rpc = _FakeRpc()
+        rpc.events = [
+            {"type": "compaction_start", "reason": "threshold"},
+            {
+                "type": "compaction_end",
+                "reason": "threshold",
+                "result": {"summary": "Kept recent turns"},
+                "aborted": False,
+                "willRetry": False,
+            },
+        ]
+        broker = PiBroker(cwd="/tmp")
+        broker.state = PiBrokerState(
+            session_id="pi-session-001",
+            codex_pid=123,
+            sock_path=Path("/tmp/pi.sock"),
+            session_path=Path("/tmp/pi-session.jsonl"),
+            start_ts=0.0,
+            rpc=rpc,
+        )
+
+        resp = _roundtrip_json(broker, {"cmd": "live_messages"})
+
+        self.assertEqual(
+            resp,
+            {
+                "offset": 2,
+                "events": [
+                    {
+                        "type": "pi_event",
+                        "summary": "Auto-compacting context",
+                        "text": "New bridge messages wait until compaction finishes.",
+                        "ts": 0.0,
+                    },
+                    {
+                        "type": "pi_event",
+                        "summary": "Compaction finished",
+                        "text": "Kept recent turns",
+                        "ts": 0.0,
+                    },
+                ],
+            },
+        )
 
     def test_live_messages_returns_one_accumulating_assistant_stream(self) -> None:
         rpc = _FakeRpc()
