@@ -157,6 +157,28 @@ This split lets a resumed Pi session keep one durable identity while the live ru
 
 If you start a web-owned session and later want to continue it in your terminal while keeping it registered with Codoxear, use the matching backend workflow: Codex sessions resume through `codox ...`, Pi sessions through `piox ...` or plain `pi --session <session-file>` if you want to continue the same Pi session file directly.
 
+## Pi session lifecycle
+
+For Pi, Codoxear separates durable conversation identity from the currently running broker process:
+
+1. A live Pi session has one durable `session_id` and one current `runtime_id`.
+2. The durable conversation lives in the Pi JSONL session file under `PI_HOME`.
+3. The live broker sidecar owns the current socket, tmux metadata, bridge queue, live UI state, and streamed events.
+4. If that live runtime exits and the session is resumed later, Codoxear keeps the same durable `session_id` and discovers a new `runtime_id`.
+
+This produces four common states:
+
+- terminal-owned live Pi session: started through `piox`; Codoxear discovers the broker sidecar and maps its live runtime back to the durable Pi session
+- web-owned live Pi session: started from the New session dialog; Codoxear creates both the durable Pi session file and the live runtime
+- historical Pi session: no live runtime exists; Codoxear reads title, cwd, and message history from the durable session file and SQLite-backed page state
+- resumed Pi session: a historical session is launched again; the old durable `session_id` stays stable while a new `runtime_id` becomes active
+
+When the UI targets a Pi session, route selection follows that split:
+
+- history- and page-state operations target the durable `session_id`
+- live polling, bridge sends, live UI requests, and interrupt/shutdown flow through the current `runtime_id`
+- historical Pi rows can be reopened into a fresh live runtime without losing alias, Focus state, hidden state, or other persisted page metadata
+
 ## Pi live behavior
 
 For Pi `pi-rpc` sessions, Codoxear shows more than the durable JSONL history:
