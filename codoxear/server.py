@@ -79,6 +79,8 @@ from .util import read_session_meta_payload as _read_session_meta_payload_impl
 from .util import subagent_parent_thread_id as _subagent_parent_thread_id
 from .voice_push import VoicePushCoordinator
 
+SessionStateKey = SessionRef | str
+
 for _seam_module in (
     _http_assets_routes,
     _http_auth_routes,
@@ -421,7 +423,7 @@ def _clean_harness_cooldown_minutes(raw: Any) -> int:
         raise ValueError("harness cooldown_minutes must be an integer")
     if raw < 1:
         raise ValueError("harness cooldown_minutes must be at least 1")
-    return raw
+    return int(raw)
 
 
 def _clean_harness_remaining_injections(raw: Any, *, allow_zero: bool) -> int:
@@ -433,7 +435,7 @@ def _clean_harness_remaining_injections(raw: Any, *, allow_zero: bool) -> int:
     if raw < minimum:
         lower = "0" if allow_zero else "1"
         raise ValueError(f"harness remaining_injections must be at least {lower}")
-    return raw
+    return int(raw)
 
 
 _SESSION_ID_RE = re.compile(
@@ -1944,14 +1946,14 @@ def _session_list_payload(
         remaining = len(group_rows) - len(page_rows)
         if remaining > 0:
             remaining_by_group[key] = remaining
-    payload: dict[str, Any] = {
+    result: dict[str, Any] = {
         "sessions": sessions,
         "remaining_by_group": remaining_by_group,
     }
     if group_offset <= 0 and group_limit == SESSION_LIST_RECENT_GROUP_LIMIT:
         omitted_group_count = max(0, len(group_order) - len(selected_group_keys))
-    payload["omitted_group_count"] = omitted_group_count
-    return payload
+    result["omitted_group_count"] = omitted_group_count
+    return result
 
 
 def _listed_session_row(manager: "SessionManager", session_id: str) -> dict[str, Any] | None:
@@ -2815,9 +2817,7 @@ def _read_codex_launch_defaults() -> dict[str, Any]:
     ranked = sorted(
         rows,
         key=lambda row: (
-            int(row.get("priority"))
-            if isinstance(row.get("priority"), int)
-            else 999999,
+            row.get("priority") if isinstance(row.get("priority"), int) else 999999,
             _clean_optional_text(row.get("slug")) or "",
         ),
     )
@@ -3829,17 +3829,29 @@ def _display_pi_busy(s: Session, *, broker_busy: bool) -> bool:
 def _validated_session_state(state: dict[str, Any] | Any) -> dict[str, Any]:
     if not isinstance(state, dict):
         raise ValueError("invalid broker state response")
-    if "busy" not in state:
-        raise ValueError("missing busy from broker state response")
-    if "queue_len" not in state:
-        raise ValueError("missing queue_len from broker state response")
+    _state_busy_value(state)
+    _state_queue_len_value(state)
     return state
+
+
+def _state_busy_value(state: dict[str, Any]) -> bool:
+    busy_raw = state.get("busy")
+    if not isinstance(busy_raw, bool):
+        raise ValueError("invalid busy from broker state response")
+    return busy_raw
+
+
+def _state_queue_len_value(state: dict[str, Any]) -> int:
+    queue_len_raw = state.get("queue_len")
+    if type(queue_len_raw) is not int or int(queue_len_raw) < 0:
+        raise ValueError("invalid queue_len from broker state response")
+    return int(queue_len_raw)
 
 
 def _display_session_busy(
     manager: "SessionManager", session_id: str, s: Session, state: dict[str, Any]
 ) -> tuple[bool, bool]:
-    broker_busy = bool(state.get("busy"))
+    broker_busy = _state_busy_value(state)
     busy = (
         _display_pi_busy(s, broker_busy=broker_busy)
         if s.backend == "pi"
@@ -3973,11 +3985,11 @@ class SessionManager:
         if self._page_state_db.is_empty():
             import_legacy_app_dir_to_db(source_app_dir=APP_DIR, db_path=PAGE_STATE_DB_PATH)
         self._harness: dict[str, dict[str, Any]] = {}
-        self._aliases: dict[SessionRef, str] = {}
-        self._sidebar_meta: dict[SessionRef, dict[str, Any]] = {}
+        self._aliases: dict[SessionStateKey, str] = {}
+        self._sidebar_meta: dict[SessionStateKey, dict[str, Any]] = {}
         self._hidden_sessions: set[str] = set()
-        self._files: dict[SessionRef, list[str]] = {}
-        self._queues: dict[SessionRef, list[str]] = {}
+        self._files: dict[SessionStateKey, list[str]] = {}
+        self._queues: dict[SessionStateKey, list[str]] = {}
         self._bridge_events: dict[str, list[dict[str, Any]]] = {}
         self._bridge_event_offsets: dict[str, int] = {}
         self._outbound_requests: dict[str, list[BridgeOutboundRequest]] = {}
@@ -4110,13 +4122,15 @@ class SessionManager:
             rows = list(rows_by_session.get(key, [])) if isinstance(rows_by_session, dict) else []
             latest = int(offsets.get(key, 0)) if isinstance(offsets, dict) else 0
         since = max(0, int(offset))
-        events = [
-            dict(row.get("event"))
-            for row in rows
-            if isinstance(row, dict)
-            and int(row.get("offset", 0) or 0) > since
-            and isinstance(row.get("event"), dict)
-        ]
+        events: list[dict[str, Any]] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            if int(row.get("offset", 0) or 0) <= since:
+                continue
+            event = row.get("event")
+            if isinstance(event, dict):
+                events.append(dict(event))
         return events, latest
 
     def _set_bridge_transport_state(
@@ -4308,10 +4322,12 @@ class SessionManager:
                     self._outbound_requests.pop(runtime_id, None)
             session2 = self._sessions.get(runtime_id)
             if session2 is not None:
-                if isinstance(resp, dict) and "busy" in resp:
-                    session2.busy = bool(resp.get("busy"))
-                if isinstance(resp, dict) and "queue_len" in resp:
-                    session2.queue_len = int(resp.get("queue_len"))
+                if isinstance(resp, dict) and isinstance(resp.get("busy"), bool):
+                    session2.busy = _state_busy_value(resp)
+                if isinstance(resp, dict):
+                    queue_len_raw = resp.get("queue_len")
+                    if type(queue_len_raw) is int and int(queue_len_raw) >= 0:
+                        session2.queue_len = _state_queue_len_value(resp)
                 session2.pi_idle_activity_ts = None
                 if session2.backend == "pi":
                     activity_ts = _touch_session_file(session2.session_path)
@@ -4916,7 +4932,7 @@ class SessionManager:
             obj = json.loads(raw)
             if not isinstance(obj, dict):
                 raise ValueError("invalid session_files.json (expected object)")
-            cleaned: dict[str, list[str]] = {}
+            cleaned: dict[SessionStateKey, list[str]] = {}
             for sid, arr in obj.items():
                 if not isinstance(sid, str) or not sid:
                     continue
@@ -4968,7 +4984,7 @@ class SessionManager:
             obj = json.loads(raw)
             if not isinstance(obj, dict):
                 raise ValueError("invalid session_queues.json (expected object)")
-            cleaned: dict[str, list[str]] = {}
+            cleaned: dict[SessionStateKey, list[str]] = {}
             for sid, arr in obj.items():
                 if not isinstance(sid, str) or not sid:
                     continue
@@ -5058,6 +5074,7 @@ class SessionManager:
 
     def _load_cwd_groups(self) -> None:
         db = getattr(self, "_page_state_db", None)
+        source_items: Any
         if db is None:
             try:
                 raw = CWD_GROUPS_PATH.read_text(encoding="utf-8")
@@ -5689,8 +5706,8 @@ class SessionManager:
                     raise ValueError("invalid broker state response")
                 if "busy" not in st or "queue_len" not in st:
                     raise ValueError("invalid broker state response")
-                busy = bool(st.get("busy"))
-                ql = int(st.get("queue_len"))
+                busy = _state_busy_value(st)
+                ql = _state_queue_len_value(st)
                 if busy or ql > 0 or self._queue_len(sid) > 0:
                     continue
                 last = _last_chat_role_ts_from_tail(
@@ -5772,7 +5789,14 @@ class SessionManager:
                 if s0:
                     s0.queue_idle_since = None
             return False
-        if bool(st.get("busy")) or int(st.get("queue_len")) > 0:
+        queue_len_raw = st.get("queue_len")
+        if not isinstance(queue_len_raw, int):
+            with self._lock:
+                s0 = self._sessions.get(session_id)
+                if s0:
+                    s0.queue_idle_since = None
+            return False
+        if _state_busy_value(st) or int(queue_len_raw) > 0:
             with self._lock:
                 s0 = self._sessions.get(session_id)
                 if s0:
@@ -5892,12 +5916,7 @@ class SessionManager:
                 if not isinstance(meta, dict):
                     raise ValueError(f"invalid metadata json for socket {sock}")
 
-                thread_id = (
-                    meta.get("session_id")
-                    if isinstance(meta.get("session_id"), str)
-                    and meta.get("session_id")
-                    else session_id
-                )
+                thread_id = _clean_optional_text(meta.get("session_id")) or session_id
                 backend = normalize_agent_backend(
                     meta.get("backend"),
                     default=normalize_agent_backend(
@@ -5973,13 +5992,13 @@ class SessionManager:
                         inferred_pi_session_path = candidate
                         break
                     if inferred_pi_session_path is None and _pid_alive(codex_pid):
-                        claimed = self._claimed_pi_session_paths(exclude_sid=session_id)
+                        ignored_paths = self._claimed_pi_session_paths(exclude_sid=session_id)
                         inferred_pi_session_path = _proc_find_open_rollout_log(
                             proc_root=PROC_ROOT,
                             root_pid=codex_pid,
                             agent_backend="pi",
                             cwd=cwd,
-                            ignored_paths=claimed,
+                            ignored_paths=ignored_paths,
                         )
                 if inferred_pi_session_path is not None:
                     backend = "pi"
@@ -6005,6 +6024,7 @@ class SessionManager:
                         continue
 
                 log_path = _metadata_log_path(meta=meta, backend=backend, sock=sock)
+                session_path: Path | None
                 if inferred_pi_session_path is not None:
                     session_path = inferred_pi_session_path
                 else:
@@ -6017,7 +6037,7 @@ class SessionManager:
                         except ValueError as exc:
                             if "missing session_path" not in str(exc):
                                 raise
-                        claimed = (
+                        claimed: set[Path] | None = (
                             self._claimed_pi_session_paths(exclude_sid=session_id)
                             if preferred_session_path is None
                             else None
@@ -6115,12 +6135,27 @@ class SessionManager:
                     )
                     sys.stderr.flush()
                 resp = {"busy": False, "queue_len": 0, "token": None}
+            queue_len_raw = resp.get("queue_len") if isinstance(resp, dict) else None
+            if (
+                not isinstance(resp, dict)
+                or not isinstance(resp.get("busy"), bool)
+                or type(queue_len_raw) is not int
+                or int(queue_len_raw) < 0
+            ):
+                state_error = ValueError(
+                    f"invalid broker state response for socket {sock}"
+                )
+                if skip_invalid_sidecars:
+                    continue
+                raise state_error
 
             if log_path is not None:
                 meta_log_off = int(log_path.stat().st_size)
             else:
                 meta_log_off = 0
 
+            queue_len_raw = resp.get("queue_len")
+            queue_len = int(queue_len_raw) if type(queue_len_raw) is int and int(queue_len_raw) >= 0 else 0
             s = Session(
                 session_id=session_id,
                 thread_id=thread_id,
@@ -6137,8 +6172,8 @@ class SessionManager:
                 log_path=log_path,
                 sock_path=sock,
                 session_path=session_path,
-                busy=bool(resp.get("busy")),
-                queue_len=int(resp.get("queue_len")),
+                busy=_state_busy_value(resp),
+                queue_len=queue_len,
                 token=(
                     resp.get("token")
                     if isinstance(resp.get("token"), (dict, type(None)))
@@ -6206,15 +6241,14 @@ class SessionManager:
     ) -> tuple[bool, BaseException | None]:
         try:
             resp = self._sock_call(sock_path, {"cmd": "state"}, timeout_s=timeout_s)
+            _validated_session_state(resp)
         except Exception as e:
             return False, e
         with self._lock:
             s2 = self._sessions.get(session_id)
             if s2:
-                if "busy" not in resp or "queue_len" not in resp:
-                    raise ValueError("invalid broker state response")
-                s2.busy = bool(resp.get("busy"))
-                s2.queue_len = int(resp.get("queue_len"))
+                s2.busy = _state_busy_value(resp)
+                s2.queue_len = _state_queue_len_value(resp)
                 if "token" in resp:
                     tok = resp.get("token")
                     if isinstance(tok, dict):
@@ -6614,8 +6648,8 @@ class SessionManager:
                 queue_rows = self._queues.get(ref, []) if isinstance(self._queues, dict) else []
                 file_rows = self._files.get(ref, []) if isinstance(self._files, dict) else []
                 cwd = record.cwd or ""
-                cwd_path = _safe_expanduser(Path(cwd)).resolve() if cwd else None
-                git_branch = _current_git_branch(cwd_path) if cwd_path is not None else None
+                history_cwd_path: Path | None = _safe_expanduser(Path(cwd)).resolve() if cwd else None
+                git_branch = _current_git_branch(history_cwd_path) if history_cwd_path is not None else None
                 items.append(
                     {
                         "session_id": session_row_id,
@@ -6771,11 +6805,7 @@ class SessionManager:
             if not isinstance(meta, dict):
                 raise ValueError(f"invalid metadata json for socket {sock}")
 
-            thread_id = (
-                meta.get("session_id")
-                if isinstance(meta.get("session_id"), str) and meta.get("session_id")
-                else s.thread_id
-            )
+            thread_id = _clean_optional_text(meta.get("session_id")) or s.thread_id
             backend = normalize_agent_backend(
                 meta.get("backend"),
                 default=normalize_agent_backend(
@@ -6810,7 +6840,7 @@ class SessionManager:
                     preferred_session_path = _metadata_session_path(
                         meta=meta, backend=backend, sock=sock
                     )
-                claimed = (
+                claimed: set[Path] | None = (
                     self._claimed_pi_session_paths(exclude_sid=session_id)
                     if preferred_session_path is None
                     else None
@@ -6910,7 +6940,7 @@ class SessionManager:
                 s2.session_path = None
                 s2.pi_attention_scan_activity_ts = None
                 self._reset_log_caches(s2, meta_log_off=0)
-            s2.thread_id = thread_id
+            s2.thread_id = str(thread_id)
             s2.agent_backend = agent_backend
             s2.backend = backend
             s2.cwd = str(cwd)
@@ -7155,7 +7185,7 @@ class SessionManager:
             cached_count = len(s2.chat_index_events) if s2 else 0
             scan_complete = bool(s2.chat_index_scan_complete) if s2 else False
         target_events = max(0, int(min_events) + max(0, int(before)))
-        seed_diag = {"tool_names": [], "last_tool": None}
+        seed_diag: dict[str, Any] = {"tool_names": [], "last_tool": None}
         if (not ready) or ((target_events > cached_count) and (not scan_complete)):
             events, token_update, new_off, used_scan, complete, diag = _pi_messages.read_pi_message_tail_snapshot(
                 session_path,
@@ -7439,7 +7469,7 @@ class SessionManager:
                     "next_before": 0,
                 }
             if init and offset == 0:
-                events, new_off, has_older, next_before, diag = (
+                historical_events, new_off, has_older, next_before, diag = (
                     _pi_messages.read_pi_message_page(
                         session_path,
                         limit=limit,
@@ -7449,7 +7479,7 @@ class SessionManager:
                 meta_delta = {"thinking": 0, "tool": 0, "system": 0}
                 flags = {"turn_start": False, "turn_end": False, "turn_aborted": False}
             else:
-                events, new_off, meta_delta, flags, diag = (
+                historical_events, new_off, meta_delta, flags, diag = (
                     _pi_messages.read_pi_message_delta(
                         session_path,
                         offset=offset,
@@ -7461,7 +7491,7 @@ class SessionManager:
                 "thread_id": historical_row.get("resume_session_id"),
                 "log_path": str(session_path),
                 "offset": int(new_off),
-                "events": events,
+                "events": historical_events,
                 "meta_delta": meta_delta,
                 "turn_start": bool(flags.get("turn_start")),
                 "turn_end": bool(flags.get("turn_end")),
@@ -7498,7 +7528,6 @@ class SessionManager:
             diag = {"tool_names": [], "last_tool": None}
             flags = {"turn_start": False, "turn_end": False, "turn_aborted": False}
             meta_delta = {"thinking": 0, "tool": 0, "system": 0}
-            events: list[dict[str, Any]] = []
             new_off = 0
             has_older = False
             next_before = 0
@@ -7594,7 +7623,7 @@ class SessionManager:
                         self._update_pi_last_chat_ts(
                             session_id, events, session_path=s.session_path
                         )
-            pi_busy = _display_pi_busy(s, broker_busy=bool(state.get("busy")))
+            pi_busy = _display_pi_busy(s, broker_busy=_state_busy_value(state))
             return {
                 "thread_id": s.thread_id,
                 "log_path": str(s.session_path) if s.session_path is not None else None,
@@ -7653,7 +7682,7 @@ class SessionManager:
         if token_update is not None and s2 is not None:
             s2.token = token_update
         idle_val = self.idle_from_log(session_id)
-        busy_val = bool(state.get("busy")) or (not bool(idle_val))
+        busy_val = _state_busy_value(state) or (not bool(idle_val))
         token_val = (
             state_token
             if state_token is not None
@@ -7695,7 +7724,8 @@ class SessionManager:
             line = buf.split(b"\n", 1)[0]
             if not line:
                 return {"error": "empty response"}
-            return json.loads(line.decode("utf-8"))
+            payload = json.loads(line.decode("utf-8"))
+            return payload if isinstance(payload, dict) else {"error": "invalid response"}
         finally:
             s.close()
 
@@ -8368,8 +8398,14 @@ class SessionManager:
             if not s:
                 raise KeyError("unknown session")
             sock = s.sock_path
+        cached_state = {
+            "busy": bool(s.busy),
+            "queue_len": int(s.queue_len),
+            "token": s.token,
+        }
         try:
             resp = self._sock_call(sock, {"cmd": "state"}, timeout_s=1.5)
+            _validated_session_state(resp)
         except Exception:
             if not _pid_alive(s.broker_pid) and not _pid_alive(s.codex_pid):
                 with self._lock:
@@ -8380,28 +8416,18 @@ class SessionManager:
                 raise KeyError("unknown session")
             # Broker is alive but socket temporarily unavailable (e.g. during
             # session switch).  Return a degraded state instead of crashing.
-            return {
-                "busy": bool(s.busy),
-                "queue_len": int(s.queue_len),
-                "token": s.token,
-            }
+            return cached_state
         with self._lock:
             s2 = self._sessions.get(runtime_id)
             if s2:
-                if "busy" not in resp or "queue_len" not in resp:
-                    # Return the last known good state if broker responds with garbage.
-                    return {
-                        "busy": bool(s2.busy),
-                        "queue_len": int(s2.queue_len),
-                        "token": s2.token,
-                    }
-                s2.busy = bool(resp.get("busy"))
-                s2.queue_len = int(resp.get("queue_len"))
+                s2.busy = _state_busy_value(resp)
+                s2.queue_len = _state_queue_len_value(resp)
                 if "token" in resp:
                     tok = resp.get("token")
                     if isinstance(tok, dict):
                         s2.token = tok
-        return resp
+                return resp
+        return cached_state
 
     def get_ui_state(self, session_id: str) -> dict[str, Any]:
         return _pi_ui_bridge.get_ui_state(self, session_id)

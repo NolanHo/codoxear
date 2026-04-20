@@ -57,7 +57,7 @@ SOCK_DIR = APP_DIR / "socks"
 PROC_ROOT = Path("/proc")
 
 AGENT_BACKEND = resolve_agent_backend(
-    os.environ.get("CODEX_WEB_AGENT_BACKEND"), env=os.environ, default="codex"
+    os.environ.get("CODEX_WEB_AGENT_BACKEND"), env=dict(os.environ), default="codex"
 )
 BACKEND = get_agent_backend(AGENT_BACKEND)
 AGENT_BIN = BACKEND.cli_bin()
@@ -433,14 +433,10 @@ def _claimed_log_paths_from_sock_meta(
         log_path_raw = meta.get("log_path")
         if not isinstance(log_path_raw, str) or not log_path_raw.strip():
             continue
-        broker_pid = (
-            int(meta.get("broker_pid"))
-            if isinstance(meta.get("broker_pid"), int)
-            else 0
-        )
-        agent_pid = (
-            int(meta.get("codex_pid")) if isinstance(meta.get("codex_pid"), int) else 0
-        )
+        broker_pid_raw = meta.get("broker_pid")
+        broker_pid = int(broker_pid_raw) if isinstance(broker_pid_raw, int) else 0
+        agent_pid_raw = meta.get("codex_pid")
+        agent_pid = int(agent_pid_raw) if isinstance(agent_pid_raw, int) else 0
         if (
             (broker_pid > 0 or agent_pid > 0)
             and (not _pid_alive(broker_pid))
@@ -857,6 +853,7 @@ class Broker:
             sessions_dir=self.sessions_dir,
             cwd=self.cwd,
         )
+        candidate: Path | None
         if declared_log_path is not None:
             candidate = declared_log_path.parent
         else:
@@ -1294,6 +1291,7 @@ class Broker:
             req = json.loads(line.decode("utf-8"))
             cmd = req.get("cmd")
             if cmd == "state":
+                resp: dict[str, Any]
                 with self._lock:
                     st = self.state
                     if not st:
@@ -1350,22 +1348,22 @@ class Broker:
                     resp = {"error": "seq required"}
                 else:
                     b = _seq_bytes(seq_raw)
-                    fd: int | None = None
+                    key_fd: int | None = None
                     with self._lock:
                         st = self.state
                         if not st:
                             resp = {"error": "no state"}
                         else:
-                            fd = st.pty_master_fd
+                            key_fd = st.pty_master_fd
                             resp = {
                                 "ok": True,
                                 "queued": False,
                                 "n": len(b),
                                 "key_queue_len": len(st.key_queue),
                             }
-                    if fd is not None:
+                    if key_fd is not None:
                         try:
-                            _write_all(fd, b)
+                            _write_all(key_fd, b)
                         except Exception:
                             traceback.print_exc()
                 _send_socket_json_line(conn, resp)

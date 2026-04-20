@@ -8,20 +8,20 @@ from typing import Any
 _SERVER = None
 
 
-def bind_server_runtime(runtime) -> None:
+def bind_server_runtime(runtime: Any) -> None:
     global _SERVER
     _SERVER = runtime
 
 
 
-def _sv():
+def _sv() -> Any:
     if _SERVER is None:
         raise RuntimeError("server runtime not bound")
     return _SERVER
 
 
 
-def handle_get(handler, path: str, u) -> bool:
+def handle_get(handler: Any, path: str, u: Any) -> bool:
     sv = _sv()
     if path == "/api/sessions/bootstrap":
         if not sv._require_auth(handler):
@@ -231,13 +231,11 @@ def handle_get(handler, path: str, u) -> bool:
         if not s:
             sv._json_response(handler, 404, {"error": "unknown session"})
             return True
-        state = sv.MANAGER.get_state(session_id)
-        if not isinstance(state, dict):
-            raise ValueError("invalid broker state response")
-        if "busy" not in state:
-            raise ValueError("missing busy from broker state response")
-        if "queue_len" not in state:
-            raise ValueError("missing queue_len from broker state response")
+        try:
+            state = sv._validated_session_state(sv.MANAGER.get_state(session_id))
+        except ValueError as e:
+            sv._json_response(handler, 502, {"error": str(e)})
+            return True
         token_val: dict[str, Any] | None = None
         st_token = state.get("token")
         if isinstance(st_token, dict) or st_token is None:
@@ -267,7 +265,7 @@ def handle_get(handler, path: str, u) -> bool:
         blocked = sidebar_meta["dependency_session_id"] is not None
         snoozed = sidebar_meta["snooze_until"] is not None and float(sidebar_meta["snooze_until"]) > time.time()
         final_priority = 0.0 if (snoozed or blocked) else base_priority
-        broker_busy = bool(state.get("busy"))
+        broker_busy = sv._state_busy_value(state)
         busy = sv._display_pi_busy(s, broker_busy=broker_busy) if s.backend == "pi" else broker_busy
         if s.backend != "pi" and s.log_path is not None and s.log_path.exists():
             idle_val = sv.MANAGER.idle_from_log(session_id)

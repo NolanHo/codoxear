@@ -6,20 +6,20 @@ from typing import Any
 _SERVER = None
 
 
-def bind_server_runtime(runtime) -> None:
+def bind_server_runtime(runtime: Any) -> None:
     global _SERVER
     _SERVER = runtime
 
 
 
-def _sv():
+def _sv() -> Any:
     if _SERVER is None:
         raise RuntimeError("server runtime not bound")
     return _SERVER
 
 
 
-def handle_post(handler, path: str, _u) -> bool:
+def handle_post(handler: Any, path: str, _u: Any) -> bool:
     sv = _sv()
     if path == "/api/cwd_groups/edit":
         if not sv._require_auth(handler):

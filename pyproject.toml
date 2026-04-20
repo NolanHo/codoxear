@@ -36,17 +36,8 @@ select = ["I", "F401", "F841"]
 
 [tool.mypy]
 python_version = "3.12"
-files = [
-    "codoxear/agent_backend.py",
-    "codoxear/attention",
-    "codoxear/http",
-    "codoxear/page_state_sqlite.py",
-    "codoxear/pi/ui_bridge.py",
-    "codoxear/pi_log.py",
-    "codoxear/sessions",
-    "codoxear/util.py",
-]
-check_untyped_defs = true
+files = ["codoxear"]
+strict = true
 ignore_missing_imports = true
 show_error_codes = true
 warn_unused_configs = true

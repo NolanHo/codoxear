@@ -4,24 +4,25 @@ import base64
 import json
 import urllib.parse
 from pathlib import Path
+from typing import Any
 
 _SERVER = None
 
 
-def bind_server_runtime(runtime) -> None:
+def bind_server_runtime(runtime: Any) -> None:
     global _SERVER
     _SERVER = runtime
 
 
 
-def _sv():
+def _sv() -> Any:
     if _SERVER is None:
         raise RuntimeError("server runtime not bound")
     return _SERVER
 
 
 
-def _send_inline_blob(handler, path_obj: Path) -> None:
+def _send_inline_blob(handler: Any, path_obj: Path) -> None:
     sv = _sv()
     raw = path_obj.read_bytes()
     kind, ctype = sv._file_kind(path_obj, raw)
@@ -43,7 +44,7 @@ def _send_inline_blob(handler, path_obj: Path) -> None:
 
 
 
-def handle_get(handler, path: str, u) -> bool:
+def handle_get(handler: Any, path: str, u: Any) -> bool:
     sv = _sv()
     if path.startswith("/api/sessions/") and path.endswith("/file/read"):
         if not sv._require_auth(handler):
@@ -319,7 +320,7 @@ def handle_get(handler, path: str, u) -> bool:
 
 
 
-def handle_post(handler, path: str, u) -> bool:
+def handle_post(handler: Any, path: str, u: Any) -> bool:
     sv = _sv()
     if path == "/api/files/read":
         if not sv._require_auth(handler):

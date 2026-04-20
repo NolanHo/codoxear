@@ -5,13 +5,13 @@ from typing import Any
 _SERVER = None
 
 
-def bind_server_runtime(runtime) -> None:
+def bind_server_runtime(runtime: Any) -> None:
     global _SERVER
     _SERVER = runtime
 
 
 
-def _sv():
+def _sv() -> Any:
     if _SERVER is None:
         raise RuntimeError("server runtime not bound")
     return _SERVER
@@ -19,7 +19,7 @@ def _sv():
 
 
 def session_live_payload(
-    manager,
+    manager: Any,
     session_id: str,
     *,
     offset: int = 0,
@@ -135,7 +135,7 @@ def session_live_payload(
 
 
 
-def pi_live_messages_payload(manager, session, *, offset: int = 0) -> dict[str, Any]:
+def pi_live_messages_payload(manager: Any, session: Any, *, offset: int = 0) -> dict[str, Any]:
     sv = _sv()
     if not sv._session_supports_live_pi_ui(session):
         return {"offset": max(0, int(offset)), "events": []}
@@ -152,6 +152,31 @@ def pi_live_messages_payload(manager, session, *, offset: int = 0) -> dict[str, 
         "offset": int(payload.get("offset", max(0, int(offset))) or 0),
         "events": [item for item in events if isinstance(item, dict)] if isinstance(events, list) else [],
     }
+
+
+
+def _event_ts(event: dict[str, Any]) -> float | None:
+    ts = event.get("ts")
+    if isinstance(ts, (int, float)):
+        return float(ts)
+    return None
+
+
+
+def _insert_event_by_ts(
+    merged: list[dict[str, Any]], event: dict[str, Any]
+) -> None:
+    ts = _event_ts(event)
+    if ts is None:
+        merged.append(event)
+        return
+    insert_at = len(merged)
+    while insert_at > 0:
+        prev_ts = _event_ts(merged[insert_at - 1])
+        if prev_ts is None or prev_ts <= ts:
+            break
+        insert_at -= 1
+    merged.insert(insert_at, event)
 
 
 
@@ -178,7 +203,7 @@ def merge_pi_live_message_events(
             break
     for event in streamed_events:
         if event.get("role") != "assistant":
-            merged.append(event)
+            _insert_event_by_ts(merged, event)
             continue
         turn_id = event.get("turn_id") if isinstance(event.get("turn_id"), str) else None
         text = str(event.get("text") or "").strip()
@@ -186,5 +211,5 @@ def merge_pi_live_message_events(
             continue
         if bool(event.get("completed")) and text and text == tail_durable_text:
             continue
-        merged.append(event)
+        _insert_event_by_ts(merged, event)
     return merged

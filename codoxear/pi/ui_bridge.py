@@ -7,20 +7,20 @@ from typing import Any
 _SERVER = None
 
 
-def bind_server_runtime(runtime) -> None:
+def bind_server_runtime(runtime: Any) -> None:
     global _SERVER
     _SERVER = runtime
 
 
 
-def _sv():
+def _sv() -> Any:
     if _SERVER is None:
         raise RuntimeError("server runtime not bound")
     return _SERVER
 
 
 
-def get_ui_state(manager, session_id: str) -> dict[str, Any]:
+def get_ui_state(manager: Any, session_id: str) -> dict[str, Any]:
     sv = _sv()
     runtime_id = manager._runtime_session_id_for_identifier(session_id)
     if runtime_id is None:
@@ -51,11 +51,11 @@ def get_ui_state(manager, session_id: str) -> dict[str, Any]:
     error = resp.get("error")
     if isinstance(error, str) and error:
         raise ValueError(error)
-    return sv._sanitize_pi_ui_state_payload(resp)
+    return dict(sv._sanitize_pi_ui_state_payload(resp))
 
 
 
-def get_session_commands(manager, session_id: str) -> dict[str, Any]:
+def get_session_commands(manager: Any, session_id: str) -> dict[str, Any]:
     sv = _sv()
     runtime_id = manager._runtime_session_id_for_identifier(session_id)
     if runtime_id is None:
@@ -106,11 +106,11 @@ def get_session_commands(manager, session_id: str) -> dict[str, Any]:
                 "session_path": session_path_key,
                 "commands": list(payload.get("commands", [])),
             }
-    return payload
+    return dict(payload)
 
 
 
-def submit_ui_response(manager, session_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+def submit_ui_response(manager: Any, session_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     sv = _sv()
     runtime_id = manager._runtime_session_id_for_identifier(session_id)
     if runtime_id is None:
@@ -152,4 +152,4 @@ def submit_ui_response(manager, session_id: str, payload: dict[str, Any]) -> dic
     error = resp.get("error")
     if isinstance(error, str) and error:
         raise ValueError(error)
-    return resp
+    return dict(resp)

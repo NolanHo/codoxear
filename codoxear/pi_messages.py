@@ -577,7 +577,7 @@ def _normalize_ask_user_args(args: Any) -> dict[str, Any]:
                 else question
             )
             header = (
-                first_question.get("header")
+                str(first_question.get("header"))
                 if isinstance(first_question.get("header"), str)
                 else ""
             )
@@ -988,22 +988,22 @@ def normalize_pi_entries(
                     fallback_ts = ts + 0.1
                     continue
             output = _extract_subagent_output(payload)
-            details = _tool_result_details(payload)
+            tool_details = _tool_result_details(payload)
             if isinstance(tn, str) and tn and (
                 (isinstance(output, str) and output)
-                or details is not None
+                or tool_details is not None
                 or payload.get("isError") is True
             ):
-                event: dict[str, Any] = {"type": "tool_result", "name": tn, "ts": ts}
+                tool_event: dict[str, Any] = {"type": "tool_result", "name": tn, "ts": ts}
                 if isinstance(output, str) and output:
-                    event["text"] = output
+                    tool_event["text"] = output
                 elif payload.get("isError") is True:
-                    event["text"] = f"{tn} failed"
+                    tool_event["text"] = f"{tn} failed"
                 if payload.get("isError") is True:
-                    event["is_error"] = True
-                if details is not None:
-                    event["details"] = details
-                events.append(event)
+                    tool_event["is_error"] = True
+                if tool_details is not None:
+                    tool_event["details"] = tool_details
+                events.append(tool_event)
             fallback_ts = ts + 0.1
             continue
 
@@ -1122,7 +1122,7 @@ def normalize_pi_entries(
                             }
                             fallback_ts += 0.1
                         continue
-                    tool_event: dict[str, Any] = {
+                    assistant_tool_event: dict[str, Any] = {
                         "type": "tool",
                         "name": tc_name,
                         "ts": float(
@@ -1131,7 +1131,7 @@ def normalize_pi_entries(
                             )
                         ),
                     }
-                    events.append(tool_event)
+                    events.append(assistant_tool_event)
                     meta_delta["tool"] += 1
                     tool_names.append(tc_name)
                     active_turn_last_tool = tc_name
@@ -1346,12 +1346,12 @@ def _read_latest_claude_todo_snapshot(
         if payload.get("isError") is True:
             continue
         tool_name = _non_empty_string(payload.get("toolName"))
-        details = payload.get("details")
-        if not isinstance(details, dict):
+        details_map = payload.get("details")
+        if not isinstance(details_map, dict):
             continue
 
         if tool_name == "TodoWrite":
-            new_todos = details.get("newTodos")
+            new_todos = details_map.get("newTodos")
             if isinstance(new_todos, list):
                 snapshot = _normalize_claude_todo_write_snapshot(
                     [todo for todo in new_todos if isinstance(todo, dict)]
@@ -1368,12 +1368,12 @@ def _read_latest_claude_todo_snapshot(
             continue
 
         if tool_name == "TaskCreate":
-            task = details.get("task")
-            task_list_id = _non_empty_string(details.get("taskListId"))
-            if not isinstance(task, dict) or task_list_id is None:
+            task_payload = details_map.get("task")
+            task_list_id = _non_empty_string(details_map.get("taskListId"))
+            if not isinstance(task_payload, dict) or task_list_id is None:
                 continue
-            task_id = _non_empty_string(task.get("id"))
-            subject = _non_empty_string(task.get("subject"))
+            task_id = _non_empty_string(task_payload.get("id"))
+            subject = _non_empty_string(task_payload.get("subject"))
             if task_id is None or subject is None:
                 continue
             task_state = ensure_task(task_list_id, task_id)
@@ -1388,12 +1388,12 @@ def _read_latest_claude_todo_snapshot(
             continue
 
         if tool_name == "TaskUpdate":
-            task_id = _non_empty_string(details.get("taskId"))
-            task_list_id = _non_empty_string(details.get("taskListId"))
+            task_id = _non_empty_string(details_map.get("taskId"))
+            task_list_id = _non_empty_string(details_map.get("taskListId"))
             if task_id is None or task_list_id is None:
                 continue
             task_state = ensure_task(task_list_id, task_id)
-            status_change = details.get("statusChange")
+            status_change = details_map.get("statusChange")
             if isinstance(status_change, dict):
                 normalized_status = _normalize_claude_todo_status(
                     status_change.get("to")

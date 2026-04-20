@@ -5,20 +5,20 @@ from typing import Any
 _SERVER = None
 
 
-def bind_server_runtime(runtime) -> None:
+def bind_server_runtime(runtime: Any) -> None:
     global _SERVER
     _SERVER = runtime
 
 
 
-def _sv():
+def _sv() -> Any:
     if _SERVER is None:
         raise RuntimeError("server runtime not bound")
     return _SERVER
 
 
 class SidebarStateFacade:
-    def __init__(self, manager) -> None:
+    def __init__(self, manager: Any) -> None:
         self.manager = manager
 
     def persist_session_ui_state(self) -> None:
@@ -67,7 +67,7 @@ class SidebarStateFacade:
         name: Any,
     ) -> str:
         sv = _sv()
-        alias = sv._clean_alias(name)
+        alias = str(sv._clean_alias(name) or "")
         if not alias:
             return ""
         session_id_clean = sv._clean_optional_text(session_id)
@@ -96,7 +96,7 @@ class SidebarStateFacade:
 
     def alias_set(self, session_id: str, name: str) -> str:
         sv = _sv()
-        alias = sv._clean_alias(name)
+        alias = str(sv._clean_alias(name) or "")
         ref = self.manager._page_state_ref_for_session_id(session_id)
         runtime_id = self.manager._runtime_session_id_for_identifier(session_id)
         if ref is None:
@@ -197,9 +197,10 @@ class SidebarStateFacade:
 
     def focus_set(self, session_id: str, focused: Any) -> bool:
         sv = _sv()
-        focused_clean = sv._clean_optional_bool(focused)
-        if focused_clean is None:
+        focused_clean_raw = sv._clean_optional_bool(focused)
+        if focused_clean_raw is None:
             raise ValueError("focused must be a boolean")
+        focused_clean = bool(focused_clean_raw)
         ref = self.manager._page_state_ref_for_session_id(session_id)
         if ref is None:
             raise KeyError("unknown session")
@@ -242,7 +243,7 @@ class SidebarStateFacade:
         dependency_session_id: Any,
     ) -> tuple[str, dict[str, Any]]:
         sv = _sv()
-        alias = sv._clean_alias(name)
+        alias = str(sv._clean_alias(name) or "")
         offset = sv._clean_priority_offset(priority_offset)
         snooze_until_clean = sv._clean_snooze_until(snooze_until)
         dependency_clean = sv._clean_dependency_session_id(dependency_session_id)
@@ -332,7 +333,7 @@ class SidebarStateFacade:
             self.manager._hidden_sessions.update(hidden_keys)
         self.persist_session_ui_state()
 
-    def hide_session_identity(self, session) -> None:
+    def hide_session_identity(self, session: Any) -> None:
         self.hide_session_identity_values(
             session.session_id,
             session.thread_id,

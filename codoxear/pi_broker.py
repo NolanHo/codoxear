@@ -747,6 +747,7 @@ class PiBroker:
             cmd = req.get("cmd")
 
             if cmd == "state":
+                resp: dict[str, Any]
                 with self._lock:
                     st = self.state
                     if st is not None:

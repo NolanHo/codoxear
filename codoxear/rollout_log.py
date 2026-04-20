@@ -231,6 +231,7 @@ def _find_latest_token_update(log_path: Path, max_scan_bytes: int = 32 * 1024 * 
         if token is not None:
             return token
         scan *= 2
+    return None
 
 
 def _find_latest_turn_context(log_path: Path, max_scan_bytes: int = 8 * 1024 * 1024) -> dict[str, Any] | None:

@@ -34,7 +34,7 @@ ROOT_REPO_DIR = APP_DIR / "root-repo"
 PENDING_DIR = APP_DIR / "pending"
 PROC_ROOT = Path("/proc")
 
-AGENT_BACKEND = resolve_agent_backend(os.environ.get("CODEX_WEB_AGENT_BACKEND"), env=os.environ, default="codex")
+AGENT_BACKEND = resolve_agent_backend(os.environ.get("CODEX_WEB_AGENT_BACKEND"), env=dict(os.environ), default="codex")
 BACKEND = get_agent_backend(AGENT_BACKEND)
 AGENT_BIN = BACKEND.cli_bin()
 DEFAULT_AGENT_HOME = BACKEND.home()
@@ -314,6 +314,7 @@ class Sessiond:
             req = json.loads(line.decode("utf-8"))
             cmd = req.get("cmd")
             if cmd == "state":
+                resp: dict[str, Any]
                 with self._lock:
                     st = self.state
                     if not st:
@@ -355,24 +356,24 @@ class Sessiond:
 
             if cmd == "ui_response":
                 response_text = _ui_response_text(req)
-                fd: int | None = None
+                ui_fd: int | None = None
                 suffix = _encode_enter()
                 with self._lock:
                     st = self.state
                     if not st:
                         resp = {"error": "no state"}
                     else:
-                        fd = st.pty_master_fd
+                        ui_fd = st.pty_master_fd
                         resp = {"ok": True}
                 _send_socket_json_line(conn, resp)
-                if fd is not None and response_text is not None:
+                if ui_fd is not None and response_text is not None:
                     try:
-                        _inject(fd, text=response_text, suffix=suffix)
+                        _inject(ui_fd, text=response_text, suffix=suffix)
                     except Exception:
                         traceback.print_exc()
-                elif fd is not None and req.get("cancelled") is True:
+                elif ui_fd is not None and req.get("cancelled") is True:
                     try:
-                        _write_all(fd, _seq_bytes("\\x1b"))
+                        _write_all(ui_fd, _seq_bytes("\\x1b"))
                     except Exception:
                         traceback.print_exc()
                 return

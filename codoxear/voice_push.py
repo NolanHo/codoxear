@@ -346,7 +346,7 @@ class OpenAICompatibleClient:
         )
         try:
             with urllib.request.urlopen(req, timeout=self._timeout_seconds) as resp:
-                return resp.read()
+                return bytes(resp.read())
         except urllib.error.HTTPError as e:
             detail = e.read().decode("utf-8", errors="replace")
             raise RuntimeError(f"{route} failed with {e.code}: {detail}") from e

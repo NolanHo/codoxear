@@ -397,6 +397,87 @@ class TestPiBackendRouting(unittest.TestCase):
         assert session is not None
         self.assertFalse(session.busy)
 
+    def test_discover_existing_skips_malformed_queue_len_until_state_recovers(self) -> None:
+        mgr = _make_manager()
+        with tempfile.TemporaryDirectory() as td:
+            sock_dir = Path(td)
+            sock = sock_dir / "pi-session.sock"
+            sock.touch()
+            session_path = sock_dir / "pi-session.jsonl"
+            meta_path = sock_dir / "pi-session.json"
+            meta_path.write_text(
+                json.dumps(
+                    {
+                        "session_id": "pi-thread-001",
+                        "backend": "pi",
+                        "owner": "web",
+                        "broker_pid": 3333,
+                        "codex_pid": 4444,
+                        "cwd": "/tmp/pi-cwd",
+                        "start_ts": 123.0,
+                        "session_path": str(session_path),
+                        "sock_path": str(sock),
+                    }
+                ),
+                encoding="utf-8",
+            )
+            sock_state = {"busy": False, "queue_len": "oops", "token": None}
+
+            with (
+                patch("codoxear.server.SOCK_DIR", sock_dir),
+                patch.object(mgr, "_sock_call", side_effect=lambda *_args, **_kwargs: dict(sock_state)),
+                patch("codoxear.server._pid_alive", return_value=True),
+            ):
+                mgr._discover_existing(force=True, skip_invalid_sidecars=True)
+                self.assertFalse(mgr._sidecar_is_quarantined(sock))
+                self.assertIsNone(mgr.get_session("pi-session"))
+
+                sock_state["queue_len"] = 0
+                mgr._discover_existing(force=True, skip_invalid_sidecars=True)
+
+            self.assertIsNotNone(mgr.get_session("pi-session"))
+
+    def test_discover_existing_skips_malformed_busy_flag_until_state_recovers(self) -> None:
+        mgr = _make_manager()
+        with tempfile.TemporaryDirectory() as td:
+            sock_dir = Path(td)
+            sock = sock_dir / "pi-session.sock"
+            sock.touch()
+            session_path = sock_dir / "pi-session.jsonl"
+            meta_path = sock_dir / "pi-session.json"
+            meta_path.write_text(
+                json.dumps(
+                    {
+                        "session_id": "pi-thread-001",
+                        "backend": "pi",
+                        "owner": "web",
+                        "broker_pid": 3333,
+                        "codex_pid": 4444,
+                        "cwd": "/tmp/pi-cwd",
+                        "start_ts": 123.0,
+                        "session_path": str(session_path),
+                        "sock_path": str(sock),
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            sock_state = {"busy": "false", "queue_len": 0, "token": None}
+
+            with (
+                patch("codoxear.server.SOCK_DIR", sock_dir),
+                patch.object(mgr, "_sock_call", side_effect=lambda *_args, **_kwargs: dict(sock_state)),
+                patch("codoxear.server._pid_alive", return_value=True),
+            ):
+                mgr._discover_existing(force=True, skip_invalid_sidecars=True)
+                self.assertFalse(mgr._sidecar_is_quarantined(sock))
+                self.assertIsNone(mgr.get_session("pi-session"))
+
+                sock_state["busy"] = False
+                mgr._discover_existing(force=True, skip_invalid_sidecars=True)
+
+            self.assertIsNotNone(mgr.get_session("pi-session"))
+
     def test_discover_existing_ignores_socket_without_metadata_sidecar(self) -> None:
         mgr = _make_manager()
         with tempfile.TemporaryDirectory() as td:
@@ -1611,6 +1692,52 @@ class TestPiBackendRouting(unittest.TestCase):
             self.assertEqual(bridge_events[-1]["event"]["request_state"], "failed")
             self.assertIn("Original prompt", bridge_events[-1]["event"]["text"])
 
+    def test_send_ack_does_not_poison_cached_state_with_malformed_busy_flag(self) -> None:
+        mgr = _make_manager()
+        with tempfile.TemporaryDirectory() as td:
+            session_path = Path(td) / "pi-session.jsonl"
+            sock = Path(td) / "pi.sock"
+            sock.touch()
+            mgr._sessions["pi-session"] = Session(
+                session_id="pi-session",
+                thread_id="pi-thread-001",
+                agent_backend="pi",
+                backend="pi",
+                broker_pid=os.getpid(),
+                codex_pid=os.getpid(),
+                owned=True,
+                start_ts=123.0,
+                cwd=td,
+                log_path=None,
+                sock_path=sock,
+                session_path=session_path,
+                busy=False,
+                queue_len=0,
+            )
+            state_calls = 0
+
+            def _sock_call(
+                _sock: Path, req: dict[str, object], timeout_s: float = 0.0
+            ) -> dict[str, object]:
+                nonlocal state_calls
+                if req.get("cmd") == "state":
+                    state_calls += 1
+                    return {"busy": False, "queue_len": 0, "token": None}
+                if req.get("cmd") == "send":
+                    return {"busy": "false", "queue_len": True, "token": None}
+                raise AssertionError(f"unexpected command: {req}")
+
+            mgr._sock_call = _sock_call  # type: ignore[method-assign]
+
+            res = mgr.send("pi-session", "hello queued")
+            self.assertTrue(bool(res.get("accepted")))
+            drained = mgr._maybe_drain_outbound_request("pi-session")
+
+        self.assertTrue(drained)
+        self.assertGreaterEqual(state_calls, 1)
+        self.assertFalse(mgr._sessions["pi-session"].busy)
+        self.assertEqual(mgr._sessions["pi-session"].queue_len, 0)
+
     def test_send_resumes_sqlite_recovered_historical_pi_session(self) -> None:
         mgr = _make_manager()
         mgr.spawn_web_session = Mock(return_value={
@@ -1743,6 +1870,158 @@ class TestPiBackendRouting(unittest.TestCase):
 
         self.assertEqual(state, {"busy": False, "queue_len": 0, "token": None})
         self.assertEqual(mgr._sessions["pi-session"].token, {"tokens_in_context": 123})
+
+    def test_get_state_keeps_cached_busy_state_on_malformed_queue_len(self) -> None:
+        mgr = _make_manager()
+        with tempfile.TemporaryDirectory() as td:
+            sock = Path(td) / "pi.sock"
+            sock.touch()
+            mgr._sessions["pi-session"] = Session(
+                session_id="pi-session",
+                thread_id="pi-thread-001",
+                agent_backend="pi",
+                backend="pi",
+                broker_pid=os.getpid(),
+                codex_pid=os.getpid(),
+                owned=True,
+                start_ts=123.0,
+                cwd="/tmp/project",
+                log_path=None,
+                sock_path=sock,
+                session_path=Path("/tmp/pi-session.jsonl"),
+                busy=True,
+                queue_len=2,
+                token={"tokens_in_context": 123},
+            )
+            mgr._sock_call = Mock(return_value={"busy": False, "queue_len": "oops", "token": None})
+
+            state = SessionManager.get_state(mgr, "pi-session")
+
+        self.assertEqual(state, {"busy": True, "queue_len": 2, "token": {"tokens_in_context": 123}})
+        self.assertTrue(mgr._sessions["pi-session"].busy)
+        self.assertEqual(mgr._sessions["pi-session"].queue_len, 2)
+
+    def test_get_state_keeps_cached_busy_state_on_malformed_busy_flag(self) -> None:
+        mgr = _make_manager()
+        with tempfile.TemporaryDirectory() as td:
+            sock = Path(td) / "pi.sock"
+            sock.touch()
+            mgr._sessions["pi-session"] = Session(
+                session_id="pi-session",
+                thread_id="pi-thread-001",
+                agent_backend="pi",
+                backend="pi",
+                broker_pid=os.getpid(),
+                codex_pid=os.getpid(),
+                owned=True,
+                start_ts=123.0,
+                cwd="/tmp/project",
+                log_path=None,
+                sock_path=sock,
+                session_path=Path("/tmp/pi-session.jsonl"),
+                busy=True,
+                queue_len=2,
+                token={"tokens_in_context": 123},
+            )
+            mgr._sock_call = Mock(return_value={"busy": "false", "queue_len": 0, "token": None})
+
+            state = SessionManager.get_state(mgr, "pi-session")
+
+        self.assertEqual(state, {"busy": True, "queue_len": 2, "token": {"tokens_in_context": 123}})
+        self.assertTrue(mgr._sessions["pi-session"].busy)
+        self.assertEqual(mgr._sessions["pi-session"].queue_len, 2)
+
+    def test_get_state_keeps_cached_state_on_negative_queue_len(self) -> None:
+        mgr = _make_manager()
+        with tempfile.TemporaryDirectory() as td:
+            sock = Path(td) / "pi.sock"
+            sock.touch()
+            mgr._sessions["pi-session"] = Session(
+                session_id="pi-session",
+                thread_id="pi-thread-001",
+                agent_backend="pi",
+                backend="pi",
+                broker_pid=os.getpid(),
+                codex_pid=os.getpid(),
+                owned=True,
+                start_ts=123.0,
+                cwd="/tmp/project",
+                log_path=None,
+                sock_path=sock,
+                session_path=Path("/tmp/pi-session.jsonl"),
+                busy=True,
+                queue_len=2,
+                token={"tokens_in_context": 123},
+            )
+            mgr._sock_call = Mock(return_value={"busy": False, "queue_len": -1, "token": None})
+
+            state = SessionManager.get_state(mgr, "pi-session")
+
+        self.assertEqual(state, {"busy": True, "queue_len": 2, "token": {"tokens_in_context": 123}})
+
+    def test_get_state_keeps_cached_state_when_session_is_removed_during_rpc(self) -> None:
+        mgr = _make_manager()
+        with tempfile.TemporaryDirectory() as td:
+            sock = Path(td) / "pi.sock"
+            sock.touch()
+            mgr._sessions["pi-session"] = Session(
+                session_id="pi-session",
+                thread_id="pi-thread-001",
+                agent_backend="pi",
+                backend="pi",
+                broker_pid=os.getpid(),
+                codex_pid=os.getpid(),
+                owned=True,
+                start_ts=123.0,
+                cwd="/tmp/project",
+                log_path=None,
+                sock_path=sock,
+                session_path=Path("/tmp/pi-session.jsonl"),
+                busy=True,
+                queue_len=2,
+                token={"tokens_in_context": 123},
+            )
+
+            def _sock_call(_sock: Path, req: dict[str, object], timeout_s: float = 0.0) -> dict[str, object]:
+                self.assertEqual(req, {"cmd": "state"})
+                mgr._sessions.pop("pi-session", None)
+                return {"busy": "false", "queue_len": "oops", "token": None}
+
+            mgr._sock_call = _sock_call  # type: ignore[method-assign]
+
+            state = SessionManager.get_state(mgr, "pi-session")
+
+        self.assertEqual(state, {"busy": True, "queue_len": 2, "token": {"tokens_in_context": 123}})
+
+    def test_refresh_session_state_keeps_cached_state_on_malformed_busy_flag(self) -> None:
+        mgr = _make_manager()
+        with tempfile.TemporaryDirectory() as td:
+            sock = Path(td) / "pi.sock"
+            sock.touch()
+            mgr._sessions["pi-session"] = Session(
+                session_id="pi-session",
+                thread_id="pi-thread-001",
+                agent_backend="pi",
+                backend="pi",
+                broker_pid=os.getpid(),
+                codex_pid=os.getpid(),
+                owned=True,
+                start_ts=123.0,
+                cwd="/tmp/project",
+                log_path=None,
+                sock_path=sock,
+                session_path=Path("/tmp/pi-session.jsonl"),
+                busy=True,
+                queue_len=2,
+            )
+            mgr._sock_call = Mock(return_value={"busy": "false", "queue_len": 0, "token": None})
+
+            ok, error = SessionManager._refresh_session_state(mgr, "pi-session", sock)
+
+        self.assertFalse(ok)
+        self.assertIsInstance(error, ValueError)
+        self.assertTrue(mgr._sessions["pi-session"].busy)
+        self.assertEqual(mgr._sessions["pi-session"].queue_len, 2)
 
     def test_ui_state_route_returns_pending_requests_for_pi_session(self) -> None:
         mgr = _make_manager()
@@ -2105,6 +2384,68 @@ class TestPiBackendRouting(unittest.TestCase):
         self.assertEqual(handler.status, 200)
         self.assertEqual(payload["requests_version"], current_version)
         self.assertNotIn("requests", payload)
+
+    def test_session_live_payload_inserts_live_pi_events_by_timestamp(self) -> None:
+        mgr = _make_manager()
+        with tempfile.TemporaryDirectory() as td:
+            sock = Path(td) / "pi.sock"
+            sock.touch()
+            session_path = Path(td) / "pi-session.jsonl"
+            mgr._sessions["pi-session"] = Session(
+                session_id="pi-session",
+                thread_id="pi-thread-001",
+                agent_backend="pi",
+                backend="pi",
+                broker_pid=3333,
+                codex_pid=4444,
+                owned=True,
+                start_ts=123.0,
+                cwd=td,
+                log_path=None,
+                sock_path=sock,
+                session_path=session_path,
+                transport="pi-rpc",
+                supports_live_ui=True,
+                ui_protocol_version=1,
+            )
+
+            def _sock_call(
+                _sock: Path, req: dict[str, object], timeout_s: float = 0.0
+            ) -> dict[str, object]:
+                if req["cmd"] == "state":
+                    return {"busy": True, "queue_len": 0, "token": None}
+                if req["cmd"] == "ui_state":
+                    return {"requests": []}
+                if req["cmd"] == "live_messages":
+                    return {
+                        "offset": 2,
+                        "events": [
+                            {"type": "pi_event", "summary": "Auto-compacting context", "ts": 2.0},
+                            {"type": "pi_event", "summary": "Compaction finished", "ts": 4.0},
+                        ],
+                    }
+                raise AssertionError(f"unexpected broker command: {req['cmd']!r}")
+
+            mgr._sock_call = _sock_call  # type: ignore[method-assign]
+            mgr.get_messages_page = lambda *_args, **_kwargs: {
+                "thread_id": "pi-thread-001",
+                "log_path": str(session_path),
+                "offset": 2,
+                "events": [
+                    {"role": "user", "text": "before", "ts": 1.0},
+                    {"role": "assistant", "text": "after", "ts": 5.0},
+                ],
+                "busy": True,
+                "queue_len": 0,
+                "token": None,
+            }  # type: ignore[method-assign]
+
+            payload = _session_live_payload(mgr, "pi-session", offset=0)
+
+        self.assertEqual(
+            [event.get("summary") or event.get("text") for event in payload["events"]],
+            ["before", "Auto-compacting context", "Compaction finished", "after"],
+        )
 
     def test_session_live_payload_appends_streaming_pi_rpc_assistant_event(
         self,
@@ -2558,6 +2899,53 @@ class TestPiBackendRouting(unittest.TestCase):
                 "ts": 4.0,
             },
         )
+
+    def test_diagnostics_route_rejects_malformed_busy_flag(self) -> None:
+        handler = _HandlerHarness("/api/sessions/pi-session/diagnostics")
+        session = Session(
+            session_id="pi-session",
+            thread_id="pi-thread-001",
+            agent_backend="pi",
+            backend="pi",
+            broker_pid=3333,
+            codex_pid=4444,
+            owned=True,
+            start_ts=123.0,
+            cwd="/tmp",
+            log_path=None,
+            sock_path=Path("/tmp/pi.sock"),
+            session_path=Path("/tmp/pi-session.jsonl"),
+        )
+
+        with (
+            patch("codoxear.server._require_auth", return_value=True),
+            patch("codoxear.server.MANAGER") as manager,
+            patch("codoxear.server._current_git_branch", return_value=None),
+            patch(
+                "codoxear.server._pi_messages.read_latest_pi_todo_snapshot",
+                return_value=None,
+            ),
+        ):
+            manager.refresh_session_meta.return_value = None
+            manager.get_session.return_value = session
+            manager.get_state.return_value = {
+                "busy": "false",
+                "queue_len": 0,
+                "token": None,
+            }
+            manager._queue_len.return_value = 0
+            manager.queue_list.return_value = []
+            manager.sidebar_meta_get.return_value = {
+                "priority_offset": 0.0,
+                "snooze_until": None,
+                "dependency_session_id": None,
+            }
+
+            Handler.do_GET(handler)  # type: ignore[arg-type]
+
+        payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(handler.status, 502)
+        self.assertIn("busy", payload["error"])
 
     def test_workspace_route_returns_diagnostics_and_queue_only(self) -> None:
         handler = _HandlerHarness("/api/sessions/pi-session/workspace")

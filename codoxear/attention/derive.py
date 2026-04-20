@@ -5,7 +5,7 @@ from typing import Any
 from .model import AttentionItem
 
 
-def compact_notification_state(row: dict[str, Any], compact_text) -> dict[str, Any] | None:
+def compact_notification_state(row: dict[str, Any], compact_text: Any) -> dict[str, Any] | None:
     if not isinstance(row, dict):
         return None
     message_id = str(row.get("message_id") or "").strip()
@@ -22,7 +22,7 @@ def compact_notification_state(row: dict[str, Any], compact_text) -> dict[str, A
 
 
 def final_response_attention_feed(
-    rows: list[dict[str, Any]], *, since_ts: float, compact_text
+    rows: list[dict[str, Any]], *, since_ts: float, compact_text: Any
 ) -> list[dict[str, Any]]:
     out: list[AttentionItem] = []
     for row in rows:

@@ -7,20 +7,20 @@ from typing import Any
 _SERVER = None
 
 
-def bind_server_runtime(runtime) -> None:
+def bind_server_runtime(runtime: Any) -> None:
     global _SERVER
     _SERVER = runtime
 
 
 
-def _sv():
+def _sv() -> Any:
     if _SERVER is None:
         raise RuntimeError("server runtime not bound")
     return _SERVER
 
 
 
-def session_details_payload(manager, session_id: str) -> dict[str, Any]:
+def session_details_payload(manager: Any, session_id: str) -> dict[str, Any]:
     sv = _sv()
     row = sv._listed_session_row(manager, session_id)
     if row is not None:
@@ -32,7 +32,7 @@ def session_details_payload(manager, session_id: str) -> dict[str, Any]:
 
 
 
-def session_context_usage_payload(s, token_val: dict[str, Any] | None) -> dict[str, Any] | None:
+def session_context_usage_payload(s: Any, token_val: dict[str, Any] | None) -> dict[str, Any] | None:
     sv = _sv()
     if s.backend != "pi":
         return None
@@ -61,7 +61,7 @@ def session_context_usage_payload(s, token_val: dict[str, Any] | None) -> dict[s
 
 
 
-def session_diagnostics_payload(manager, session_id: str, s, state: dict[str, Any]) -> dict[str, Any]:
+def session_diagnostics_payload(manager: Any, session_id: str, s: Any, state: dict[str, Any]) -> dict[str, Any]:
     sv = _sv()
     state = sv._validated_session_state(state)
     st_token = state.get("token")
@@ -129,7 +129,7 @@ def session_diagnostics_payload(manager, session_id: str, s, state: dict[str, An
 
 
 
-def session_workspace_payload(manager, session_id: str) -> dict[str, Any]:
+def session_workspace_payload(manager: Any, session_id: str) -> dict[str, Any]:
     sv = _sv()
     manager.refresh_session_meta(session_id, strict=False)
     s = manager.get_session(session_id)

@@ -5,18 +5,23 @@ import json
 import sqlite3
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, ParamSpec, TypeVar, cast
 
 SessionRef = tuple[str, str]
 
+P = ParamSpec("P")
+R = TypeVar("R")
 
-def _db_locked(fn):
+
+def _db_locked(fn: Callable[P, R]) -> Callable[P, R]:
     @functools.wraps(fn)
-    def wrapped(self, *args, **kwargs):
+    def wrapped(*args: P.args, **kwargs: P.kwargs) -> R:
+        self = cast("PageStateDB", args[0])
         with self._lock:
-            return fn(self, *args, **kwargs)
+            return fn(*args, **kwargs)
 
     return wrapped
 
