@@ -186,9 +186,6 @@ export function useAppShellEvents({
           return;
         }
         void pollLiveSession(session.session_id, runtimeId);
-        if (eventType === "session.transport.invalidate") {
-          void refreshSessions();
-        }
       }
     };
 

@@ -334,6 +334,35 @@ describe("AppShell", () => {
     expect(liveSessionStore.poll).toHaveBeenCalledWith("sess-2");
   });
 
+  it("does not force a sessions refresh for transport-only invalidations", async () => {
+    const { liveSessionStore, sessionsStore } = renderAppShell({
+      activeSessionId: "sess-1",
+      items: [{ session_id: "sess-1", alias: "Alpha", agent_backend: "pi", busy: true }],
+    });
+
+    await flush();
+    vi.mocked(sessionsStore.refresh).mockClear();
+    vi.mocked(liveSessionStore.poll).mockClear();
+
+    const streamOptions = eventStreamMocks.openAppEventStream.mock.calls[0]?.[0];
+    expect(streamOptions).toBeTruthy();
+    if (!streamOptions?.onEvent) {
+      throw new Error("SSE handler missing");
+    }
+    const onStreamEvent = streamOptions.onEvent;
+    act(() => {
+      onStreamEvent({
+        type: "session.transport.invalidate",
+        session_id: "sess-1",
+        runtime_id: null,
+      });
+    });
+    await flush();
+
+    expect(liveSessionStore.poll).toHaveBeenCalledWith("sess-1");
+    expect(sessionsStore.refresh).not.toHaveBeenCalled();
+  });
+
   it("renders a two-part shell with sessions rail and conversation column", () => {
     renderAppShell({ activeSessionId: null, diagnostics: null });
 
