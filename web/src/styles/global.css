@@ -1368,6 +1368,12 @@ select {
   color: var(--todo-card-pill-fg);
 }
 
+.machineTraceToken.custom_message {
+  background: color-mix(in srgb, var(--message-card-base) 72%, var(--message-card-tool-border));
+  border-color: color-mix(in srgb, var(--message-card-tool-border) 60%, var(--chrome-border));
+  color: color-mix(in srgb, var(--text) 76%, var(--markdown-link));
+}
+
 .machineTraceToken.isSelected {
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary) 32%, transparent);
 }
@@ -1429,6 +1435,11 @@ select {
 .machineTraceDetail.todo_snapshot {
   background: var(--todo-card-shell);
   border-color: var(--todo-card-border);
+}
+
+.machineTraceDetail.custom_message {
+  background: color-mix(in srgb, var(--message-card-base) 90%, var(--message-card-tool-border));
+  border-color: color-mix(in srgb, var(--message-card-tool-border) 60%, var(--chrome-border));
 }
 
 @keyframes machine-trace-pulse {

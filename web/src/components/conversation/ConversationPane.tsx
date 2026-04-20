@@ -36,6 +36,7 @@ const MAIN_TIMELINE_KINDS = new Set([
 
 const MACHINE_TRACE_KINDS = new Set(["reasoning", "tool", "tool_result", "todo_snapshot"]);
 const CHAT_GROUPABLE_KINDS = new Set(["user", "assistant", "ask_user"]);
+type CompactTraceKind = "reasoning" | "tool" | "tool_result" | "todo_snapshot" | "custom_message";
 const COLLAPSIBLE_LINE_THRESHOLD = 8;
 const COLLAPSIBLE_CHAR_THRESHOLD = 420;
 
@@ -526,8 +527,25 @@ function canGroupEvent(kind: string): boolean {
   return CHAT_GROUPABLE_KINDS.has(kind);
 }
 
-function isMachineTraceKind(kind: string): kind is "reasoning" | "tool" | "tool_result" | "todo_snapshot" {
-  return MACHINE_TRACE_KINDS.has(kind);
+function isProcessUpdateCustomMessage(event: MessageEvent): boolean {
+  return eventKind(event) === "custom_message"
+    && typeof event.custom_type === "string"
+    && event.custom_type.startsWith("ad-process:");
+}
+
+function compactTraceKind(event: MessageEvent): CompactTraceKind | null {
+  const kind = eventKind(event);
+  if (MACHINE_TRACE_KINDS.has(kind)) {
+    return kind as CompactTraceKind;
+  }
+  if (isProcessUpdateCustomMessage(event)) {
+    return "custom_message";
+  }
+  return null;
+}
+
+function isMachineTraceKind(kind: string): kind is CompactTraceKind {
+  return MACHINE_TRACE_KINDS.has(kind) || kind === "custom_message";
 }
 
 function eventLabel(kind: string): string {
@@ -873,6 +891,18 @@ function ToolCallIcon() {
   );
 }
 
+function ProcessUpdateIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="4" y="5" width="12" height="14" rx="2" />
+      <path d="M8 9h4" />
+      <path d="M8 13h4" />
+      <path d="M19 9v6" />
+      <path d="m16.5 11.5 2.5-2.5 2.5 2.5" />
+    </svg>
+  );
+}
+
 function ToolResultIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -909,7 +939,7 @@ function ReasoningIcon() {
   );
 }
 
-function machineTraceTitle(event: MessageEvent, kind: "reasoning" | "tool" | "tool_result" | "todo_snapshot") {
+function machineTraceTitle(event: MessageEvent, kind: CompactTraceKind) {
   if (kind === "reasoning") {
     return firstNonEmptyText(event.summary, "Reasoning");
   }
@@ -919,10 +949,13 @@ function machineTraceTitle(event: MessageEvent, kind: "reasoning" | "tool" | "to
   if (kind === "todo_snapshot") {
     return firstNonEmptyText(event.progress_text, event.operation, "Todo update");
   }
+  if (kind === "custom_message") {
+    return firstNonEmptyText(event.text, event.summary, event.custom_type, "Process update");
+  }
   return firstNonEmptyText(event.name, event.summary, "Tool result");
 }
 
-function machineTraceSummary(event: MessageEvent, kind: "reasoning" | "tool" | "tool_result" | "todo_snapshot") {
+function machineTraceSummary(event: MessageEvent, kind: CompactTraceKind) {
   if (kind === "reasoning") {
     return compactSingleLine(firstNonEmptyText(event.summary, event.text), 90);
   }
@@ -936,6 +969,9 @@ function machineTraceSummary(event: MessageEvent, kind: "reasoning" | "tool" | "
         .filter((value): value is string => Boolean(value))
       : [];
     return compactSingleLine(firstNonEmptyText(event.progress_text, event.operation, items.join(", ")), 90);
+  }
+  if (kind === "custom_message") {
+    return compactSingleLine(firstNonEmptyText(event.summary, event.text, event.custom_type), 90);
   }
   const detailsText = !event.text && event.details ? JSON.stringify(event.details, null, 2) : "";
   return compactSingleLine(firstNonEmptyText(event.summary, event.text, detailsSummary(event.details), detailsText), 90);
@@ -966,7 +1002,7 @@ function machineTraceRunningIndex(events: MessageEvent[], isBusy: boolean) {
   return -1;
 }
 
-function renderMachineTraceDetail(event: MessageEvent, kind: "reasoning" | "tool" | "tool_result" | "todo_snapshot", options: MarkdownRenderOptions) {
+function renderMachineTraceDetail(event: MessageEvent, kind: CompactTraceKind, options: MarkdownRenderOptions) {
   if (kind === "reasoning") {
     const summary = firstNonEmptyText(event.summary);
     const body = firstNonEmptyText(event.text, summary);
@@ -1004,6 +1040,18 @@ function renderMachineTraceDetail(event: MessageEvent, kind: "reasoning" | "tool
           </ul>
         ) : <div className="messageCardFooterText text-sm text-muted-foreground">No todo items in this snapshot.</div>}
         {event.text ? renderRichText(event.text, "messageBody", options) : null}
+      </div>
+    );
+  }
+
+  if (kind === "custom_message") {
+    const body = firstNonEmptyText(event.description, event.summary, event.text);
+    const detailsText = event.details ? JSON.stringify(event.details, null, 2) : "";
+    return (
+      <div className="machineTraceDetailBody space-y-3">
+        {renderCardHeader("custom_message", machineTraceTitle(event, kind), typeof event.custom_type === "string" ? event.custom_type : undefined, event.ts)}
+        {body ? renderRichText(body, "messageBody", options) : null}
+        {detailsText ? <pre className="messageCardPre overflow-x-auto rounded-xl bg-background/80 p-3 text-sm">{detailsText}</pre> : null}
       </div>
     );
   }
@@ -1061,7 +1109,9 @@ function CompactMachineTrace({ events, options, isBusy }: { events: MessageEvent
                     ? <ToolResultIcon />
                     : kind === "todo_snapshot"
                       ? <TodoChangeIcon />
-                      : <ReasoningIcon />}
+                      : kind === "custom_message"
+                        ? <ProcessUpdateIcon />
+                        : <ReasoningIcon />}
               </span>
               {isRunning ? <span className="machineTraceTokenPulse" aria-hidden="true" /> : null}
             </button>
@@ -1412,7 +1462,8 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
     allowLegacyFallback: boolean;
   }>>((out, message, index) => {
     const kind = eventKind(message);
-    if (isMachineTraceKind(kind)) {
+    const traceKind = compactTraceKind(message);
+    if (traceKind) {
       const last = out[out.length - 1];
       const ts = typeof message.ts === "number" ? message.ts : null;
       if (last && last.kind === "machine_trace") {

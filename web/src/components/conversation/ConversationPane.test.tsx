@@ -241,6 +241,52 @@ describe("ConversationPane", () => {
     expect(root.textContent).toContain("Task note added");
   });
 
+  it("renders ad-process custom messages as compact process icons", () => {
+    const sessionsStore = createStaticStore(
+      { items: [], activeSessionId: "sess-process-custom", loading: false, newSessionDefaults: null },
+      { refresh: () => Promise.resolve(), select: () => undefined },
+    );
+    const messagesStore = createStaticStore(
+      {
+        bySessionId: {
+          "sess-process-custom": [
+            { role: "assistant", text: "before", ts: 100 },
+            {
+              type: "custom_message",
+              custom_type: "ad-process:update",
+              text: "Process 'issue512-manual-rayclient-server' was terminated",
+              ts: 110,
+            },
+            { role: "assistant", text: "after", ts: 120 },
+          ],
+        },
+        offsetsBySessionId: { "sess-process-custom": 3 },
+        loading: false,
+      },
+      { loadInitial: () => Promise.resolve(), poll: () => Promise.resolve() },
+    );
+
+    root = document.createElement("div");
+    document.body.appendChild(root);
+    render(
+      <AppProviders sessionsStore={sessionsStore as any} messagesStore={messagesStore as any}>
+        <ConversationPane />
+      </AppProviders>,
+      root,
+    );
+
+    const token = root.querySelector(".machineTraceToken.custom_message") as HTMLButtonElement | null;
+    expect(token).not.toBeNull();
+    expect(root.querySelector("[data-testid='message-surface'][data-kind='custom_message']")).toBeNull();
+
+    act(() => {
+      token?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+
+    expect(root.textContent).toContain("Process 'issue512-manual-rayclient-server' was terminated");
+    expect(root.textContent).toContain("ad-process:update");
+  });
+
   it("groups consecutive assistant messages and avoids showing role labels as body text", () => {
     const sessionsStore = createStaticStore(
       { items: [], activeSessionId: "sess-3", loading: false, newSessionDefaults: null },
