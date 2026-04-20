@@ -2669,6 +2669,132 @@ class TestPiBackendRouting(unittest.TestCase):
             {"used_tokens": 283891, "total_tokens": 272000, "percent_used": 104},
         )
 
+    def test_session_live_payload_reports_turn_timing_from_session_file(self) -> None:
+        mgr = _make_manager()
+        with tempfile.TemporaryDirectory() as td:
+            sock = Path(td) / "pi.sock"
+            sock.touch()
+            session_path = Path(td) / "pi-session.jsonl"
+            _write_jsonl(
+                session_path,
+                [
+                    {"type": "session", "id": "pi-thread-001", "cwd": td},
+                    {
+                        "type": "message",
+                        "timestamp": "2026-04-19T18:20:00.000Z",
+                        "message": {
+                            "role": "user",
+                            "content": [{"type": "text", "text": "Run this"}],
+                        },
+                    },
+                    {
+                        "type": "message",
+                        "timestamp": "2026-04-19T18:20:09.000Z",
+                        "message": {
+                            "role": "assistant",
+                            "content": [{"type": "text", "text": "Finished"}],
+                        },
+                    },
+                ],
+            )
+            mgr._sessions["pi-session"] = Session(
+                session_id="pi-session",
+                thread_id="pi-thread-001",
+                agent_backend="pi",
+                backend="pi",
+                broker_pid=3333,
+                codex_pid=4444,
+                owned=True,
+                start_ts=123.0,
+                cwd=td,
+                log_path=None,
+                sock_path=sock,
+                session_path=session_path,
+                transport="pi-rpc",
+                supports_live_ui=True,
+                ui_protocol_version=1,
+            )
+
+            def _sock_call(
+                _sock: Path, req: dict[str, object], timeout_s: float = 0.0
+            ) -> dict[str, object]:
+                if req["cmd"] == "state":
+                    return {"busy": False, "queue_len": 0, "token": None}
+                if req["cmd"] == "ui_state":
+                    return {"requests": []}
+                if req["cmd"] == "live_messages":
+                    return {"offset": 0, "events": []}
+                raise AssertionError(f"unexpected broker command: {req['cmd']!r}")
+
+            mgr._sock_call = _sock_call  # type: ignore[method-assign]
+            mgr.get_messages_page = lambda *_args, **_kwargs: {
+                "thread_id": "pi-thread-001",
+                "log_path": str(session_path),
+                "offset": 1,
+                "events": [{"role": "assistant", "text": "Finished", "ts": 1745086809.0}],
+                "busy": False,
+                "queue_len": 0,
+                "token": None,
+            }  # type: ignore[method-assign]
+
+            payload = _session_live_payload(mgr, "pi-session", offset=0)
+
+        self.assertEqual(
+            payload["turn_timing"],
+            {"started_ts": 1776622800.0, "last_event_ts": 1776622809.0},
+        )
+
+    def test_session_workspace_payload_reports_turn_timing_from_session_file(self) -> None:
+        mgr = _make_manager()
+        with tempfile.TemporaryDirectory() as td:
+            sock = Path(td) / "pi.sock"
+            sock.touch()
+            session_path = Path(td) / "pi-session.jsonl"
+            _write_jsonl(
+                session_path,
+                [
+                    {"type": "session", "id": "pi-thread-001", "cwd": td},
+                    {
+                        "type": "message",
+                        "timestamp": "2026-04-19T18:20:00.000Z",
+                        "message": {
+                            "role": "user",
+                            "content": [{"type": "text", "text": "Run this"}],
+                        },
+                    },
+                    {
+                        "type": "message",
+                        "timestamp": "2026-04-19T18:20:09.000Z",
+                        "message": {
+                            "role": "assistant",
+                            "content": [{"type": "text", "text": "Finished"}],
+                        },
+                    },
+                ],
+            )
+            mgr._sessions["pi-session"] = Session(
+                session_id="pi-session",
+                thread_id="pi-thread-001",
+                agent_backend="pi",
+                backend="pi",
+                broker_pid=3333,
+                codex_pid=4444,
+                owned=True,
+                start_ts=123.0,
+                cwd=td,
+                log_path=None,
+                sock_path=sock,
+                session_path=session_path,
+            )
+            mgr._sock_call = Mock(return_value={"busy": False, "queue_len": 0, "token": None})
+
+            payload = _session_workspace_payload(mgr, "pi-session")
+
+        self.assertEqual(
+            (payload["diagnostics"] or {}).get("turn_timing"),
+            {"started_ts": 1776622800.0, "last_event_ts": 1776622809.0},
+        )
+
     def test_session_live_payload_omits_streaming_event_once_durable_assistant_exists(
         self,
     ) -> None:

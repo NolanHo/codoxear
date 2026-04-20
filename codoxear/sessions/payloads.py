@@ -3,6 +3,7 @@ from __future__ import annotations
 import time
 from pathlib import Path
 from typing import Any
+from typing import cast
 
 _SERVER = None
 
@@ -61,6 +62,43 @@ def session_context_usage_payload(s: Any, token_val: dict[str, Any] | None) -> d
 
 
 
+def _turn_timing_from_events(
+    events: list[dict[str, Any]],
+) -> tuple[float | None, float | None]:
+    sv = _sv()
+    return cast(
+        tuple[float | None, float | None],
+        sv._pi_messages.latest_turn_bounds_from_events(events),
+    )
+
+
+
+def session_turn_timing_payload(
+    s: Any,
+    events: list[dict[str, Any]],
+    *,
+    busy: bool,
+) -> dict[str, Any] | None:
+    sv = _sv()
+    start_ts, last_event_ts = _turn_timing_from_events(events)
+    if start_ts is None and s.backend == "pi" and s.session_path is not None and s.session_path.exists():
+        scan_bytes = int(getattr(s, "chat_index_scan_bytes", 0) or 0)
+        start_ts, last_event_ts = sv._pi_messages.read_pi_latest_turn_bounds(
+            s.session_path,
+            initial_scan_bytes=max(256 * 1024, scan_bytes),
+            max_scan_bytes=64 * 1024 * 1024,
+        )
+    if start_ts is None:
+        return None
+    if not bool(busy) and last_event_ts is None:
+        return None
+    return {
+        "started_ts": float(start_ts),
+        "last_event_ts": float(last_event_ts) if isinstance(last_event_ts, (int, float)) else None,
+    }
+
+
+
 def session_diagnostics_payload(manager: Any, session_id: str, s: Any, state: dict[str, Any]) -> dict[str, Any]:
     sv = _sv()
     state = sv._validated_session_state(state)
@@ -85,6 +123,11 @@ def session_diagnostics_payload(manager: Any, session_id: str, s: Any, state: di
     final_priority = 0.0 if (snoozed or blocked) else base_priority
     busy, broker_busy = sv._display_session_busy(manager, session_id, s, state)
     durable_session_id = sv._durable_session_id_for_live_session(s)
+    turn_timing = session_turn_timing_payload(
+        s,
+        list(getattr(s, "chat_index_events", []) or []),
+        busy=bool(busy),
+    )
     return {
         "session_id": durable_session_id,
         "runtime_id": s.session_id,
@@ -105,6 +148,7 @@ def session_diagnostics_payload(manager: Any, session_id: str, s: Any, state: di
         "queue_len": manager._queue_len(session_id),
         "token": token_val,
         "context_usage": session_context_usage_payload(s, token_val),
+        "turn_timing": turn_timing,
         "model_provider": model_provider,
         "preferred_auth_method": preferred_auth_method,
         "provider_choice": sv._provider_choice_for_backend(

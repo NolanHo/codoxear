@@ -3924,6 +3924,16 @@ def _session_context_usage_payload(
     return _session_payloads.session_context_usage_payload(s, token_val)
 
 
+
+def _session_turn_timing_payload(
+    s: Session,
+    events: list[dict[str, Any]],
+    *,
+    busy: bool,
+) -> dict[str, Any] | None:
+    return _session_payloads.session_turn_timing_payload(s, events, busy=busy)
+
+
 def _session_diagnostics_payload(
     manager: "SessionManager", session_id: str, s: Session, state: dict[str, Any]
 ) -> dict[str, Any]:

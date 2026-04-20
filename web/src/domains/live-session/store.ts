@@ -1,6 +1,6 @@
 import { api } from "../../lib/api";
 import { HttpError } from "../../lib/http";
-import type { ContextUsagePayload, SessionUiRequest } from "../../lib/types";
+import type { ContextUsagePayload, SessionUiRequest, TurnTimingPayload } from "../../lib/types";
 import type { MessagesStore } from "../messages/store";
 
 export interface LiveSessionState {
@@ -14,6 +14,7 @@ export interface LiveSessionState {
   errorBySessionId: Record<string, string>;
   tokenBySessionId: Record<string, Record<string, unknown> | null>;
   contextUsageBySessionId: Record<string, ContextUsagePayload | null>;
+  turnTimingBySessionId: Record<string, TurnTimingPayload | null>;
 }
 
 export interface LiveSessionStore {
@@ -45,6 +46,7 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
     errorBySessionId: {},
     tokenBySessionId: {},
     contextUsageBySessionId: {},
+    turnTimingBySessionId: {},
   };
   const listeners = new Set<() => void>();
   const inFlightBySessionId: Record<string, Promise<void> | undefined> = {};
@@ -132,6 +134,10 @@ export function createLiveSessionStore(messagesStore: MessagesStore): LiveSessio
           contextUsageBySessionId: {
             ...state.contextUsageBySessionId,
             [sessionId]: payload.context_usage && typeof payload.context_usage === "object" ? payload.context_usage : null,
+          },
+          turnTimingBySessionId: {
+            ...state.turnTimingBySessionId,
+            [sessionId]: payload.turn_timing && typeof payload.turn_timing === "object" ? payload.turn_timing : null,
           },
         };
         emit();

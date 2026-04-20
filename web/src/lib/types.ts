@@ -290,6 +290,11 @@ export interface ContextUsagePayload {
   percent_used?: number;
 }
 
+export interface TurnTimingPayload {
+  started_ts?: number;
+  last_event_ts?: number | null;
+}
+
 export interface LiveSessionResponse {
   ok?: boolean;
   session_id?: string;
@@ -302,6 +307,7 @@ export interface LiveSessionResponse {
   busy?: boolean;
   token?: Record<string, unknown> | null;
   context_usage?: ContextUsagePayload | null;
+  turn_timing?: TurnTimingPayload | null;
   transport_state?: string;
   transport_error?: string | null;
   requests_version?: string;

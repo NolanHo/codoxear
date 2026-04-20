@@ -1250,6 +1250,57 @@ def _read_all_entries(session_path: Path) -> tuple[list[dict[str, Any]], int]:
     return entries, offset
 
 
+def latest_turn_bounds_from_events(
+    events: list[dict[str, Any]],
+) -> tuple[float | None, float | None]:
+    latest_user_ts: float | None = None
+    latest_followup_ts: float | None = None
+    for event in events:
+        if not isinstance(event, dict) or event.get("display") is False:
+            continue
+        ts = event.get("ts")
+        if not isinstance(ts, (int, float)):
+            continue
+        event_ts = float(ts)
+        if event.get("role") == "user":
+            latest_user_ts = event_ts
+            latest_followup_ts = None
+            continue
+        if latest_user_ts is None or event_ts < latest_user_ts:
+            continue
+        latest_followup_ts = max(latest_followup_ts or event_ts, event_ts)
+    return latest_user_ts, latest_followup_ts
+
+
+def read_pi_latest_turn_bounds(
+    session_path: Path,
+    *,
+    initial_scan_bytes: int,
+    max_scan_bytes: int,
+) -> tuple[float | None, float | None]:
+    if not session_path.exists():
+        return None, None
+    size = int(session_path.stat().st_size)
+    scan_bytes = max(_PI_CHAT_INIT_SEED_SCAN_BYTES, int(initial_scan_bytes))
+    scan_bytes = min(scan_bytes, max(_PI_CHAT_INIT_SEED_SCAN_BYTES, int(max_scan_bytes)))
+    latest_bounds: tuple[float | None, float | None] = (None, None)
+    while True:
+        entries = _read_jsonl_tail(
+            session_path,
+            min(scan_bytes, size if size > 0 else scan_bytes),
+        )
+        dict_entries = [obj for obj in entries if isinstance(obj, dict)]
+        events, _meta, _flags, _diag = normalize_pi_entries(dict_entries)
+        latest_bounds = latest_turn_bounds_from_events(events)
+        if latest_bounds[0] is not None or scan_bytes >= size or scan_bytes >= max_scan_bytes:
+            return latest_bounds
+        scan_bytes = min(
+            max_scan_bytes,
+            max(scan_bytes * 2, scan_bytes + _PI_CHAT_INIT_SEED_SCAN_BYTES),
+        )
+
+
+
 def _read_latest_claude_todo_snapshot(
     session_path: Path, *, max_scan_bytes: int
 ) -> dict[str, Any] | None:

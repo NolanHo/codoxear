@@ -58,6 +58,7 @@ def session_live_payload(
             offset=bridge_offset,
         )
         base_events = page.get("events") if isinstance(page.get("events"), list) else []
+        merged_events = [*base_events, *bridge_events]
         return {
             "ok": True,
             "session_id": durable_session_id,
@@ -68,11 +69,12 @@ def session_live_payload(
             "has_older": bool(page.get("has_older")),
             "next_before": int(page.get("next_before", 0) or 0),
             "busy": False,
-            "events": [*base_events, *bridge_events],
+            "events": merged_events,
             "requests_version": "",
             "requests": [],
             "token": None,
             "context_usage": None,
+            "turn_timing": None,
         }
     page = manager.get_messages_page(
         session_id,
@@ -126,6 +128,7 @@ def session_live_payload(
         "requests_version": current_requests_version,
         "token": token_val,
         "context_usage": sv._session_context_usage_payload(s, token_val),
+        "turn_timing": sv._session_turn_timing_payload(s, merged_events, busy=bool(busy)),
         "transport_state": s.bridge_transport_state,
         "transport_error": s.bridge_transport_error,
     }

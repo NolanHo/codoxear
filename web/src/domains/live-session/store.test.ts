@@ -22,6 +22,7 @@ describe("createLiveSessionStore", () => {
       offset: 3,
       has_older: true,
       next_before: 40,
+      turn_timing: { started_ts: 100, last_event_ts: 104 },
     } as never);
     const messagesStore = createMessagesStore();
     const liveStore = createLiveSessionStore(messagesStore);
@@ -36,6 +37,7 @@ describe("createLiveSessionStore", () => {
     expect(liveStore.getState().liveOffsetsBySessionId.s1).toBe(0);
     expect(liveStore.getState().requestsBySessionId.s1).toEqual([{ id: "r1", method: "select" }]);
     expect(liveStore.getState().busyBySessionId.s1).toBe(true);
+    expect(liveStore.getState().turnTimingBySessionId.s1).toEqual({ started_ts: 100, last_event_ts: 104 });
   });
 
   it("polls live data with the saved offset and appends messages", async () => {

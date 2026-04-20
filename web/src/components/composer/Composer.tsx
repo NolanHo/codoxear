@@ -18,7 +18,7 @@ import {
 } from "../../app/providers";
 import { api } from "../../lib/api";
 import { getSessionRuntimeId } from "../../lib/session-identity";
-import type { ContextUsagePayload, MessageEvent, SessionCommand } from "../../lib/types";
+import type { ContextUsagePayload, MessageEvent, SessionCommand, TurnTimingPayload } from "../../lib/types";
 import { getDisplayableTodoSnapshot, TodoComposerPanel } from "./TodoComposerPanel";
 
 function enterToSendEnabled() {
@@ -123,6 +123,14 @@ function getDiagnosticsContextUsage(diagnostics: Record<string, unknown> | null 
   return usage && typeof usage === "object" ? usage as ContextUsagePayload : null;
 }
 
+function getDiagnosticsTurnTiming(diagnostics: Record<string, unknown> | null | undefined): TurnTimingPayload | null {
+  if (!diagnostics || typeof diagnostics !== "object") {
+    return null;
+  }
+  const timing = (diagnostics as { turn_timing?: unknown }).turn_timing;
+  return timing && typeof timing === "object" ? timing as TurnTimingPayload : null;
+}
+
 function formatElapsedSeconds(totalSeconds: number) {
   const seconds = Math.max(0, Math.round(totalSeconds));
   const hours = Math.floor(seconds / 3600);
@@ -135,6 +143,25 @@ function formatElapsedSeconds(totalSeconds: number) {
     return `${minutes}m ${String(secs).padStart(2, "0")}s`;
   }
   return `${secs}s`;
+}
+
+function getTurnElapsedLabelFromTiming(timing: TurnTimingPayload | null | undefined, busy: boolean, nowMs: number) {
+  const startedTsMs = timing && typeof timing.started_ts === "number" && Number.isFinite(timing.started_ts)
+    ? timing.started_ts * 1000
+    : null;
+  const lastEventTsMs = timing && typeof timing.last_event_ts === "number" && Number.isFinite(timing.last_event_ts)
+    ? timing.last_event_ts * 1000
+    : null;
+
+  if (startedTsMs === null) {
+    return null;
+  }
+  if (!busy && lastEventTsMs === null) {
+    return null;
+  }
+  const endTsMs = busy ? Math.max(nowMs, lastEventTsMs ?? startedTsMs) : (lastEventTsMs ?? startedTsMs);
+  const elapsedSeconds = Math.max(0, (endTsMs - startedTsMs) / 1000);
+  return `Turn ${formatElapsedSeconds(elapsedSeconds)}`;
 }
 
 function getTurnElapsedLabel(events: MessageEvent[], busy: boolean, nowMs: number) {
@@ -160,15 +187,16 @@ function getTurnElapsedLabel(events: MessageEvent[], busy: boolean, nowMs: numbe
     latestFollowupTsMs = Math.max(latestFollowupTsMs ?? ts, ts);
   }
 
-  if (latestUserTsMs === null) {
-    return null;
-  }
-  if (!busy && latestFollowupTsMs === null) {
-    return null;
-  }
-  const endTsMs = busy ? Math.max(nowMs, latestFollowupTsMs ?? latestUserTsMs) : (latestFollowupTsMs ?? latestUserTsMs);
-  const elapsedSeconds = Math.max(0, (endTsMs - latestUserTsMs) / 1000);
-  return `Turn ${formatElapsedSeconds(elapsedSeconds)}`;
+  return getTurnElapsedLabelFromTiming(
+    latestUserTsMs === null
+      ? null
+      : {
+        started_ts: latestUserTsMs / 1000,
+        last_event_ts: latestFollowupTsMs === null ? null : latestFollowupTsMs / 1000,
+      },
+    busy,
+    nowMs,
+  );
 }
 
 function safeStem(name: string) {
@@ -283,9 +311,10 @@ export function Composer({ compactMobile = false }: ComposerProps = {}) {
   const { bySessionId = {} } = useMessagesStore() as {
     bySessionId?: Record<string, MessageEvent[]>;
   };
-  const { busyBySessionId = {}, contextUsageBySessionId = {} } = useLiveSessionStore() as {
+  const { busyBySessionId = {}, contextUsageBySessionId = {}, turnTimingBySessionId = {} } = useLiveSessionStore() as {
     busyBySessionId?: Record<string, boolean>;
     contextUsageBySessionId?: Record<string, ContextUsagePayload | null>;
+    turnTimingBySessionId?: Record<string, TurnTimingPayload | null>;
   };
   const composerState = useComposerStore();
   const sending = composerState.sending;
@@ -353,8 +382,11 @@ export function Composer({ compactMobile = false }: ComposerProps = {}) {
     if (!activeSessionId || !activeSessionIsPi) {
       return null;
     }
-    return getTurnElapsedLabel(bySessionId[activeSessionId] ?? [], activeSessionBusy, turnNowMs);
-  }, [activeSessionBusy, activeSessionId, activeSessionIsPi, bySessionId, turnNowMs]);
+    const liveTurnTiming = turnTimingBySessionId[activeSessionId] ?? null;
+    const diagnosticsTurnTiming = sessionUiSessionId === activeSessionId ? getDiagnosticsTurnTiming(diagnostics) : null;
+    return getTurnElapsedLabelFromTiming(liveTurnTiming ?? diagnosticsTurnTiming, activeSessionBusy, turnNowMs)
+      ?? getTurnElapsedLabel(bySessionId[activeSessionId] ?? [], activeSessionBusy, turnNowMs);
+  }, [activeSessionBusy, activeSessionId, activeSessionIsPi, bySessionId, diagnostics, sessionUiSessionId, turnNowMs, turnTimingBySessionId]);
 
   const visibleTodoExpanded = activeSessionId ? Boolean(todoExpandedBySessionId[activeSessionId]) : false;
   const visibleCommands = useMemo(() => {

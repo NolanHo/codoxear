@@ -36,6 +36,7 @@ interface RenderComposerOptions {
   items?: Array<{ session_id: string; agent_backend: string; busy: boolean; historical?: boolean; pending_startup?: boolean }>;
   liveBusyBySessionId?: Record<string, boolean>;
   liveContextUsageBySessionId?: Record<string, { used_tokens?: number; total_tokens?: number; percent_used?: number } | null>;
+  liveTurnTimingBySessionId?: Record<string, { started_ts?: number; last_event_ts?: number | null } | null>;
   messageEventsBySessionId?: Record<string, Array<Record<string, unknown>>>;
   sessionUiSessionId?: string | null;
   diagnostics?: Record<string, unknown> | null;
@@ -107,6 +108,7 @@ function renderComposer(options: RenderComposerOptions = {}) {
     items = [{ session_id: "sess-1", agent_backend: "pi", busy: false }],
     liveBusyBySessionId = {},
     liveContextUsageBySessionId = {},
+    liveTurnTimingBySessionId = {},
     messageEventsBySessionId = {},
     sessionUiSessionId = activeSessionId,
     diagnostics = null,
@@ -125,6 +127,7 @@ function renderComposer(options: RenderComposerOptions = {}) {
       busyBySessionId: liveBusyBySessionId,
       loadingBySessionId: {},
       contextUsageBySessionId: liveContextUsageBySessionId,
+      turnTimingBySessionId: liveTurnTimingBySessionId,
       tokenBySessionId: {},
       errorBySessionId: {},
     },
@@ -298,6 +301,22 @@ describe("Composer", () => {
         "sess-1": [
           { role: "user", ts: 100, text: "Run this" },
           { type: "tool", ts: 104, text: "bash" },
+          { role: "assistant", ts: 109, text: "Finished" },
+        ],
+      },
+    });
+
+    expect(getRoot().textContent).toContain("Turn 9s");
+  });
+
+  it("keeps the latest turn duration after refresh from backend timing", async () => {
+    renderComposer({
+      items: [{ session_id: "sess-1", agent_backend: "pi", busy: false }],
+      liveTurnTimingBySessionId: {
+        "sess-1": { started_ts: 100, last_event_ts: 109 },
+      },
+      messageEventsBySessionId: {
+        "sess-1": [
           { role: "assistant", ts: 109, text: "Finished" },
         ],
       },
