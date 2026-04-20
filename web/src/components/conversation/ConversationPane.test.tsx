@@ -144,6 +144,7 @@ describe("ConversationPane", () => {
     const todoToken = root.querySelector(".machineTraceToken.todo_snapshot") as HTMLButtonElement | null;
     expect(todoToken).not.toBeNull();
     expect(root.querySelector("[data-testid='message-surface'][data-kind='subagent']")).not.toBeNull();
+    expect(root.querySelector("[data-testid='message-surface'][data-kind='subagent'].subagent.messageCard")).not.toBeNull();
     expect(root.querySelector("[data-testid='message-surface'][data-kind='todo_snapshot']")).toBeNull();
     expect(root.querySelector("[data-testid='message-surface'][data-kind='pi_model_change']")).not.toBeNull();
     expect(text).toContain("Please fix this");

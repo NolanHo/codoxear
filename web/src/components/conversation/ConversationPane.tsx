@@ -797,6 +797,7 @@ function MessageSurface({
       className={cn(
         "messageSurface rounded-[1.35rem] border shadow-sm backdrop-blur-sm transition-colors",
         isChatSurface ? "max-w-3xl" : compact ? "max-w-[56rem]" : "max-w-4xl",
+        kind,
         kind === "user" ? "ml-auto messageBubble user" : undefined,
         kind === "assistant" ? "mr-auto messageBubble assistant" : undefined,
         kind === "ask_user" ? "mr-auto messageBubble messageCard ask_user" : undefined,
