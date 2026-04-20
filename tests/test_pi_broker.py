@@ -10,10 +10,8 @@ from unittest.mock import patch
 
 from codoxear.agent_backend import get_agent_backend
 from codoxear.broker import Broker
-from codoxear.pi_broker import PiBroker
+from codoxear.pi_broker import PiBroker, _tail_delta
 from codoxear.pi_broker import State as PiBrokerState
-from codoxear.pi_broker import _tail_delta
-
 
 PI_ASK_USER_BRIDGE_PATH = (
     Path(__file__).resolve().parents[1]
@@ -1713,6 +1711,89 @@ class TestPiBroker(unittest.TestCase):
                     },
                 ],
             },
+        )
+
+    def test_live_messages_surface_retry_and_provider_failure_events(self) -> None:
+        rpc = _FakeRpc()
+        rpc.events = [
+            {
+                "type": "auto_retry_start",
+                "attempt": 1,
+                "maxAttempts": 3,
+                "delayMs": 1000,
+                "errorMessage": "Error: 402 Team weekly spending limit reached",
+            },
+            {
+                "type": "turn.failed",
+                "turn_id": "turn-001",
+                "errorMessage": "Error: 403 Permission denied",
+            },
+        ]
+        broker = PiBroker(cwd="/tmp")
+        broker.state = PiBrokerState(
+            session_id="pi-session-001",
+            codex_pid=123,
+            sock_path=Path("/tmp/pi.sock"),
+            session_path=Path("/tmp/pi-session.jsonl"),
+            start_ts=0.0,
+            rpc=rpc,
+        )
+
+        resp = _roundtrip_json(broker, {"cmd": "live_messages"})
+
+        self.assertEqual(resp["offset"], 2)
+        self.assertEqual(
+            resp["events"],
+            [
+                {
+                    "type": "pi_event",
+                    "summary": "Retrying request (1/3)",
+                    "text": "Error: 402 Team weekly spending limit reached",
+                    "is_error": True,
+                    "ts": 0.0,
+                },
+                {
+                    "type": "pi_event",
+                    "summary": "Turn failed",
+                    "text": "Error: 403 Permission denied",
+                    "is_error": True,
+                    "ts": 0.0,
+                },
+            ],
+        )
+
+    def test_live_messages_surface_turn_completion_without_assistant_output(self) -> None:
+        rpc = _FakeRpc()
+        rpc.events = [
+            {"type": "turn.started", "turn_id": "turn-001", "role": "user", "text": "hello"},
+            {"type": "tool.started", "turn_id": "turn-001", "tool_name": "bash"},
+            {"type": "tool.finished", "turn_id": "turn-001", "tool_name": "bash"},
+            {"type": "turn.completed", "turn_id": "turn-001"},
+        ]
+        broker = PiBroker(cwd="/tmp")
+        broker.state = PiBrokerState(
+            session_id="pi-session-001",
+            codex_pid=123,
+            sock_path=Path("/tmp/pi.sock"),
+            session_path=Path("/tmp/pi-session.jsonl"),
+            start_ts=0.0,
+            rpc=rpc,
+        )
+
+        resp = _roundtrip_json(broker, {"cmd": "live_messages"})
+
+        self.assertEqual(resp["offset"], 1)
+        self.assertEqual(
+            resp["events"],
+            [
+                {
+                    "type": "pi_event",
+                    "summary": "Turn finished without assistant output",
+                    "text": "Pi ended the turn after tool or reasoning activity without a final assistant message.",
+                    "is_error": True,
+                    "ts": 0.0,
+                }
+            ],
         )
 
     def test_live_messages_returns_one_accumulating_assistant_stream(self) -> None:

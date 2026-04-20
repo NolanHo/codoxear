@@ -265,6 +265,80 @@ def _live_pi_event(
     return payload
 
 
+def _event_error_text(event: dict[str, Any]) -> str | None:
+    for source in (event, event.get("payload") if isinstance(event.get("payload"), dict) else None):
+        if not isinstance(source, dict):
+            continue
+        for key in ("errorMessage", "error", "message", "finalError"):
+            value = source.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    return None
+
+
+
+def _retry_live_event(st: "State", event: dict[str, Any]) -> dict[str, Any] | None:
+    event_type = _extract_event_type(event)
+    if event_type == "auto_retry_start":
+        attempt = event.get("attempt") if isinstance(event.get("attempt"), int) else 1
+        max_attempts = event.get("maxAttempts") if isinstance(event.get("maxAttempts"), int) else attempt
+        error_text = _event_error_text(event)
+        text = error_text or "Provider request failed. Retrying."
+        return _live_pi_event(
+            st,
+            summary=f"Retrying request ({attempt}/{max_attempts})",
+            text=text,
+            is_error=True,
+            event=event,
+        )
+    if event_type == "auto_retry_end" and event.get("success") is not True:
+        return _live_pi_event(
+            st,
+            summary="Retry failed",
+            text=_event_error_text(event) or "Retry attempts exhausted.",
+            is_error=True,
+            event=event,
+        )
+    return None
+
+
+
+def _terminal_turn_live_event(
+    st: "State",
+    event: dict[str, Any],
+    *,
+    has_snapshot_text: bool,
+) -> dict[str, Any] | None:
+    event_type = _extract_event_type(event)
+    error_text = _event_error_text(event)
+    if event_type == "turn.failed":
+        return _live_pi_event(
+            st,
+            summary="Turn failed",
+            text=error_text or "Provider request failed.",
+            is_error=True,
+            event=event,
+        )
+    if event_type == "turn.aborted":
+        return _live_pi_event(
+            st,
+            summary="Turn aborted",
+            text=error_text,
+            is_error=True,
+            event=event,
+        )
+    if event_type in {"turn.completed", "turn_end"} and (not has_snapshot_text):
+        return _live_pi_event(
+            st,
+            summary="Turn finished without assistant output",
+            text="Pi ended the turn after tool or reasoning activity without a final assistant message.",
+            is_error=True,
+            event=event,
+        )
+    return None
+
+
+
 def _compaction_live_event(st: "State", event: dict[str, Any]) -> dict[str, Any] | None:
     event_type = _extract_event_type(event)
     if event_type == "compaction_start":
@@ -287,7 +361,7 @@ def _compaction_live_event(st: "State", event: dict[str, Any]) -> dict[str, Any]
         reason = event.get("reason") if isinstance(event.get("reason"), str) else "manual"
         summary = "Auto-compaction cancelled" if reason != "manual" else "Compaction cancelled"
         return _live_pi_event(st, summary=summary, event=event)
-    error_message = event.get("errorMessage") if isinstance(event.get("errorMessage"), str) else None
+    error_message = _event_error_text(event)
     if error_message:
         return _live_pi_event(
             st,
@@ -531,6 +605,9 @@ class PiBroker:
                     snapshot["text"] = f"{snapshot.get('text') or ''}{delta}"
                     snapshot["turn_id"] = event_turn_id
                     _append_live_message_event(st, dict(snapshot))
+            retry_event = _retry_live_event(st, event)
+            if retry_event is not None:
+                _append_live_message_event(st, retry_event)
             compaction_event = _compaction_live_event(st, event)
             if compaction_event is not None:
                 _append_live_message_event(st, compaction_event)
@@ -560,14 +637,22 @@ class PiBroker:
                 st.pending_ui_requests.clear()
             if event_type in _TERMINAL_TURN_EVENT_TYPES:
                 snapshot = st.live_message_snapshots.get(stream_id)
-                if (
+                has_snapshot_text = bool(
                     snapshot is not None
                     and isinstance(snapshot.get("text"), str)
                     and snapshot.get("text")
-                ):
+                )
+                if has_snapshot_text and snapshot is not None:
                     completed_snapshot = dict(snapshot)
                     completed_snapshot["completed"] = True
                     _append_live_message_event(st, completed_snapshot)
+                terminal_event = _terminal_turn_live_event(
+                    st,
+                    event,
+                    has_snapshot_text=has_snapshot_text,
+                )
+                if terminal_event is not None:
+                    _append_live_message_event(st, terminal_event)
             output = _event_output_text(event)
             if output:
                 st.output_tail = (st.output_tail + output)[-st.output_tail_max :]
