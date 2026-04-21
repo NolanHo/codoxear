@@ -182,4 +182,27 @@ describe("createSessionsStore", () => {
 
     expect(store.getState().items).toEqual([{ session_id: "s1" }]);
   });
+
+  it("upserts a created session into the current list and can select it immediately", async () => {
+    vi.mocked(api.listSessions).mockResolvedValue({
+      sessions: [{ session_id: "s1" }, { session_id: "s2" }],
+    } as never);
+    const store = createSessionsStore();
+
+    await store.refresh();
+    store.upsertSession({
+      session_id: "s3",
+      agent_backend: "pi",
+      cwd: "/root/docs",
+      pending_startup: true,
+      busy: true,
+    }, { prepend: true, select: true });
+
+    expect(store.getState().items).toEqual([
+      { session_id: "s3", agent_backend: "pi", cwd: "/root/docs", pending_startup: true, busy: true },
+      { session_id: "s1" },
+      { session_id: "s2" },
+    ]);
+    expect(store.getState().activeSessionId).toBe("s3");
+  });
 });

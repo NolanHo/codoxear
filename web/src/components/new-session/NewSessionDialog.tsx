@@ -12,7 +12,7 @@ import { useSessionsStore, useSessionsStoreApi } from "../../app/providers";
 import { api } from "../../lib/api";
 import { providerChoiceToSettings } from "../../lib/launch";
 import { getSessionDisplayName } from "../../lib/session-display";
-import type { LaunchBackendDefaults, SessionResumeCandidate, SessionResumeCandidatesResponse } from "../../lib/types";
+import type { CreateSessionResponse, LaunchBackendDefaults, SessionResumeCandidate, SessionResumeCandidatesResponse, SessionSummary } from "../../lib/types";
 
 interface NewSessionDialogProps {
   open: boolean;
@@ -82,6 +82,27 @@ function defaultPiModelForProvider(defaults: LaunchBackendDefaults, providerChoi
     }
   }
   return scopedModels[0] || "";
+}
+
+function buildOptimisticCreatedSession(
+  response: CreateSessionResponse,
+  fallback: { backend: string; cwd: string; name?: string },
+): SessionSummary | null {
+  const sessionId = String(response.session_id || "").trim();
+  if (!sessionId) {
+    return null;
+  }
+  const runtimeId = String(response.runtime_id || "").trim() || null;
+  const alias = String(response.alias || fallback.name || "").trim() || undefined;
+  return {
+    session_id: sessionId,
+    runtime_id: runtimeId,
+    agent_backend: String(response.backend || fallback.backend || "").trim() || fallback.backend,
+    cwd: fallback.cwd,
+    alias,
+    pending_startup: response.pending_startup === true,
+    busy: response.pending_startup === true,
+  };
 }
 
 const RESUME_PAGE_SIZE = 20;
@@ -529,9 +550,10 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
               setError("");
               try {
                 const providerSettings = providerChoiceToSettings(providerChoice || backendDefaults.provider_choice || "", backend);
+                const trimmedSessionName = sessionName.trim() || undefined;
                 const response = await api.createSession({
                   cwd: trimmedCwd,
-                  name: sessionName.trim() || undefined,
+                  name: trimmedSessionName,
                   backend,
                   resume_session_id: resumeSessionId || undefined,
                   worktree_branch: supportsWorktree && useWorktree && !resumeSessionId ? trimmedWorktreeBranch : undefined,
@@ -542,6 +564,17 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
                   reasoning_effort: reasoningEffort.trim() || undefined,
                   service_tier: supportsFast && fastMode ? "fast" : undefined,
                 });
+                const optimisticSession = buildOptimisticCreatedSession(response, {
+                  backend,
+                  cwd: trimmedCwd,
+                  name: trimmedSessionName,
+                });
+                if (optimisticSession) {
+                  sessionsStoreApi.upsertSession(optimisticSession, { prepend: true, select: true });
+                  void sessionsStoreApi.refreshBootstrap().catch(() => undefined);
+                  onClose();
+                  return;
+                }
                 await sessionsStoreApi.refresh();
                 const returnedSessionId = String(response.session_id || "").trim();
                 let createdSessionId = returnedSessionId || "";

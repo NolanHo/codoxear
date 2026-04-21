@@ -1,6 +1,11 @@
 import { api } from "../../lib/api";
 import type { CwdGroupMeta, NewSessionDefaults, SessionSummary } from "../../lib/types";
 
+export interface UpsertSessionOptions {
+  prepend?: boolean;
+  select?: boolean;
+}
+
 export interface SessionsState {
   items: SessionSummary[];
   activeSessionId: string | null;
@@ -28,6 +33,7 @@ export interface SessionsStore {
   refreshBootstrap(options?: RefreshBootstrapOptions): Promise<void>;
   loadMore(limit?: number): Promise<void>;
   select(sessionId: string | null): void;
+  upsertSession(session: SessionSummary, options?: UpsertSessionOptions): void;
 }
 
 const PAGE_SIZE = 50;
@@ -61,6 +67,18 @@ function dedupeSessions(items: SessionSummary[]) {
     unique.push(session);
   }
   return { sessions: unique, representativeBySessionId };
+}
+
+function upsertSessionList(items: SessionSummary[], session: SessionSummary, prepend: boolean) {
+  const sessionId = String(session.session_id || "").trim();
+  if (!sessionId) {
+    return items;
+  }
+  const existing = items.find((item) => item.session_id === sessionId) ?? null;
+  const merged = { ...(existing ?? {}), ...session, session_id: sessionId };
+  const withoutExisting = items.filter((item) => item.session_id !== sessionId);
+  const ordered = prepend ? [merged, ...withoutExisting] : [...withoutExisting, merged];
+  return dedupeSessions(ordered).sessions;
 }
 
 export function createSessionsStore(): SessionsStore {
@@ -184,6 +202,20 @@ export function createSessionsStore(): SessionsStore {
     select(sessionId: string | null) {
       hasResolvedInitialSelection = sessionId !== null;
       state = { ...state, activeSessionId: sessionId };
+      emit();
+    },
+    upsertSession(session: SessionSummary, options?: UpsertSessionOptions) {
+      const sessionId = String(session.session_id || "").trim();
+      if (!sessionId) {
+        return;
+      }
+      const nextActiveSessionId = options?.select ? sessionId : state.activeSessionId;
+      hasResolvedInitialSelection = nextActiveSessionId !== null;
+      state = {
+        ...state,
+        items: upsertSessionList(state.items, session, options?.prepend !== false),
+        activeSessionId: nextActiveSessionId,
+      };
       emit();
     },
   };

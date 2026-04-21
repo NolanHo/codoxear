@@ -65,7 +65,7 @@ function createSessionsStore(initialState: any) {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
-    async refresh(options?: { preferNewest?: boolean }) {
+    refresh: vi.fn(async (options?: { preferNewest?: boolean }) => {
       if (options?.preferNewest) {
         state = {
           ...state,
@@ -73,13 +73,22 @@ function createSessionsStore(initialState: any) {
         };
       }
       listeners.forEach((listener) => listener());
-    },
+    }),
     refreshBootstrap: vi.fn(async (_options?: { refreshPiModels?: boolean }) => {
       state = { ...state, bootstrapLoaded: true };
       listeners.forEach((listener) => listener());
     }),
     select: vi.fn((sessionId: string) => {
       state = { ...state, activeSessionId: sessionId };
+      listeners.forEach((listener) => listener());
+    }),
+    upsertSession: vi.fn((session: any, options?: { prepend?: boolean; select?: boolean }) => {
+      const withoutExisting = (state.items ?? []).filter((item: any) => item.session_id !== session.session_id);
+      state = {
+        ...state,
+        items: options?.prepend === false ? [...withoutExisting, session] : [session, ...withoutExisting],
+        activeSessionId: options?.select ? session.session_id : state.activeSessionId,
+      };
       listeners.forEach((listener) => listener());
     }),
     setState(next: any) {
@@ -253,8 +262,74 @@ describe("NewSessionDialog", () => {
       worktree_branch: "feature/inbox-cleanup",
     });
     expect(api.renameSession).not.toHaveBeenCalled();
-    expect(sessionsStore.select).toHaveBeenCalledWith("new");
+    expect(sessionsStore.upsertSession).toHaveBeenCalledWith(expect.objectContaining({
+      session_id: "new",
+      agent_backend: "codex",
+      cwd: "/tmp/project",
+      alias: "Inbox cleanup",
+    }), { prepend: true, select: true });
     expect(onClose).toHaveBeenCalled();
+  });
+
+  it("optimistically inserts pending Pi sessions instead of waiting for a full refresh", async () => {
+    const { api } = await import("../../lib/api");
+    vi.mocked(api.createSession).mockResolvedValue({
+      session_id: "pi-pending",
+      backend: "pi",
+      pending_startup: true,
+      ok: true,
+    } as any);
+    vi.mocked(api.getSessionResumeCandidates).mockResolvedValue({
+      exists: true,
+      will_create: false,
+      git_repo: false,
+      sessions: [],
+    } as any);
+    const sessionsStore = createSessionsStore({
+      items: [{ session_id: "old", cwd: "/tmp/project", agent_backend: "pi" }],
+      activeSessionId: "old",
+      loading: false,
+      bootstrapLoaded: true,
+      recentCwds: ["/tmp/project"],
+      tmuxAvailable: true,
+      newSessionDefaults: {
+        default_backend: "pi",
+        backends: {
+          pi: { provider_choice: "macaron", model: "gpt-5.4", reasoning_effort: "high" },
+          codex: { provider_choice: "chatgpt" },
+        },
+      },
+    });
+
+    root = document.createElement("div");
+    document.body.appendChild(root);
+    await act(async () => {
+      render(
+        <AppProviders sessionsStore={sessionsStore as any}>
+          <NewSessionDialog open onClose={() => undefined} />
+        </AppProviders>,
+        root!,
+      );
+    });
+    await flush();
+
+    const form = root.querySelector("form") as HTMLFormElement;
+    await submitForm(form);
+    await flush();
+
+    expect(sessionsStore.upsertSession).toHaveBeenCalledWith(expect.objectContaining({
+      session_id: "pi-pending",
+      agent_backend: "pi",
+      cwd: "/root/docs",
+      pending_startup: true,
+      busy: true,
+    }), { prepend: true, select: true });
+    expect(sessionsStore.refresh).not.toHaveBeenCalled();
+    expect(sessionsStore.getState().activeSessionId).toBe("pi-pending");
+    expect(sessionsStore.getState().items[0]).toMatchObject({
+      session_id: "pi-pending",
+      pending_startup: true,
+    });
   });
 
   it("shows focused live sessions on the Focus tab and selects them directly", async () => {
@@ -414,7 +489,13 @@ describe("NewSessionDialog", () => {
       worktree_branch: undefined,
     });
     expect(api.renameSession).not.toHaveBeenCalled();
-    expect(sessionsStore.select).toHaveBeenCalledWith("new");
+    expect(sessionsStore.upsertSession).toHaveBeenCalledWith(expect.objectContaining({
+      session_id: "new",
+      agent_backend: "codex",
+      cwd: "/tmp/project",
+      alias: "Inbox cleanup",
+    }), { prepend: true, select: true });
+    expect(sessionsStore.getState().activeSessionId).toBe("new");
     expect(onClose).toHaveBeenCalled();
   });
 
@@ -609,7 +690,13 @@ describe("NewSessionDialog", () => {
       worktree_branch: undefined,
     });
     expect(api.renameSession).not.toHaveBeenCalled();
-    expect(sessionsStore.select).toHaveBeenCalledWith("new-from-server");
+    expect(sessionsStore.upsertSession).toHaveBeenCalledWith(expect.objectContaining({
+      session_id: "new-from-server",
+      agent_backend: "codex",
+      cwd: "/tmp/project",
+      alias: "fresh-name",
+    }), { prepend: true, select: true });
+    expect(sessionsStore.getState().activeSessionId).toBe("new-from-server");
   });
 
   it("refreshes cached Pi model suggestions on demand", async () => {
