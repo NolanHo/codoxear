@@ -1413,6 +1413,26 @@ select {
   color: color-mix(in srgb, var(--text) 76%, var(--markdown-link));
 }
 
+.machineTraceToken.pi_event {
+  background: color-mix(in srgb, var(--message-card-system-bg) 90%, white);
+  border-color: var(--message-card-system-border);
+  color: var(--text);
+}
+
+.machineTraceToken.pi_event.isAlert {
+  background: color-mix(in srgb, var(--message-card-tool-error-bg) 92%, white);
+  border-color: color-mix(in srgb, var(--message-card-tool-error-border) 88%, var(--chrome-border));
+  color: hsl(var(--destructive));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--message-card-tool-error-border) 42%, transparent);
+}
+
+.machineTraceToken.pi_event.isCompaction {
+  background: color-mix(in srgb, #f59e0b 16%, white);
+  border-color: color-mix(in srgb, #f59e0b 46%, var(--chrome-border));
+  color: color-mix(in srgb, #92400e 82%, var(--text));
+  box-shadow: 0 0 0 1px color-mix(in srgb, #f59e0b 24%, transparent);
+}
+
 .machineTraceToken.isSelected {
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary) 32%, transparent);
 }
@@ -1479,6 +1499,21 @@ select {
 .machineTraceDetail.custom_message {
   background: color-mix(in srgb, var(--message-card-base) 90%, var(--message-card-tool-border));
   border-color: color-mix(in srgb, var(--message-card-tool-border) 60%, var(--chrome-border));
+}
+
+.machineTraceDetail.pi_event {
+  background: var(--message-card-system-bg);
+  border-color: var(--message-card-system-border);
+}
+
+.machineTraceDetail.pi_event.isAlert {
+  background: color-mix(in srgb, var(--message-card-tool-error-bg) 95%, white);
+  border-color: color-mix(in srgb, var(--message-card-tool-error-border) 88%, var(--chrome-border));
+}
+
+.machineTraceDetail.pi_event.isCompaction {
+  background: color-mix(in srgb, #f59e0b 10%, white);
+  border-color: color-mix(in srgb, #f59e0b 42%, var(--chrome-border));
 }
 
 @keyframes machine-trace-pulse {

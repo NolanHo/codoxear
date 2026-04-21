@@ -245,7 +245,7 @@ describe("ConversationPane", () => {
     expect(root.textContent).toContain("Need another sample before folding into snapshot.");
   });
 
-  it("renders pi events with raw details when the upstream assistant message is empty", () => {
+  it("renders highlighted empty-output pi events as expandable trace icons with raw details", () => {
     const sessionsStore = createStaticStore(
       { items: [], activeSessionId: "sess-empty-assistant", loading: false, newSessionDefaults: null },
       { refresh: () => Promise.resolve(), select: () => undefined },
@@ -262,6 +262,7 @@ describe("ConversationPane", () => {
                 provider: "openai",
                 model: "gpt-5.4",
                 stopReason: "stop",
+                errorMessage: "upstream returned zero visible tokens",
                 usage: { totalTokens: 0 },
               },
               is_error: true,
@@ -284,11 +285,71 @@ describe("ConversationPane", () => {
       root,
     );
 
-    expect(root.querySelector("[data-testid='message-surface'][data-kind='pi_event']")).not.toBeNull();
+    expect(root.querySelector("[data-testid='message-surface'][data-kind='pi_event']")).toBeNull();
+    const token = root.querySelector(".machineTraceToken.pi_event.isAlert[data-variant='empty_output']") as HTMLButtonElement | null;
+    expect(token).not.toBeNull();
+
+    act(() => {
+      token?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+
     expect(root.textContent).toContain("Assistant returned empty message");
     expect(root.textContent).toContain("Provider emitted an assistant message with no visible content.");
     expect(root.textContent).toContain("gpt-5.4");
-    expect(root.textContent).toContain("stopReason");
+    expect(root.textContent).toContain("errorMessage");
+    expect(root.textContent).toContain("upstream returned zero visible tokens");
+  });
+
+  it("renders compaction pi events as highlighted trace icons with expandable detail", () => {
+    const sessionsStore = createStaticStore(
+      { items: [], activeSessionId: "sess-compaction", loading: false, newSessionDefaults: null },
+      { refresh: () => Promise.resolve(), select: () => undefined },
+    );
+    const messagesStore = createStaticStore(
+      {
+        bySessionId: {
+          "sess-compaction": [
+            { role: "assistant", text: "before", ts: 100 },
+            {
+              type: "pi_event",
+              summary: "Compaction finished",
+              text: "Retrying with compacted context.",
+              details: {
+                reason: "threshold",
+                summary: "Compaction finished successfully",
+              },
+              ts: 110,
+            },
+            { role: "assistant", text: "after", ts: 120 },
+          ],
+        },
+        offsetsBySessionId: { "sess-compaction": 3 },
+        loading: false,
+      },
+      { loadInitial: () => Promise.resolve(), poll: () => Promise.resolve() },
+    );
+
+    root = document.createElement("div");
+    document.body.appendChild(root);
+    render(
+      <AppProviders sessionsStore={sessionsStore as any} messagesStore={messagesStore as any}>
+        <ConversationPane />
+      </AppProviders>,
+      root,
+    );
+
+    const token = root.querySelector(".machineTraceToken.pi_event.isCompaction[data-variant='compaction']") as HTMLButtonElement | null;
+    expect(token).not.toBeNull();
+    expect(root.textContent).toContain("before");
+    expect(root.textContent).toContain("after");
+
+    act(() => {
+      token?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+
+    expect(root.textContent).toContain("Compaction finished");
+    expect(root.textContent).toContain("Retrying with compacted context.");
+    expect(root.textContent).toContain("threshold");
   });
 
   it("renders ad-process custom messages as compact process icons", () => {

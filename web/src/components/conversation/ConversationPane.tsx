@@ -35,8 +35,12 @@ const MAIN_TIMELINE_KINDS = new Set([
 ]);
 
 const MACHINE_TRACE_KINDS = new Set(["reasoning", "tool", "tool_result", "todo_snapshot"]);
+const PI_EVENT_COMPACT_VARIANTS = {
+  empty_output: "empty_output",
+  compaction: "compaction",
+} as const;
 const CHAT_GROUPABLE_KINDS = new Set(["user", "assistant", "ask_user"]);
-type CompactTraceKind = "reasoning" | "tool" | "tool_result" | "todo_snapshot" | "custom_message";
+type CompactTraceKind = "reasoning" | "tool" | "tool_result" | "todo_snapshot" | "custom_message" | "pi_event";
 const COLLAPSIBLE_LINE_THRESHOLD = 8;
 const COLLAPSIBLE_CHAR_THRESHOLD = 420;
 
@@ -462,6 +466,12 @@ function detailsSummary(details: Record<string, unknown> | undefined): string {
   if (typeof details.error === "string" && details.error.trim()) {
     return details.error.trim();
   }
+  if (typeof details.errorMessage === "string" && details.errorMessage.trim()) {
+    return details.errorMessage.trim();
+  }
+  if (typeof details.message === "string" && details.message.trim()) {
+    return details.message.trim();
+  }
   if (Array.isArray(details.todos) && details.todos.length) {
     return `${details.todos.length} todo item${details.todos.length === 1 ? "" : "s"}`;
   }
@@ -533,6 +543,23 @@ function isProcessUpdateCustomMessage(event: MessageEvent): boolean {
     && event.custom_type.startsWith("ad-process:");
 }
 
+function piEventCompactVariant(event: MessageEvent): (typeof PI_EVENT_COMPACT_VARIANTS)[keyof typeof PI_EVENT_COMPACT_VARIANTS] | null {
+  if (eventKind(event) !== "pi_event") {
+    return null;
+  }
+  const summary = firstNonEmptyText(event.summary, event.text).toLowerCase();
+  if (!summary) {
+    return null;
+  }
+  if (summary.includes("without assistant output") || summary.includes("assistant returned empty message")) {
+    return PI_EVENT_COMPACT_VARIANTS.empty_output;
+  }
+  if (summary.includes("compaction") || summary.includes("compacting")) {
+    return PI_EVENT_COMPACT_VARIANTS.compaction;
+  }
+  return null;
+}
+
 function compactTraceKind(event: MessageEvent): CompactTraceKind | null {
   const kind = eventKind(event);
   if (MACHINE_TRACE_KINDS.has(kind)) {
@@ -541,11 +568,14 @@ function compactTraceKind(event: MessageEvent): CompactTraceKind | null {
   if (isProcessUpdateCustomMessage(event)) {
     return "custom_message";
   }
+  if (piEventCompactVariant(event)) {
+    return "pi_event";
+  }
   return null;
 }
 
 function isMachineTraceKind(kind: string): kind is CompactTraceKind {
-  return MACHINE_TRACE_KINDS.has(kind) || kind === "custom_message";
+  return MACHINE_TRACE_KINDS.has(kind) || kind === "custom_message" || kind === "pi_event";
 }
 
 function eventLabel(kind: string): string {
@@ -939,6 +969,29 @@ function ReasoningIcon() {
   );
 }
 
+function EmptyOutputIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M12 4v9" />
+      <path d="m8.5 9 3.5-5 3.5 5" />
+      <path d="M5 18h14" />
+      <path d="M8 21h8" />
+    </svg>
+  );
+}
+
+function CompactionIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="5" y="6" width="14" height="12" rx="2" />
+      <path d="M8 10h8" />
+      <path d="M8 14h5" />
+      <path d="m15.5 4 2 2-2 2" />
+      <path d="M17.5 6h-3" />
+    </svg>
+  );
+}
+
 function machineTraceTitle(event: MessageEvent, kind: CompactTraceKind) {
   if (kind === "reasoning") {
     return firstNonEmptyText(event.summary, "Reasoning");
@@ -951,6 +1004,9 @@ function machineTraceTitle(event: MessageEvent, kind: CompactTraceKind) {
   }
   if (kind === "custom_message") {
     return firstNonEmptyText(event.text, event.summary, event.custom_type, "Process update");
+  }
+  if (kind === "pi_event") {
+    return firstNonEmptyText(event.summary, event.text, "System event");
   }
   return firstNonEmptyText(event.name, event.summary, "Tool result");
 }
@@ -972,6 +1028,10 @@ function machineTraceSummary(event: MessageEvent, kind: CompactTraceKind) {
   }
   if (kind === "custom_message") {
     return compactSingleLine(firstNonEmptyText(event.summary, event.text, event.custom_type), 90);
+  }
+  if (kind === "pi_event") {
+    const detailsText = event.details ? JSON.stringify(event.details, null, 2) : "";
+    return compactSingleLine(firstNonEmptyText(event.text, detailsSummary(event.details), detailsText), 90);
   }
   const detailsText = !event.text && event.details ? JSON.stringify(event.details, null, 2) : "";
   return compactSingleLine(firstNonEmptyText(event.summary, event.text, detailsSummary(event.details), detailsText), 90);
@@ -1056,6 +1116,18 @@ function renderMachineTraceDetail(event: MessageEvent, kind: CompactTraceKind, o
     );
   }
 
+  if (kind === "pi_event") {
+    const body = firstNonEmptyText(event.text, detailsSummary(event.details));
+    const detailsText = event.details ? JSON.stringify(event.details, null, 2) : "";
+    return (
+      <div className="machineTraceDetailBody space-y-3">
+        {renderCardHeader("pi_event", machineTraceTitle(event, kind), undefined, event.ts)}
+        {body ? renderRichText(body, "messageBody", options) : null}
+        {detailsText ? <pre className="messageCardPre overflow-x-auto rounded-xl bg-background/80 p-3 text-sm">{detailsText}</pre> : null}
+      </div>
+    );
+  }
+
   const body = firstNonEmptyText(event.text, detailsSummary(event.details));
   const detailsText = !event.text && event.details ? JSON.stringify(event.details, null, 2) : "";
   return (
@@ -1072,16 +1144,18 @@ function CompactMachineTrace({ events, options, isBusy }: { events: MessageEvent
   const initialSelected = runningIndex >= 0 ? runningIndex : null;
   const [selectedIndex, setSelectedIndex] = useState<number | null>(initialSelected);
   const selectedEvent = selectedIndex == null ? null : events[selectedIndex] ?? null;
-  const selectedKind = selectedEvent ? eventKind(selectedEvent) : null;
+  const selectedKind = selectedEvent ? compactTraceKind(selectedEvent) : null;
+  const selectedVariant = selectedEvent ? piEventCompactVariant(selectedEvent) : null;
 
   return (
     <MessageSurface kind="event" compact className="machineTraceSurface" contentClassName="space-y-3">
       <div className="machineTraceStrip" data-testid="machine-trace-strip">
         {events.map((event, index) => {
-          const kind = eventKind(event);
-          if (!isMachineTraceKind(kind)) {
+          const kind = compactTraceKind(event);
+          if (!kind || !isMachineTraceKind(kind)) {
             return null;
           }
+          const piEventVariant = kind === "pi_event" ? piEventCompactVariant(event) : null;
           const isSelected = selectedIndex === index;
           const isRunning = index === runningIndex;
           const summary = machineTraceSummary(event, kind);
@@ -1090,14 +1164,25 @@ function CompactMachineTrace({ events, options, isBusy }: { events: MessageEvent
             ? (event.is_error ? "error" : "complete")
             : kind === "todo_snapshot"
               ? "updated"
-              : isRunning ? "running" : kind;
+              : kind === "pi_event"
+                ? (piEventVariant || "system")
+                : isRunning ? "running" : kind;
           return (
             <button
               key={`${kind}-${index}-${title}`}
               type="button"
               data-kind={kind}
               data-status={statusLabel}
-              className={cn("machineTraceToken", kind, isSelected && "isSelected", isRunning && "isRunning", event.is_error && "isError")}
+              data-variant={piEventVariant || undefined}
+              className={cn(
+                "machineTraceToken",
+                kind,
+                isSelected && "isSelected",
+                isRunning && "isRunning",
+                event.is_error && "isError",
+                piEventVariant === PI_EVENT_COMPACT_VARIANTS.empty_output && "isAlert",
+                piEventVariant === PI_EVENT_COMPACT_VARIANTS.compaction && "isCompaction",
+              )}
               aria-expanded={isSelected ? "true" : "false"}
               title={summary ? `${title}: ${summary}` : title}
               onClick={() => setSelectedIndex((current) => (current === index ? null : index))}
@@ -1111,7 +1196,11 @@ function CompactMachineTrace({ events, options, isBusy }: { events: MessageEvent
                       ? <TodoChangeIcon />
                       : kind === "custom_message"
                         ? <ProcessUpdateIcon />
-                        : <ReasoningIcon />}
+                        : kind === "pi_event"
+                          ? piEventVariant === PI_EVENT_COMPACT_VARIANTS.compaction
+                            ? <CompactionIcon />
+                            : <EmptyOutputIcon />
+                          : <ReasoningIcon />}
               </span>
               {isRunning ? <span className="machineTraceTokenPulse" aria-hidden="true" /> : null}
             </button>
@@ -1119,7 +1208,16 @@ function CompactMachineTrace({ events, options, isBusy }: { events: MessageEvent
         })}
       </div>
       {selectedEvent && selectedKind && isMachineTraceKind(selectedKind) ? (
-        <div className={cn("machineTraceDetail", selectedKind, selectedEvent.is_error && "isError")} data-testid="machine-trace-detail">
+        <div
+          className={cn(
+            "machineTraceDetail",
+            selectedKind,
+            selectedEvent.is_error && "isError",
+            selectedVariant === PI_EVENT_COMPACT_VARIANTS.empty_output && "isAlert",
+            selectedVariant === PI_EVENT_COMPACT_VARIANTS.compaction && "isCompaction",
+          )}
+          data-testid="machine-trace-detail"
+        >
           {renderMachineTraceDetail(selectedEvent, selectedKind, options)}
         </div>
       ) : null}
