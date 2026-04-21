@@ -1,6 +1,7 @@
 import { useMemo, useState } from "preact/hooks";
 
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
 import { useComposerStoreApi, useSessionsStore, useSessionsStoreApi } from "../../app/providers";
@@ -17,6 +18,7 @@ interface SessionsPaneProps {
 }
 
 type SessionsSurfaceTab = "sessions" | "focus";
+type PendingSessionDialog = { kind: "handoff" | "restart" | "delete"; session: SessionSummary } | null;
 
 function shortSessionId(sessionId: string) {
   const match = sessionId.match(/^([0-9a-f]{8})[0-9a-f-]{20,}$/i);
@@ -33,11 +35,27 @@ function deleteSessionConfirmText(session: SessionSummary) {
   return `Delete this terminal-owned session${target}? This will also stop the corresponding terminal session.`;
 }
 
+function handoffSessionConfirmText(session: SessionSummary) {
+  const name = getSessionDisplayName({ ...session, session_id: "" }, "");
+  const sid = shortSessionId(session.session_id);
+  const target = name ? ` \"${name}\" (${sid})` : ` ${sid}`;
+  return `Start a fresh Pi runtime for session${target}? Codoxear will archive the current Pi history, launch a new durable session, and switch only after the new runtime is live.`;
+}
+
+function restartSessionConfirmText(session: SessionSummary) {
+  const name = getSessionDisplayName({ ...session, session_id: "" }, "");
+  const sid = shortSessionId(session.session_id);
+  const target = name ? ` \"${name}\" (${sid})` : ` ${sid}`;
+  return `Restart the backend Pi process for session${target}? Codoxear will stop the current Pi runtime, start a new one against the same session file, and keep this tab bound to the same durable session. Any in-flight turn will be interrupted.`;
+}
+
 export function SessionsPane({ onNewSession }: SessionsPaneProps) {
   const { items, activeSessionId, remainingCount = 0 } = useSessionsStore();
   const sessionsStoreApi = useSessionsStoreApi();
   const composerStoreApi = useComposerStoreApi();
   const [editingSession, setEditingSession] = useState<SessionSummary | null>(null);
+  const [pendingDialog, setPendingDialog] = useState<PendingSessionDialog>(null);
+  const [dialogBusy, setDialogBusy] = useState(false);
   const [actionError, setActionError] = useState("");
   const [surfaceTab, setSurfaceTab] = useState<SessionsSurfaceTab>("sessions");
   const [loadingMore, setLoadingMore] = useState(false);
@@ -84,18 +102,13 @@ export function SessionsPane({ onNewSession }: SessionsPaneProps) {
   };
 
   const deleteSession = async (session: SessionSummary) => {
-    const confirmed = typeof window === "undefined" || typeof window.confirm !== "function"
-      ? true
-      : window.confirm(deleteSessionConfirmText(session));
-    if (!confirmed) {
-      return;
-    }
     try {
       setActionError("");
       await api.deleteSession(session.session_id);
       await sessionsStoreApi.refresh();
     } catch (error) {
       setActionError(error instanceof Error ? error.message : "Failed to delete session");
+      throw error;
     }
   };
 
@@ -195,6 +208,44 @@ export function SessionsPane({ onNewSession }: SessionsPaneProps) {
       await selectCreatedSession(response);
     } catch (error) {
       setActionError(error instanceof Error ? error.message : "Failed to handoff session");
+      throw error;
+    }
+  };
+
+  const restartSession = async (session: SessionSummary) => {
+    setActionError("");
+    try {
+      const runtimeId = getSessionRuntimeId(session);
+      const response = await api.restartSession(session.session_id, runtimeId);
+      await sessionsStoreApi.refresh();
+      sessionsStoreApi.select(session.session_id);
+      if (response.pending_startup !== true) {
+        await sessionsStoreApi.refresh();
+      }
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Failed to restart Pi session");
+      throw error;
+    }
+  };
+
+  const confirmDialogAction = async () => {
+    if (!pendingDialog) {
+      return;
+    }
+    setDialogBusy(true);
+    try {
+      if (pendingDialog.kind === "delete") {
+        await deleteSession(pendingDialog.session);
+      } else if (pendingDialog.kind === "restart") {
+        await restartSession(pendingDialog.session);
+      } else {
+        await handoffSession(pendingDialog.session);
+      }
+      setPendingDialog(null);
+    } catch {
+      return;
+    } finally {
+      setDialogBusy(false);
     }
   };
 
@@ -251,12 +302,26 @@ export function SessionsPane({ onNewSession }: SessionsPaneProps) {
                 }}
                 onToggleFocus={() => { void toggleSessionFocus(session); }}
                 onDuplicate={session.historical ? undefined : () => { void duplicateSession(session); }}
+                onRestart={(!session.historical
+                  && session.pending_startup !== true
+                  && normalizeLaunchBackend(session.agent_backend) === "pi")
+                  ? () => {
+                    setActionError("");
+                    setPendingDialog({ kind: "restart", session });
+                  }
+                  : undefined}
                 onHandoff={(!session.historical
                   && session.pending_startup !== true
                   && normalizeLaunchBackend(session.agent_backend) === "pi")
-                  ? () => { void handoffSession(session); }
+                  ? () => {
+                    setActionError("");
+                    setPendingDialog({ kind: "handoff", session });
+                  }
                   : undefined}
-                onDelete={() => { void deleteSession(session); }}
+                onDelete={() => {
+                  setActionError("");
+                  setPendingDialog({ kind: "delete", session });
+                }}
                 onEdit={session.historical ? undefined : () => {
                   setActionError("");
                   void api.getSessionDetails(session.session_id)
@@ -297,6 +362,65 @@ export function SessionsPane({ onNewSession }: SessionsPaneProps) {
           await sessionsStoreApi.refresh();
         }}
       />
+
+      <Dialog open={pendingDialog != null} onOpenChange={(open) => {
+        if (!open && !dialogBusy) {
+          setPendingDialog(null);
+        }
+      }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>
+              {pendingDialog?.kind === "delete"
+                ? "Delete session"
+                : pendingDialog?.kind === "restart"
+                  ? "Restart Pi"
+                  : "Handoff session"}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-5 px-6 pb-6 pt-4 text-sm text-muted-foreground">
+            <p>
+              {pendingDialog?.kind === "delete"
+                ? deleteSessionConfirmText(pendingDialog.session)
+                : pendingDialog?.kind === "restart"
+                  ? restartSessionConfirmText(pendingDialog.session)
+                  : pendingDialog
+                    ? handoffSessionConfirmText(pendingDialog.session)
+                    : ""}
+            </p>
+            <div className="flex items-center justify-end gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                disabled={dialogBusy}
+                onClick={() => setPendingDialog(null)}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                disabled={dialogBusy}
+                className={pendingDialog?.kind === "delete" ? "bg-destructive text-destructive-foreground hover:bg-destructive/90" : undefined}
+                onClick={() => {
+                  void confirmDialogAction();
+                }}
+              >
+                {dialogBusy
+                  ? pendingDialog?.kind === "delete"
+                    ? "Deleting..."
+                    : pendingDialog?.kind === "restart"
+                      ? "Restarting..."
+                      : "Handing off..."
+                  : pendingDialog?.kind === "delete"
+                    ? "Delete session"
+                    : pendingDialog?.kind === "restart"
+                      ? "Restart Pi"
+                      : "Handoff session"}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

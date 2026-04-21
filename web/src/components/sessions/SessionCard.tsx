@@ -2,6 +2,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
+import { useEffect, useRef, useState } from "preact/hooks";
 
 import { getSessionDisplayName } from "../../lib/session-display";
 import type { SessionSummary } from "../../lib/types";
@@ -13,11 +14,12 @@ interface SessionCardProps {
   onToggleFocus?: () => void;
   onEdit?: () => void;
   onDuplicate?: () => void;
+  onRestart?: () => void;
   onHandoff?: () => void;
   onDelete?: () => void;
 }
 
-function ActionIcon({ kind }: { kind: "edit" | "duplicate" | "delete" | "focus" | "handoff" }) {
+function ActionIcon({ kind }: { kind: "edit" | "duplicate" | "delete" | "focus" | "handoff" | "restart" | "menu" }) {
   if (kind === "edit") {
     return (
       <svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.4">
@@ -55,6 +57,25 @@ function ActionIcon({ kind }: { kind: "edit" | "duplicate" | "delete" | "focus" 
     );
   }
 
+  if (kind === "restart") {
+    return (
+      <svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.4">
+        <path d="M12.8 6.5A4.8 4.8 0 1 0 13 8" />
+        <path d="M10.5 3.2h2.8V6" />
+      </svg>
+    );
+  }
+
+  if (kind === "menu") {
+    return (
+      <svg viewBox="0 0 16 16" aria-hidden="true" fill="currentColor">
+        <circle cx="3" cy="8" r="1.2" />
+        <circle cx="8" cy="8" r="1.2" />
+        <circle cx="13" cy="8" r="1.2" />
+      </svg>
+    );
+  }
+
   return (
     <svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.4">
       <path d="M3.5 4.5h9" />
@@ -71,11 +92,15 @@ export function useDesktopSessionActions() {
   return Boolean(window.matchMedia("(hover: hover) and (pointer: fine) and (min-width: 881px)").matches);
 }
 
-export function SessionCard({ session, active, onSelect, onToggleFocus, onEdit, onDuplicate, onHandoff, onDelete }: SessionCardProps) {
+export function SessionCard({ session, active, onSelect, onToggleFocus, onEdit, onDuplicate, onRestart, onHandoff, onDelete }: SessionCardProps) {
   const title = getSessionDisplayName(session);
   const isHistorical = session.historical === true;
   const desktopActions = useDesktopSessionActions();
-  const hasActions = Boolean(onToggleFocus || onEdit || onDuplicate || onHandoff || onDelete);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const hasInlineActions = Boolean(onToggleFocus || onEdit);
+  const hasMenuActions = Boolean(onDuplicate || onRestart || onHandoff || onDelete);
+  const hasActions = hasInlineActions || hasMenuActions;
   const showActions = hasActions && (active || desktopActions);
   const idBase = `session-${session.session_id.replace(/[^a-z0-9_-]/gi, "-")}`;
   const titleId = `${idBase}-title`;
@@ -90,6 +115,38 @@ export function SessionCard({ session, active, onSelect, onToggleFocus, onEdit, 
   const stopActionClick = (event: MouseEvent) => {
     event.preventDefault();
     event.stopPropagation();
+  };
+
+  useEffect(() => {
+    if (!menuOpen) {
+      return undefined;
+    }
+
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target instanceof Node ? event.target : null;
+      if (target && menuRef.current?.contains(target)) {
+        return;
+      }
+      setMenuOpen(false);
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setMenuOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [menuOpen]);
+
+  const runMenuAction = (action?: () => void) => {
+    setMenuOpen(false);
+    action?.();
   };
 
   return (
@@ -135,6 +192,7 @@ export function SessionCard({ session, active, onSelect, onToggleFocus, onEdit, 
                         aria-label={session.focused ? "Remove from Focus" : "Add to Focus"}
                         onClick={(event) => {
                           stopActionClick(event);
+                          setMenuOpen(false);
                           onToggleFocus();
                         }}
                       >
@@ -150,56 +208,84 @@ export function SessionCard({ session, active, onSelect, onToggleFocus, onEdit, 
                         aria-label="Edit session"
                         onClick={(event) => {
                           stopActionClick(event);
+                          setMenuOpen(false);
                           onEdit();
                         }}
                       >
                         <ActionIcon kind="edit" />
                       </Button>
                     ) : null}
-                    {onDuplicate ? (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        className="sessionActionIconButton h-8 w-8 rounded-md text-muted-foreground hover:text-foreground"
-                        aria-label="Duplicate session"
-                        onClick={(event) => {
-                          stopActionClick(event);
-                          onDuplicate();
-                        }}
-                      >
-                        <ActionIcon kind="duplicate" />
-                      </Button>
-                    ) : null}
-                    {onHandoff ? (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        className="sessionActionIconButton h-8 w-8 rounded-md text-muted-foreground hover:text-foreground"
-                        aria-label="Handoff session"
-                        onClick={(event) => {
-                          stopActionClick(event);
-                          onHandoff();
-                        }}
-                      >
-                        <ActionIcon kind="handoff" />
-                      </Button>
-                    ) : null}
-                    {onDelete ? (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        className="sessionActionIconButton sessionActionIconButtonDanger h-8 w-8 rounded-md text-muted-foreground hover:text-destructive"
-                        aria-label="Delete session"
-                        onClick={(event) => {
-                          stopActionClick(event);
-                          onDelete();
-                        }}
-                      >
-                        <ActionIcon kind="delete" />
-                      </Button>
+                    {hasMenuActions ? (
+                      <div ref={menuRef} className="sessionActionMenuWrap relative">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="sessionActionIconButton h-8 w-8 rounded-md text-muted-foreground hover:text-foreground"
+                          aria-label="More session actions"
+                          aria-haspopup="menu"
+                          aria-expanded={menuOpen ? "true" : "false"}
+                          onClick={(event) => {
+                            stopActionClick(event);
+                            setMenuOpen((current) => !current);
+                          }}
+                        >
+                          <ActionIcon kind="menu" />
+                        </Button>
+                        {menuOpen ? (
+                          <div
+                            role="menu"
+                            aria-label="Session actions"
+                            className="sessionActionMenu absolute right-0 top-[calc(100%+0.3rem)] z-30 min-w-[12rem] rounded-xl border border-border/70 bg-card/95 p-1 shadow-xl backdrop-blur"
+                            onClick={(event) => stopActionClick(event as MouseEvent)}
+                          >
+                            {onDuplicate ? (
+                              <button
+                                type="button"
+                                role="menuitem"
+                                className="sessionActionMenuItem"
+                                onClick={() => runMenuAction(onDuplicate)}
+                              >
+                                <ActionIcon kind="duplicate" />
+                                <span>Duplicate</span>
+                              </button>
+                            ) : null}
+                            {onRestart ? (
+                              <button
+                                type="button"
+                                role="menuitem"
+                                className="sessionActionMenuItem"
+                                onClick={() => runMenuAction(onRestart)}
+                              >
+                                <ActionIcon kind="restart" />
+                                <span>Restart Pi...</span>
+                              </button>
+                            ) : null}
+                            {onHandoff ? (
+                              <button
+                                type="button"
+                                role="menuitem"
+                                className="sessionActionMenuItem"
+                                onClick={() => runMenuAction(onHandoff)}
+                              >
+                                <ActionIcon kind="handoff" />
+                                <span>Handoff...</span>
+                              </button>
+                            ) : null}
+                            {onDelete ? (
+                              <button
+                                type="button"
+                                role="menuitem"
+                                className="sessionActionMenuItem danger"
+                                onClick={() => runMenuAction(onDelete)}
+                              >
+                                <ActionIcon kind="delete" />
+                                <span>Delete...</span>
+                              </button>
+                            ) : null}
+                          </div>
+                        ) : null}
+                      </div>
                     ) : null}
                   </div>
                 ) : null}

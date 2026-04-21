@@ -66,6 +66,7 @@ def _make_manager() -> SessionManager:
     mgr._bad_sidecars = {}
     mgr._sessions = {}
     mgr._harness = {}
+    mgr._harness_last_injected = {}
     mgr._aliases = {}
     mgr._sidebar_meta = {}
     mgr._hidden_sessions = set()
@@ -156,6 +157,122 @@ class TestPiBackendRouting(unittest.TestCase):
         payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
         self.assertEqual(handler.status, 200)
         self.assertEqual(payload, {"ok": True})
+
+    def test_restart_route_restarts_pi_session(self) -> None:
+        mgr = _make_manager()
+        mgr.restart_session = lambda session_id: {  # type: ignore[method-assign]
+            "session_id": session_id,
+            "runtime_id": "rt-new",
+            "backend": "pi",
+            "previous_runtime_id": "rt-old",
+        }
+        handler = _HandlerHarness("/api/sessions/rt-old/restart", body=b"{}")
+
+        with (
+            patch("codoxear.server._require_auth", return_value=True),
+            patch("codoxear.server.MANAGER", mgr),
+        ):
+            Handler.do_POST(handler)  # type: ignore[arg-type]
+
+        payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(handler.status, 200)
+        self.assertEqual(
+            payload,
+            {
+                "ok": True,
+                "session_id": "rt-old",
+                "runtime_id": "rt-new",
+                "backend": "pi",
+                "previous_runtime_id": "rt-old",
+            },
+        )
+
+    def test_restart_session_relaunches_pi_runtime_with_same_durable_session_id(
+        self,
+    ) -> None:
+        mgr = _make_manager()
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            source_path = root / "source.jsonl"
+            sock = root / "pi.sock"
+            sock.touch()
+            _write_jsonl(
+                source_path,
+                [
+                    {
+                        "type": "session",
+                        "id": "dur-old",
+                        "cwd": td,
+                        "timestamp": "2026-03-28T12:00:00Z",
+                    },
+                    {
+                        "type": "message",
+                        "message": {
+                            "role": "user",
+                            "content": [{"type": "text", "text": "old context"}],
+                        },
+                    },
+                ],
+            )
+            mgr._sessions["rt-old"] = Session(
+                session_id="rt-old",
+                thread_id="dur-old",
+                agent_backend="pi",
+                backend="pi",
+                broker_pid=3333,
+                codex_pid=4444,
+                owned=True,
+                start_ts=123.0,
+                cwd=td,
+                log_path=None,
+                sock_path=sock,
+                session_path=source_path,
+                model_provider="openai",
+                model="gpt-5.4",
+                reasoning_effort="high",
+                transport="pi-rpc",
+            )
+            mgr._files["rt-old"] = ["/tmp/a.py"]
+            mgr._queues["rt-old"] = ["queued prompt"]
+            mgr._harness["rt-old"] = {
+                "enabled": True,
+                "request": "watch this",
+                "cooldown_minutes": 5,
+                "remaining_injections": 2,
+            }
+            mgr._harness_last_injected["rt-old"] = 17.0
+            mgr.kill_session = Mock(return_value=True)
+            mgr.spawn_web_session = Mock(
+                return_value={
+                    "session_id": "dur-old",
+                    "runtime_id": "rt-new",
+                    "backend": "pi",
+                }
+            )
+            mgr._persist_durable_session_record = Mock()
+            mgr._save_files = lambda: None  # type: ignore[method-assign]
+            mgr._save_queues = lambda: None  # type: ignore[method-assign]
+            mgr._save_harness = lambda: None  # type: ignore[method-assign]
+
+            payload = mgr.restart_session("rt-old")
+
+            self.assertEqual(payload["session_id"], "dur-old")
+            self.assertEqual(payload["runtime_id"], "rt-new")
+            self.assertEqual(payload["previous_runtime_id"], "rt-old")
+            mgr.kill_session.assert_called_once_with("rt-old")
+            mgr.spawn_web_session.assert_called_once()
+            self.assertEqual(
+                mgr.spawn_web_session.call_args.kwargs["resume_session_id"], "dur-old"
+            )
+            self.assertNotIn("rt-old", mgr._sessions)
+            self.assertEqual(mgr._files["rt-new"], ["/tmp/a.py"])
+            self.assertEqual(mgr._queues["rt-new"], ["queued prompt"])
+            self.assertEqual(mgr._harness["rt-new"]["request"], "watch this")
+            self.assertEqual(mgr._harness_last_injected["rt-new"], 17.0)
+            persisted_rows = [call.args[0] for call in mgr._persist_durable_session_record.call_args_list]
+            self.assertEqual(len(persisted_rows), 2)
+            self.assertTrue(persisted_rows[0].pending_startup)
+            self.assertFalse(persisted_rows[-1].pending_startup)
 
     def test_handoff_session_archives_old_pi_history_and_launches_new_session(
         self,

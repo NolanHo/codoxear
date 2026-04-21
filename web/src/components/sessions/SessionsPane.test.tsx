@@ -10,6 +10,7 @@ vi.mock("../../lib/api", () => ({
   api: {
     createSession: vi.fn().mockResolvedValue({ ok: true, session_id: "sess-2", broker_pid: 42 }),
     handoffSession: vi.fn().mockResolvedValue({ ok: true, session_id: "sess-2", runtime_id: "rt-2", broker_pid: 42 }),
+    restartSession: vi.fn().mockResolvedValue({ ok: true, session_id: "sess-1", runtime_id: "rt-2", previous_runtime_id: "rt-1", broker_pid: 42 }),
     editSession: vi.fn().mockResolvedValue({ ok: true, alias: "Updated session" }),
     deleteSession: vi.fn().mockResolvedValue({ ok: true }),
     setSessionFocus: vi.fn().mockResolvedValue({ ok: true, focused: true }),
@@ -28,6 +29,13 @@ async function click(element: Element) {
   await act(async () => {
     (element as HTMLElement).dispatchEvent(new MouseEvent("click", { bubbles: true }));
   });
+}
+
+async function openSessionMenu() {
+  const menuButton = root?.querySelector<HTMLButtonElement>('button[aria-label="More session actions"]');
+  expect(menuButton).not.toBeNull();
+  await click(menuButton!);
+  await flush();
 }
 
 function createSessionsStore(initialState: any, options?: { onRefresh?: () => void | Promise<void> }) {
@@ -230,9 +238,7 @@ describe("SessionsPane", () => {
     expect(sessionsStore.refresh).toHaveBeenCalled();
   });
 
-  it("deletes a historical session after confirmation", async () => {
-    const confirm = vi.fn().mockReturnValue(true);
-    vi.stubGlobal("confirm", confirm);
+  it("deletes a historical session after dialog confirmation", async () => {
     const sessionsStore = renderSessionsPane({
       items: [{ session_id: "history:pi:resume-1", alias: "Recovered", agent_backend: "pi", historical: true }],
       activeSessionId: "history:pi:resume-1",
@@ -243,19 +249,22 @@ describe("SessionsPane", () => {
       tmuxAvailable: false,
     });
 
-    const deleteButton = root?.querySelector<HTMLButtonElement>('button[aria-label="Delete session"]');
-    expect(deleteButton).not.toBeNull();
-    await click(deleteButton!);
+    await openSessionMenu();
+    const deleteAction = Array.from(root?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') || []).find((button) => button.textContent?.includes("Delete"));
+    expect(deleteAction).toBeDefined();
+    await click(deleteAction!);
+    await flush();
+
+    const confirmButton = Array.from(root?.querySelectorAll<HTMLButtonElement>("button") || []).find((button) => button.textContent?.includes("Delete session"));
+    expect(confirmButton).toBeDefined();
+    await click(confirmButton!);
     await flush();
 
     expect(api.deleteSession).toHaveBeenCalledWith("history:pi:resume-1");
     expect(sessionsStore.refresh).toHaveBeenCalled();
-    expect(confirm).toHaveBeenCalled();
   });
 
-  it("deletes a session after confirmation", async () => {
-    const confirm = vi.fn().mockReturnValue(true);
-    vi.stubGlobal("confirm", confirm);
+  it("deletes a session after dialog confirmation", async () => {
     const sessionsStore = renderSessionsPane({
       items: [{ session_id: "sess-1", alias: "Inbox cleanup", agent_backend: "pi" }],
       activeSessionId: "sess-1",
@@ -266,17 +275,22 @@ describe("SessionsPane", () => {
       tmuxAvailable: false,
     });
 
-    const deleteButton = root?.querySelector<HTMLButtonElement>('button[aria-label="Delete session"]');
-    expect(deleteButton).not.toBeNull();
-    await click(deleteButton!);
+    await openSessionMenu();
+    const deleteAction = Array.from(root?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') || []).find((button) => button.textContent?.includes("Delete"));
+    expect(deleteAction).toBeDefined();
+    await click(deleteAction!);
+    await flush();
+
+    const confirmButton = Array.from(root?.querySelectorAll<HTMLButtonElement>("button") || []).find((button) => button.textContent?.includes("Delete session"));
+    expect(confirmButton).toBeDefined();
+    await click(confirmButton!);
     await flush();
 
     expect(api.deleteSession).toHaveBeenCalledWith("sess-1");
     expect(sessionsStore.refresh).toHaveBeenCalled();
-    expect(confirm).toHaveBeenCalled();
   });
 
-  it("does not show handoff for a pending pi session", () => {
+  it("does not show handoff for a pending pi session", async () => {
     renderSessionsPane({
       items: [{ session_id: "sess-pending", alias: "Pending", agent_backend: "pi", pending_startup: true }],
       activeSessionId: "sess-pending",
@@ -287,7 +301,41 @@ describe("SessionsPane", () => {
       tmuxAvailable: true,
     });
 
-    expect(root?.querySelector('button[aria-label="Handoff session"]')).toBeNull();
+    await openSessionMenu();
+    expect(Array.from(root?.querySelectorAll('[role="menuitem"]') || []).some((node) => (node.textContent || "").includes("Handoff"))).toBe(false);
+  });
+
+  it("restarts a pi session from the dialog and keeps the same durable session selected", async () => {
+    const sessionsStore = renderSessionsPane({
+      items: [{ session_id: "sess-1", alias: "Inbox cleanup", cwd: "/tmp/project", agent_backend: "pi", runtime_id: "rt-1" }],
+      activeSessionId: "sess-1",
+      loading: false,
+      newSessionDefaults: null,
+      recentCwds: ["/tmp/project"],
+      cwdGroups: {},
+      tmuxAvailable: true,
+    });
+
+    sessionsStore.refresh = vi.fn(async () => {
+      sessionsStore.setState({
+        ...sessionsStore.getState(),
+        items: [{ session_id: "sess-1", alias: "Inbox cleanup", cwd: "/tmp/project", agent_backend: "pi", runtime_id: "rt-2" }],
+      });
+    });
+
+    await openSessionMenu();
+    const restartAction = Array.from(root?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') || []).find((button) => button.textContent?.includes("Restart Pi"));
+    expect(restartAction).toBeDefined();
+    await click(restartAction!);
+    await flush();
+
+    const confirmButton = Array.from(root?.querySelectorAll<HTMLButtonElement>("button") || []).find((button) => button.textContent?.includes("Restart Pi"));
+    expect(confirmButton).toBeDefined();
+    await click(confirmButton!);
+    await flush();
+
+    expect(api.restartSession).toHaveBeenCalledWith("sess-1", "rt-1");
+    expect(sessionsStore.select).toHaveBeenCalledWith("sess-1");
   });
 
   it("hands off a pi session and preserves the draft under the new session id", async () => {
@@ -318,9 +366,15 @@ describe("SessionsPane", () => {
       });
     });
 
-    const handoffButton = root?.querySelector<HTMLButtonElement>('button[aria-label="Handoff session"]');
-    expect(handoffButton).not.toBeNull();
-    await click(handoffButton!);
+    await openSessionMenu();
+    const handoffAction = Array.from(root?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') || []).find((button) => button.textContent?.includes("Handoff"));
+    expect(handoffAction).toBeDefined();
+    await click(handoffAction!);
+    await flush();
+
+    const confirmButton = Array.from(root?.querySelectorAll<HTMLButtonElement>("button") || []).find((button) => button.textContent?.includes("Handoff session"));
+    expect(confirmButton).toBeDefined();
+    await click(confirmButton!);
     await flush();
 
     expect(api.handoffSession).toHaveBeenCalledWith("sess-1", "rt-1");
@@ -360,9 +414,10 @@ describe("SessionsPane", () => {
       });
     });
 
-    const duplicateButton = root?.querySelector<HTMLButtonElement>('button[aria-label="Duplicate session"]');
-    expect(duplicateButton).not.toBeNull();
-    await click(duplicateButton!);
+    await openSessionMenu();
+    const duplicateAction = Array.from(root?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') || []).find((button) => button.textContent?.includes("Duplicate"));
+    expect(duplicateAction).toBeDefined();
+    await click(duplicateAction!);
     await flush();
 
     expect(api.getSessionDetails).toHaveBeenCalledWith("sess-1");

@@ -90,6 +90,11 @@ export interface HandoffSessionResponse extends CreateSessionResponse {
   previous_session_id?: string;
 }
 
+export interface RestartSessionResponse extends CreateSessionResponse {
+  previous_runtime_id?: string;
+  restarted?: boolean;
+}
+
 export interface RenameSessionResponse {
   ok?: boolean;
   alias?: string;

@@ -1061,6 +1061,45 @@ select {
   height: 0.9rem;
 }
 
+.sessionActionMenuWrap {
+  position: relative;
+  pointer-events: auto;
+}
+
+.sessionActionMenu {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+}
+
+.sessionActionMenuItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  width: 100%;
+  padding: 0.5rem 0.7rem;
+  border-radius: 0.8rem;
+  color: var(--text);
+  font-size: 0.84rem;
+  text-align: left;
+}
+
+.sessionActionMenuItem:hover,
+.sessionActionMenuItem:focus-visible {
+  background: color-mix(in srgb, var(--accent) 88%, white);
+  outline: none;
+}
+
+.sessionActionMenuItem.danger {
+  color: hsl(var(--destructive));
+}
+
+.sessionActionMenuItem svg {
+  width: 0.9rem;
+  height: 0.9rem;
+  flex: 0 0 auto;
+}
+
 .sessionMetaLine {
   display: inline-flex;
   align-items: center;
