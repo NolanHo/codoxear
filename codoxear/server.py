@@ -4683,6 +4683,8 @@ class SessionManager:
         cwd: str,
         session_path: Path,
         proc: subprocess.Popen[bytes] | None = None,
+        delete_on_failure: bool = True,
+        restore_record_on_failure: DurableSessionRecord | None = None,
     ) -> None:
         ref = ("pi", durable_session_id)
         try:
@@ -4717,9 +4719,16 @@ class SessionManager:
             )
             _publish_sessions_invalidate(reason="session_created")
         except Exception:
-            self._delete_durable_session_record(ref)
-            self._clear_deleted_session_state(durable_session_id)
-            _publish_sessions_invalidate(reason="session_removed")
+            if delete_on_failure:
+                self._delete_durable_session_record(ref)
+                self._clear_deleted_session_state(durable_session_id)
+                _publish_sessions_invalidate(reason="session_removed")
+                return
+            if restore_record_on_failure is not None:
+                self._persist_durable_session_record(restore_record_on_failure)
+            else:
+                self._refresh_durable_session_catalog(force=True)
+            _publish_sessions_invalidate(reason="session_created")
 
     def _persist_session_ui_state(self) -> None:
         self._sidebar_state_facade().persist_session_ui_state()
@@ -8150,7 +8159,9 @@ class SessionManager:
         cwd3 = str(cwd_path)
         if backend_name == "pi":
             spawn_nonce = secrets.token_hex(8)
-            created_pending_session_id: str | None = None
+            pending_session_id: str | None = None
+            pending_delete_on_failure = True
+            pending_restore_record: DurableSessionRecord | None = None
             if resume_session_id is not None:
                 resume_id = _clean_optional_resume_session_id(resume_session_id)
                 if not resume_id:
@@ -8167,12 +8178,35 @@ class SessionManager:
                         break
                 if session_path is None:
                     raise ValueError(f"resume session not found for cwd: {resume_id}")
+                if create_in_tmux:
+                    pending_session_id = resume_id
+                    pending_delete_on_failure = False
+                    db = getattr(self, "_page_state_db", None)
+                    pending_restore_record = (
+                        db.load_sessions().get(("pi", resume_id))
+                        if isinstance(db, PageStateDB)
+                        else None
+                    )
+                    current = pending_restore_record
+                    self._persist_durable_session_record(
+                        DurableSessionRecord(
+                            backend="pi",
+                            session_id=resume_id,
+                            cwd=(current.cwd if current is not None else cwd3),
+                            source_path=(current.source_path if current is not None else str(session_path)),
+                            title=current.title if current is not None else None,
+                            first_user_message=current.first_user_message if current is not None else None,
+                            created_at=(current.created_at if current is not None else _safe_path_mtime(session_path)),
+                            updated_at=(current.updated_at if current is not None else _safe_path_mtime(session_path)),
+                            pending_startup=True,
+                        )
+                    )
             else:
-                created_pending_session_id = str(uuid.uuid4())
+                pending_session_id = str(uuid.uuid4())
                 session_path = _pi_new_session_file_for_cwd(cwd_path)
                 _write_pi_session_header(
                     session_path,
-                    session_id=created_pending_session_id,
+                    session_id=pending_session_id,
                     cwd=cwd3,
                     provider=model_provider,
                     model_id=model,
@@ -8181,7 +8215,7 @@ class SessionManager:
                 self._persist_durable_session_record(
                     DurableSessionRecord(
                         backend="pi",
-                        session_id=created_pending_session_id,
+                        session_id=pending_session_id,
                         cwd=cwd3,
                         source_path=str(session_path),
                         created_at=_safe_path_mtime(session_path),
@@ -8216,8 +8250,10 @@ class SessionManager:
             if create_in_tmux:
                 tmux_bin = shutil.which("tmux")
                 if tmux_bin is None:
-                    if created_pending_session_id is not None:
-                        self._delete_durable_session_record(("pi", created_pending_session_id))
+                    if pending_session_id is not None and pending_delete_on_failure:
+                        self._delete_durable_session_record(("pi", pending_session_id))
+                    elif pending_restore_record is not None:
+                        self._persist_durable_session_record(pending_restore_record)
                     raise ValueError("tmux is unavailable on this host")
                 tmux_window = _safe_filename(
                     f"{Path(cwd3).name or 'session'}-{spawn_nonce[:6]}",
@@ -8283,28 +8319,32 @@ class SessionManager:
                     tmux_argv, capture_output=True, text=True, env=env, check=False
                 )
                 if tmux_proc.returncode != 0:
-                    if created_pending_session_id is not None:
-                        self._delete_durable_session_record(("pi", created_pending_session_id))
+                    if pending_session_id is not None and pending_delete_on_failure:
+                        self._delete_durable_session_record(("pi", pending_session_id))
+                    elif pending_restore_record is not None:
+                        self._persist_durable_session_record(pending_restore_record)
                     detail = (
                         tmux_proc.stderr
                         or tmux_proc.stdout
                         or f"exit status {tmux_proc.returncode}"
                     ).strip()
                     raise RuntimeError(f"tmux launch failed: {detail}")
-                if created_pending_session_id is not None:
+                if pending_session_id is not None:
                     threading.Thread(
                         target=self._finalize_pending_pi_spawn,
                         kwargs={
                             "spawn_nonce": spawn_nonce,
-                            "durable_session_id": created_pending_session_id,
+                            "durable_session_id": pending_session_id,
                             "cwd": cwd3,
                             "session_path": session_path,
                             "proc": None,
+                            "delete_on_failure": pending_delete_on_failure,
+                            "restore_record_on_failure": pending_restore_record,
                         },
                         daemon=True,
                     ).start()
                     return {
-                        "session_id": created_pending_session_id,
+                        "session_id": pending_session_id,
                         "runtime_id": None,
                         "backend": "pi",
                         "pending_startup": True,
@@ -8328,28 +8368,32 @@ class SessionManager:
                     start_new_session=True,
                 )
             except Exception as e:
-                if created_pending_session_id is not None:
-                    self._delete_durable_session_record(("pi", created_pending_session_id))
+                if pending_session_id is not None and pending_delete_on_failure:
+                    self._delete_durable_session_record(("pi", pending_session_id))
+                elif pending_restore_record is not None:
+                    self._persist_durable_session_record(pending_restore_record)
                 raise RuntimeError(f"spawn failed: {e}") from e
             if proc.stderr is not None:
                 threading.Thread(
                     target=_drain_stream, args=(proc.stderr,), daemon=True
                 ).start()
             threading.Thread(target=proc.wait, daemon=True).start()
-            if created_pending_session_id is not None:
+            if pending_session_id is not None:
                 threading.Thread(
                     target=self._finalize_pending_pi_spawn,
                     kwargs={
                         "spawn_nonce": spawn_nonce,
-                        "durable_session_id": created_pending_session_id,
+                        "durable_session_id": pending_session_id,
                         "cwd": cwd3,
                         "session_path": session_path,
                         "proc": proc,
+                        "delete_on_failure": pending_delete_on_failure,
+                        "restore_record_on_failure": pending_restore_record,
                     },
                     daemon=True,
                 ).start()
                 payload = {
-                    "session_id": created_pending_session_id,
+                    "session_id": pending_session_id,
                     "runtime_id": None,
                     "backend": "pi",
                     "pending_startup": True,

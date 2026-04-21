@@ -19,7 +19,7 @@ function baseProps(overrides: Partial<Parameters<typeof useAppShellSessionEffect
     liveSessionStoreApi: { loadInitial: vi.fn().mockResolvedValue(undefined), poll: vi.fn().mockResolvedValue(undefined) } as any,
     replySoundEnabled: false,
     sessionUiStoreApi: { refresh: vi.fn().mockResolvedValue(undefined) } as any,
-    sessionsStoreApi: { refresh: vi.fn().mockResolvedValue(undefined) } as any,
+    sessionsStoreApi: { refresh: vi.fn().mockResolvedValue(undefined), select: vi.fn() } as any,
     workspaceOpen: false,
     activeSessionReplySoundPrimingRef: { current: null },
     backgroundReplySoundPrimedSessionIdsRef: { current: new Set<string>() },
@@ -158,7 +158,7 @@ it("slows active idle live polling to every 12 seconds", async () => {
         liveSessionStoreApi={liveSessionStoreApi}
         replySoundEnabled={false}
         sessionUiStoreApi={{ refresh: vi.fn() } as any}
-        sessionsStoreApi={{ refresh: vi.fn().mockResolvedValue(undefined) } as any}
+        sessionsStoreApi={{ refresh: vi.fn().mockResolvedValue(undefined), select: vi.fn() } as any}
         workspaceOpen={false}
         activeSessionReplySoundPrimingRef={{ current: null }}
         backgroundReplySoundPrimedSessionIdsRef={{ current: new Set<string>() }}
@@ -180,6 +180,34 @@ it("slows active idle live polling to every 12 seconds", async () => {
     await Promise.resolve();
   });
   expect(liveSessionStoreApi.poll).toHaveBeenCalledTimes(1);
+});
+
+it("clears the active selection when active live polling returns 404", async () => {
+  const notFound = { status: 404 };
+  const sessionsStoreApi = { refresh: vi.fn().mockResolvedValue(undefined), select: vi.fn() } as any;
+  const liveSessionStoreApi = {
+    loadInitial: vi.fn().mockRejectedValue(notFound),
+    poll: vi.fn().mockRejectedValue(notFound),
+  } as any;
+
+  const root = document.createElement("div");
+  document.body.appendChild(root);
+
+  await act(async () => {
+    render(
+      <Harness
+        {...baseProps({
+          liveSessionStoreApi,
+          sessionsStoreApi,
+        })}
+      />,
+      root,
+    );
+    await flush();
+  });
+
+  expect(sessionsStoreApi.select).toHaveBeenCalledWith(null);
+  expect(sessionsStoreApi.refresh).toHaveBeenCalled();
 });
 
 it("switches to fast live polling as soon as live state reports the active session busy", async () => {

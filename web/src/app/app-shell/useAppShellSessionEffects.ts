@@ -104,6 +104,7 @@ export function useAppShellSessionEffects({
       if (!error || typeof error !== "object" || (error as { status?: unknown }).status !== 404) {
         return;
       }
+      sessionsStoreApi.select(null);
       sessionsStoreApi.refresh().catch(() => undefined);
     };
 
@@ -142,6 +143,7 @@ export function useAppShellSessionEffects({
       if (!error || typeof error !== "object" || (error as { status?: unknown }).status !== 404) {
         return;
       }
+      sessionsStoreApi.select(null);
       sessionsStoreApi.refresh().catch(() => undefined);
     };
 

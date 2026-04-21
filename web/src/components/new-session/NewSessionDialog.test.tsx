@@ -951,6 +951,93 @@ describe("NewSessionDialog", () => {
     expect(root.textContent).toContain("Showing 21-21");
   });
 
+  it("clears stale resume selection immediately when the cwd changes", async () => {
+    const { api } = await import("../../lib/api");
+    vi.mocked(api.createSession).mockResolvedValue({ session_id: "new-pi", broker_pid: 91, backend: "pi", ok: true } as any);
+    vi.mocked(api.getSessionResumeCandidates).mockImplementation(async (cwd) => {
+      if (cwd === "/tmp/old-project") {
+        return {
+          exists: true,
+          will_create: false,
+          git_repo: false,
+          offset: 0,
+          limit: 20,
+          remaining: 0,
+          sessions: [{ session_id: "stale-resume", title: "codoxear new 修复", first_user_message: "old prompt" }],
+        } as any;
+      }
+      return {
+        exists: true,
+        will_create: false,
+        git_repo: false,
+        offset: 0,
+        limit: 20,
+        remaining: 0,
+        sessions: [],
+      } as any;
+    });
+
+    const sessionsStore = createSessionsStore({
+      items: [{ session_id: "old-live" }, { session_id: "new-pi" }],
+      activeSessionId: null,
+      loading: false,
+      bootstrapLoaded: true,
+      recentCwds: ["/tmp/old-project"],
+      tmuxAvailable: false,
+      newSessionDefaults: {
+        default_backend: "pi",
+        backends: {
+          pi: { provider_choice: "macaron", model: "gpt-5.4", reasoning_effort: "high" },
+          codex: { provider_choice: "chatgpt" },
+        },
+      },
+    });
+
+    root = document.createElement("div");
+    document.body.appendChild(root);
+    await act(async () => {
+      render(
+        <AppProviders sessionsStore={sessionsStore as any}>
+          <NewSessionDialog open onClose={() => undefined} />
+        </AppProviders>,
+        root!,
+      );
+    });
+    await wait(220);
+    await flush();
+
+    const cwdInput = root.querySelector('input[name="cwd"]') as HTMLInputElement;
+    const select = root.querySelector('select[name="resumeSessionId"]') as HTMLSelectElement;
+    expect(select.textContent).toContain("codoxear new 修复");
+
+    await setSelectValue(select, "stale-resume");
+    expect(select.value).toBe("stale-resume");
+
+    await setInputValue(cwdInput, "/tmp/new-project");
+    await flush();
+
+    expect(select.value).toBe("");
+    expect(select.textContent).not.toContain("codoxear new 修复");
+
+    const form = root.querySelector("form") as HTMLFormElement;
+    await submitForm(form);
+    await flush();
+
+    expect(api.createSession).toHaveBeenCalledWith({
+      cwd: "/tmp/new-project",
+      name: undefined,
+      backend: "pi",
+      create_in_tmux: undefined,
+      model: "gpt-5.4",
+      model_provider: "macaron",
+      preferred_auth_method: undefined,
+      reasoning_effort: "high",
+      resume_session_id: undefined,
+      service_tier: undefined,
+      worktree_branch: undefined,
+    });
+  });
+
   it("lets Pi sessions launch in tmux and explains the pi-rpc host split", async () => {
     const { api } = await import("../../lib/api");
     vi.mocked(api.createSession).mockResolvedValue({ session_id: "pi-new", broker_pid: 84, backend: "pi", ok: true } as any);

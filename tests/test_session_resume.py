@@ -867,6 +867,54 @@ class TestSpawnWebSessionResume(unittest.TestCase):
         self.assertIn("codoxear.broker", shell_cmd)
         wait_mock.assert_called_once()
 
+    def test_spawn_web_session_returns_pending_for_pi_tmux_resume(self) -> None:
+        manager = SessionManager.__new__(SessionManager)
+        resume_file = Path("/tmp/pi-resume.jsonl")
+
+        with (
+            TemporaryDirectory() as td,
+            patch(
+                "codoxear.server._list_resume_candidates_for_cwd",
+                return_value=[{"session_id": "resume-a", "session_path": str(resume_file)}],
+            ),
+            patch("codoxear.server.shutil.which", return_value="/usr/bin/tmux"),
+            patch.object(SessionManager, "_persist_durable_session_record", lambda *_args, **_kwargs: None),
+            patch.object(threading.Thread, "start", lambda self: None),
+            patch(
+                "codoxear.server.subprocess.run",
+                side_effect=[
+                    subprocess.CompletedProcess(
+                        ["/usr/bin/tmux", "has-session", "-t", "codoxear"],
+                        1,
+                        stdout="",
+                        stderr="",
+                    ),
+                    subprocess.CompletedProcess(
+                        ["/usr/bin/tmux", "new-session"], 0, stdout="%8\n", stderr=""
+                    ),
+                ],
+            ),
+        ):
+            result = SessionManager.spawn_web_session(
+                manager,
+                cwd=td,
+                backend="pi",
+                resume_session_id="resume-a",
+                create_in_tmux=True,
+            )
+
+        self.assertEqual(
+            result,
+            {
+                "backend": "pi",
+                "session_id": "resume-a",
+                "runtime_id": None,
+                "pending_startup": True,
+                "tmux_session": "codoxear",
+                "tmux_window": ANY,
+            },
+        )
+
     def test_spawn_web_session_rejects_tmux_when_unavailable(self) -> None:
         manager = SessionManager.__new__(SessionManager)
         with (

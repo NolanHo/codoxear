@@ -309,6 +309,10 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
   useEffect(() => {
     if (!open) return;
     setResumeOffset(0);
+    setResumeCandidates([]);
+    setResumeSessionId("");
+    setResumeRemaining(0);
+    setLookupError("");
   }, [backend, cwd, open]);
 
   useEffect(() => {
@@ -509,6 +513,10 @@ export function NewSessionDialog({ open, onClose }: NewSessionDialogProps) {
               }
               if (supportsWorktree && useWorktree && !resumeSessionId && !trimmedWorktreeBranch) {
                 setError("Branch name is required.");
+                return;
+              }
+              if (resumeSessionId && !resumeCandidates.some((item) => item.session_id === resumeSessionId)) {
+                setError("Selected resume conversation is no longer available for this directory.");
                 return;
               }
 

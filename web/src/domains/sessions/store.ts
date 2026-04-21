@@ -27,7 +27,7 @@ export interface SessionsStore {
   refresh(options?: RefreshSessionsOptions): Promise<void>;
   refreshBootstrap(options?: RefreshBootstrapOptions): Promise<void>;
   loadMore(limit?: number): Promise<void>;
-  select(sessionId: string): void;
+  select(sessionId: string | null): void;
 }
 
 const PAGE_SIZE = 50;
@@ -181,8 +181,8 @@ export function createSessionsStore(): SessionsStore {
       loadedLimit = Math.max(PAGE_SIZE, loadedLimit + Math.max(1, limit));
       await refresh();
     },
-    select(sessionId: string) {
-      hasResolvedInitialSelection = true;
+    select(sessionId: string | null) {
+      hasResolvedInitialSelection = sessionId !== null;
       state = { ...state, activeSessionId: sessionId };
       emit();
     },
