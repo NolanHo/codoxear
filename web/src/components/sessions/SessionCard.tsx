@@ -13,10 +13,11 @@ interface SessionCardProps {
   onToggleFocus?: () => void;
   onEdit?: () => void;
   onDuplicate?: () => void;
+  onHandoff?: () => void;
   onDelete?: () => void;
 }
 
-function ActionIcon({ kind }: { kind: "edit" | "duplicate" | "delete" | "focus" }) {
+function ActionIcon({ kind }: { kind: "edit" | "duplicate" | "delete" | "focus" | "handoff" }) {
   if (kind === "edit") {
     return (
       <svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.4">
@@ -43,6 +44,17 @@ function ActionIcon({ kind }: { kind: "edit" | "duplicate" | "delete" | "focus" 
     );
   }
 
+  if (kind === "handoff") {
+    return (
+      <svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.4">
+        <path d="M3 8h7" />
+        <path d="m8 4 4 4-4 4" />
+        <path d="M3 3.5h4" />
+        <path d="M3 12.5h4" />
+      </svg>
+    );
+  }
+
   return (
     <svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.4">
       <path d="M3.5 4.5h9" />
@@ -59,11 +71,11 @@ export function useDesktopSessionActions() {
   return Boolean(window.matchMedia("(hover: hover) and (pointer: fine) and (min-width: 881px)").matches);
 }
 
-export function SessionCard({ session, active, onSelect, onToggleFocus, onEdit, onDuplicate, onDelete }: SessionCardProps) {
+export function SessionCard({ session, active, onSelect, onToggleFocus, onEdit, onDuplicate, onHandoff, onDelete }: SessionCardProps) {
   const title = getSessionDisplayName(session);
   const isHistorical = session.historical === true;
   const desktopActions = useDesktopSessionActions();
-  const hasActions = Boolean(onToggleFocus || onEdit || onDuplicate || onDelete);
+  const hasActions = Boolean(onToggleFocus || onEdit || onDuplicate || onHandoff || onDelete);
   const showActions = hasActions && (active || desktopActions);
   const idBase = `session-${session.session_id.replace(/[^a-z0-9_-]/gi, "-")}`;
   const titleId = `${idBase}-title`;
@@ -157,6 +169,21 @@ export function SessionCard({ session, active, onSelect, onToggleFocus, onEdit, 
                         }}
                       >
                         <ActionIcon kind="duplicate" />
+                      </Button>
+                    ) : null}
+                    {onHandoff ? (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="sessionActionIconButton h-8 w-8 rounded-md text-muted-foreground hover:text-foreground"
+                        aria-label="Handoff session"
+                        onClick={(event) => {
+                          stopActionClick(event);
+                          onHandoff();
+                        }}
+                      >
+                        <ActionIcon kind="handoff" />
                       </Button>
                     ) : null}
                     {onDelete ? (

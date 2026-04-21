@@ -6,6 +6,7 @@ import type {
   CreateSessionResponse,
   DeleteSessionResponse,
   EditSessionResponse,
+  HandoffSessionResponse,
   FocusSessionResponse,
   GitFileVersionsResponse,
   HarnessConfigResponse,
@@ -132,6 +133,10 @@ export const api = {
   deleteSession(sessionId: string, runtimeId?: string | null) {
     const routeId = getSessionRouteId(sessionId, runtimeId);
     return postJson<DeleteSessionResponse>(`/api/sessions/${routeId}/delete`, {});
+  },
+  handoffSession(sessionId: string, runtimeId?: string | null) {
+    const routeId = getSessionRouteId(sessionId, runtimeId);
+    return postJson<HandoffSessionResponse>(`/api/sessions/${routeId}/handoff`, {});
   },
   async createSession(payload: Record<string, unknown>) {
     return postJson<CreateSessionResponse>(`/api/sessions`, payload);

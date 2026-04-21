@@ -3262,6 +3262,114 @@ def _write_pi_session_header(
         f.write(json.dumps(header, ensure_ascii=False) + "\n")
 
 
+def _pi_session_history_glob(session_path: Path) -> str:
+    return f"{session_path.name}.history*"
+
+
+def _pi_session_has_handoff_history(session_path: Path) -> bool:
+    try:
+        return any(session_path.parent.glob(_pi_session_history_glob(session_path)))
+    except OSError:
+        return False
+
+
+def _next_pi_handoff_history_path(session_path: Path) -> Path:
+    base_name = f"{session_path.name}.history"
+    candidate = session_path.with_name(base_name)
+    if not candidate.exists():
+        return candidate
+    i = 1
+    while True:
+        candidate = session_path.with_name(f"{base_name}.{i}")
+        if not candidate.exists():
+            return candidate
+        i += 1
+
+
+def _copy_file_atomic(source_path: Path, target_path: Path) -> None:
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    if target_path.exists():
+        raise FileExistsError(f"target already exists: {target_path}")
+    tmp_path = target_path.with_name(
+        f".{target_path.name}.codoxear-tmp-{secrets.token_hex(6)}"
+    )
+    try:
+        with source_path.open("rb") as src, tmp_path.open("xb") as dst:
+            shutil.copyfileobj(src, dst)
+        try:
+            st = source_path.stat()
+            os.chmod(tmp_path, st.st_mode & 0o777)
+        except OSError:
+            pass
+        os.replace(tmp_path, target_path)
+    finally:
+        try:
+            if tmp_path.exists():
+                tmp_path.unlink()
+        except OSError:
+            pass
+
+
+def _append_pi_user_message(session_path: Path, *, text: str) -> None:
+    now = float(_now())
+    millis = int(round(now * 1000))
+    entry = {
+        "type": "message",
+        "message": {
+            "role": "user",
+            "content": [{"type": "text", "text": text}],
+            "timestamp": millis,
+        },
+    }
+    with session_path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+
+def _pi_handoff_message_text(
+    *, source_session_id: str, history_path: Path, cwd: str
+) -> str:
+    return "\n".join(
+        [
+            "Handoff context:",
+            f"- Source session id: {source_session_id}",
+            f"- Archived history file: {history_path}",
+            f"- Working directory: {cwd}",
+            "- This is a fresh session with no inherited chat context.",
+            "- Read the archived history file only when you need prior context.",
+        ]
+    )
+
+
+def _write_pi_handoff_session(
+    session_path: Path,
+    *,
+    session_id: str,
+    cwd: str,
+    source_session_id: str,
+    history_path: Path,
+    provider: str | None = None,
+    model_id: str | None = None,
+    thinking_level: str | None = None,
+) -> None:
+    _write_pi_session_header(
+        session_path,
+        session_id=session_id,
+        cwd=cwd,
+        parent_session=source_session_id,
+        provider=provider,
+        model_id=model_id,
+        thinking_level=thinking_level,
+    )
+    _append_pi_user_message(
+        session_path,
+        text=_pi_handoff_message_text(
+            source_session_id=source_session_id,
+            history_path=history_path,
+            cwd=cwd,
+        ),
+    )
+
+
 def _pi_session_name_from_session_file(
     session_path: Path, *, max_scan_bytes: int = 512 * 1024
 ) -> str:
@@ -3280,6 +3388,8 @@ def _pi_session_name_from_session_file(
 
 
 def _pi_resume_candidate_from_session_file(session_path: Path) -> dict[str, Any] | None:
+    if _pi_session_has_handoff_history(session_path):
+        return None
     try:
         with session_path.open("rb") as f:
             for raw in f:
@@ -3336,6 +3446,8 @@ def _discover_pi_session_for_cwd(
     best_mtime: float = 0
     for f in session_dir.glob("*.jsonl"):
         if exclude and f in exclude:
+            continue
+        if _pi_session_has_handoff_history(f):
             continue
         try:
             mtime = f.stat().st_mtime
@@ -4674,6 +4786,135 @@ class SessionManager:
         db = getattr(self, "_page_state_db", None)
         if ref is not None and isinstance(db, PageStateDB):
             db.delete_session(ref)
+
+    def _wait_for_live_session(
+        self,
+        durable_session_id: str,
+        *,
+        timeout_s: float = 8.0,
+    ) -> Session:
+        deadline = time.time() + max(timeout_s, 0.1)
+        while time.time() < deadline:
+            self._discover_existing(force=True, skip_invalid_sidecars=True)
+            runtime_id = self._runtime_session_id_for_identifier(durable_session_id)
+            if runtime_id is not None:
+                with self._lock:
+                    session = self._sessions.get(runtime_id)
+                if session is not None:
+                    return session
+            time.sleep(0.05)
+        raise RuntimeError(
+            f"spawned session is not yet discoverable: {durable_session_id}"
+        )
+
+    def _copy_session_ui_identity(
+        self,
+        *,
+        source_session_id: str,
+        target_session_id: str,
+    ) -> str | None:
+        alias = _clean_optional_text(self.alias_get(source_session_id))
+        meta = self.sidebar_meta_get(source_session_id)
+        if alias is not None:
+            alias = self.alias_set(target_session_id, alias)
+        self.sidebar_meta_set(
+            target_session_id,
+            priority_offset=meta.get("priority_offset"),
+            snooze_until=meta.get("snooze_until"),
+            dependency_session_id=meta.get("dependency_session_id"),
+        )
+        if bool(meta.get("focused")):
+            self.focus_set(target_session_id, True)
+        return alias
+
+    def handoff_session(self, session_id: str) -> dict[str, Any]:
+        runtime_id = self._runtime_session_id_for_identifier(session_id)
+        if runtime_id is None:
+            listed_row = _listed_session_row(self, session_id)
+            if isinstance(listed_row, dict) and listed_row.get("pending_startup"):
+                raise ValueError("session is still starting")
+            raise KeyError("unknown session")
+        with self._lock:
+            source = self._sessions.get(runtime_id)
+        if source is None:
+            raise KeyError("unknown session")
+        if normalize_agent_backend(source.backend, default=source.agent_backend) != "pi":
+            raise ValueError("handoff is only supported for pi sessions")
+        source_path = source.session_path
+        if source_path is None or (not source_path.exists()):
+            raise ValueError("pi session file not found")
+        cwd = _clean_optional_text(source.cwd)
+        if cwd is None:
+            raise ValueError("session is missing cwd")
+        source_session_id = self._durable_session_id_for_session(source)
+        history_path = _next_pi_handoff_history_path(source_path)
+        new_session_id = str(uuid.uuid4())
+        new_session_path = _pi_new_session_file_for_cwd(cwd)
+        provider, model_id, thinking_level = _read_pi_run_settings(source_path)
+        provider = _clean_optional_text(source.model_provider) or provider
+        model_id = _clean_optional_text(source.model) or model_id
+        thinking_level = _clean_optional_text(source.reasoning_effort) or thinking_level
+        create_in_tmux = (source.transport or "").strip().lower() == "tmux"
+        copied_history = False
+        launched_session_id = new_session_id
+        launched_runtime_id: str | None = None
+        try:
+            _copy_file_atomic(source_path, history_path)
+            copied_history = True
+            _write_pi_handoff_session(
+                new_session_path,
+                session_id=new_session_id,
+                cwd=cwd,
+                source_session_id=source_session_id,
+                history_path=history_path,
+                provider=provider,
+                model_id=model_id,
+                thinking_level=thinking_level,
+            )
+            spawn_res = self.spawn_web_session(
+                cwd=cwd,
+                backend="pi",
+                resume_session_id=new_session_id,
+                model_provider=provider,
+                model=model_id,
+                reasoning_effort=thinking_level,
+                create_in_tmux=create_in_tmux,
+            )
+            launched_session_id = (
+                _clean_optional_text(spawn_res.get("session_id")) or new_session_id
+            )
+            launched = self._wait_for_live_session(launched_session_id)
+            launched_runtime_id = launched.session_id
+            alias = self._copy_session_ui_identity(
+                source_session_id=session_id,
+                target_session_id=launched_session_id,
+            )
+            if not self.delete_session(runtime_id):
+                raise RuntimeError("failed to stop source session after handoff launch")
+            payload = dict(spawn_res)
+            payload["session_id"] = launched_session_id
+            payload["runtime_id"] = launched_runtime_id
+            payload["backend"] = "pi"
+            payload["history_path"] = str(history_path)
+            payload["previous_session_id"] = source_session_id
+            if alias:
+                payload["alias"] = alias
+            return payload
+        except Exception:
+            if launched_runtime_id is not None:
+                try:
+                    self.delete_session(launched_runtime_id)
+                except Exception:
+                    pass
+            else:
+                try:
+                    self.delete_session(launched_session_id)
+                except Exception:
+                    pass
+            _unlink_quiet(new_session_path)
+            if copied_history:
+                _unlink_quiet(history_path)
+            raise
 
     def _finalize_pending_pi_spawn(
         self,

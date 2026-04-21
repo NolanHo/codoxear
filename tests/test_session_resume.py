@@ -262,6 +262,35 @@ class TestSessionResumeCandidates(unittest.TestCase):
             [row["session_id"] for row in rows], ["pi-session-2", "pi-session-1"]
         )
 
+    def test_list_resume_candidates_skips_pi_session_with_handoff_history(self) -> None:
+        with TemporaryDirectory() as td:
+            root = Path(td)
+            pi_root = root / "pi-native"
+            session_dir = pi_root / "--repo--"
+            session_dir.mkdir(parents=True, exist_ok=True)
+            session_path = session_dir / "active.jsonl"
+            history_path = session_dir / "active.jsonl.history"
+
+            _write_jsonl(
+                session_path,
+                [
+                    {
+                        "type": "session",
+                        "id": "pi-session-1",
+                        "cwd": "/repo",
+                        "timestamp": "2026-03-28T12:00:00.000Z",
+                    }
+                ],
+            )
+            history_path.write_text(
+                session_path.read_text(encoding="utf-8"), encoding="utf-8"
+            )
+
+            with patch("codoxear.server.PI_NATIVE_SESSIONS_DIR", pi_root):
+                rows = _list_resume_candidates_for_cwd("/repo", limit=10, backend="pi")
+
+        self.assertEqual(rows, [])
+
     def test_list_resume_candidates_skips_pi_files_that_disappear_during_sort(
         self,
     ) -> None:

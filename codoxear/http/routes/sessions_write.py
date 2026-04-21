@@ -111,6 +111,23 @@ def handle_post(handler: Any, path: str, _u: Any) -> bool:
         sv._publish_sessions_invalidate(reason="session_deleted")
         sv._json_response(handler, 200, {"ok": True})
         return True
+    session_id = sv._match_session_route(path, "handoff")
+    if session_id is not None:
+        if not sv._require_auth(handler):
+            handler._unauthorized()
+            return True
+        sv._read_body(handler)
+        try:
+            res = sv.MANAGER.handoff_session(session_id)
+        except ValueError as e:
+            sv._json_response(handler, 400, {"error": str(e)})
+            return True
+        except KeyError:
+            sv._json_response(handler, 404, {"error": "unknown session"})
+            return True
+        sv._publish_sessions_invalidate(reason="session_created")
+        sv._json_response(handler, 200, {"ok": True, **res})
+        return True
     if path.startswith("/api/sessions/") and path.endswith("/edit"):
         if not sv._require_auth(handler):
             handler._unauthorized()

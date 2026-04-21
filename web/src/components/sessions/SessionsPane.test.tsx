@@ -9,6 +9,7 @@ import { SessionsPane } from "./SessionsPane";
 vi.mock("../../lib/api", () => ({
   api: {
     createSession: vi.fn().mockResolvedValue({ ok: true, session_id: "sess-2", broker_pid: 42 }),
+    handoffSession: vi.fn().mockResolvedValue({ ok: true, session_id: "sess-2", runtime_id: "rt-2", broker_pid: 42 }),
     editSession: vi.fn().mockResolvedValue({ ok: true, alias: "Updated session" }),
     deleteSession: vi.fn().mockResolvedValue({ ok: true }),
     setSessionFocus: vi.fn().mockResolvedValue({ ok: true, focused: true }),
@@ -64,17 +65,31 @@ function createSessionsStore(initialState: any, options?: { onRefresh?: () => vo
   };
 }
 
-function renderSessionsPane(state: any, options?: { onRefresh?: () => void | Promise<void> }) {
+function renderSessionsPane(
+  state: any,
+  options?: {
+    onRefresh?: () => void | Promise<void>;
+    composerStore?: any;
+  },
+) {
   const sessionsStore = createSessionsStore(state, options);
+  const composerStore = options?.composerStore ?? {
+    getState: () => ({ draftBySessionId: {}, sending: false, pendingBySessionId: {} }),
+    subscribe: () => () => undefined,
+    setDraft: vi.fn(),
+    copyDraft: vi.fn(),
+    submit: vi.fn(),
+    clearAcknowledgedPending: vi.fn(),
+  };
   root = document.createElement("div");
   document.body.appendChild(root);
   render(
-    <AppProviders sessionsStore={sessionsStore as any}>
+    <AppProviders sessionsStore={sessionsStore as any} composerStore={composerStore as any}>
       <SessionsPane />
     </AppProviders>,
     root,
   );
-  return sessionsStore;
+  return Object.assign(sessionsStore, { composerStore });
 }
 
 describe("SessionsPane", () => {
@@ -259,6 +274,58 @@ describe("SessionsPane", () => {
     expect(api.deleteSession).toHaveBeenCalledWith("sess-1");
     expect(sessionsStore.refresh).toHaveBeenCalled();
     expect(confirm).toHaveBeenCalled();
+  });
+
+  it("does not show handoff for a pending pi session", () => {
+    renderSessionsPane({
+      items: [{ session_id: "sess-pending", alias: "Pending", agent_backend: "pi", pending_startup: true }],
+      activeSessionId: "sess-pending",
+      loading: false,
+      newSessionDefaults: null,
+      recentCwds: [],
+      cwdGroups: {},
+      tmuxAvailable: true,
+    });
+
+    expect(root?.querySelector('button[aria-label="Handoff session"]')).toBeNull();
+  });
+
+  it("hands off a pi session and preserves the draft under the new session id", async () => {
+    const composerStore = {
+      getState: () => ({ draftBySessionId: { "sess-1": "keep draft" }, sending: false, pendingBySessionId: {} }),
+      subscribe: () => () => undefined,
+      setDraft: vi.fn(),
+      copyDraft: vi.fn(),
+      submit: vi.fn(),
+      clearAcknowledgedPending: vi.fn(),
+    };
+    const sessionsStore = renderSessionsPane({
+      items: [{ session_id: "sess-1", alias: "Inbox cleanup", cwd: "/tmp/project", agent_backend: "pi", runtime_id: "rt-1" }],
+      activeSessionId: "sess-1",
+      loading: false,
+      newSessionDefaults: null,
+      recentCwds: ["/tmp/project"],
+      cwdGroups: {},
+      tmuxAvailable: true,
+    }, {
+      composerStore,
+    });
+
+    sessionsStore.refresh = vi.fn(async () => {
+      sessionsStore.setState({
+        ...sessionsStore.getState(),
+        items: [{ session_id: "sess-2", alias: "Inbox cleanup", cwd: "/tmp/project", agent_backend: "pi", runtime_id: "rt-2" }],
+      });
+    });
+
+    const handoffButton = root?.querySelector<HTMLButtonElement>('button[aria-label="Handoff session"]');
+    expect(handoffButton).not.toBeNull();
+    await click(handoffButton!);
+    await flush();
+
+    expect(api.handoffSession).toHaveBeenCalledWith("sess-1", "rt-1");
+    expect(composerStore.copyDraft).toHaveBeenCalledWith("sess-1", "sess-2");
+    expect(sessionsStore.select).toHaveBeenCalledWith("sess-2");
   });
 
   it("duplicates a session from details and selects returned session", async () => {

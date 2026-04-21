@@ -32,6 +32,15 @@ describe("createComposerStore", () => {
     expect(JSON.parse(window.localStorage.getItem("codoxear.composerDrafts.v1") || "{}")).toEqual({ s1: "first", s2: "second" });
   });
 
+  it("copies a draft to a new session id", () => {
+    const store = createComposerStore();
+    store.setDraft("s1", "persist me");
+
+    store.copyDraft("s1", "s2");
+
+    expect(store.getState().draftBySessionId).toEqual({ s1: "persist me", s2: "persist me" });
+  });
+
   it("clears sending state after a successful submit", async () => {
     vi.mocked(api.sendMessage).mockResolvedValue({ ok: true } as never);
     const store = createComposerStore();

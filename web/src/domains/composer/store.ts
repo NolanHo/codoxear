@@ -22,6 +22,7 @@ export interface ComposerStore {
   getState(): ComposerState;
   subscribe(listener: () => void): () => void;
   setDraft(sessionId: string | null | undefined, value: string): void;
+  copyDraft(sourceSessionId: string | null | undefined, targetSessionId: string | null | undefined): void;
   submit(sessionId: string, runtimeId?: string | null): Promise<unknown>;
   clearAcknowledgedPending(sessionId: string, persistedEvents: MessageEvent[]): void;
 }
@@ -124,6 +125,24 @@ export function createComposerStore(): ComposerStore {
     },
     setDraft(sessionId: string | null | undefined, value: string) {
       updateDrafts(sessionId, value);
+      emit();
+    },
+    copyDraft(sourceSessionId: string | null | undefined, targetSessionId: string | null | undefined) {
+      const sourceId = typeof sourceSessionId === "string" ? sourceSessionId : "";
+      const targetId = typeof targetSessionId === "string" ? targetSessionId : "";
+      if (!sourceId || !targetId || sourceId === targetId) {
+        return;
+      }
+      const draft = state.draftBySessionId[sourceId] ?? "";
+      if (!draft.length) {
+        return;
+      }
+      const draftBySessionId = nextDraftMap(state.draftBySessionId, targetId, draft);
+      if (draftBySessionId === state.draftBySessionId) {
+        return;
+      }
+      persistDrafts(draftBySessionId);
+      state = { ...state, draftBySessionId };
       emit();
     },
     async submit(sessionId: string, runtimeId?: string | null) {

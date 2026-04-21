@@ -157,6 +157,127 @@ class TestPiBackendRouting(unittest.TestCase):
         self.assertEqual(handler.status, 200)
         self.assertEqual(payload, {"ok": True})
 
+    def test_handoff_session_archives_old_pi_history_and_launches_new_session(
+        self,
+    ) -> None:
+        mgr = _make_manager()
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            source_path = root / "source.jsonl"
+            new_session_path = root / "handoff.jsonl"
+            sock = root / "pi.sock"
+            sock.touch()
+            _write_jsonl(
+                source_path,
+                [
+                    {
+                        "type": "session",
+                        "id": "dur-old",
+                        "cwd": td,
+                        "timestamp": "2026-03-28T12:00:00Z",
+                    },
+                    {
+                        "type": "message",
+                        "message": {
+                            "role": "user",
+                            "content": [{"type": "text", "text": "old context"}],
+                        },
+                    },
+                ],
+            )
+            mgr._sessions["rt-old"] = Session(
+                session_id="rt-old",
+                thread_id="dur-old",
+                agent_backend="pi",
+                backend="pi",
+                broker_pid=3333,
+                codex_pid=4444,
+                owned=True,
+                start_ts=123.0,
+                cwd=td,
+                log_path=None,
+                sock_path=sock,
+                session_path=source_path,
+                model_provider="openai",
+                model="gpt-5.4",
+                reasoning_effort="high",
+                transport="pi-rpc",
+            )
+            mgr._sessions["rt-new"] = Session(
+                session_id="rt-new",
+                thread_id="dur-new",
+                agent_backend="pi",
+                backend="pi",
+                broker_pid=5555,
+                codex_pid=6666,
+                owned=True,
+                start_ts=456.0,
+                cwd=td,
+                log_path=None,
+                sock_path=root / "pi-new.sock",
+                session_path=new_session_path,
+                model_provider="openai",
+                model="gpt-5.4",
+                reasoning_effort="high",
+                transport="pi-rpc",
+            )
+            mgr.spawn_web_session = Mock(
+                return_value={
+                    "session_id": "dur-new",
+                    "runtime_id": "rt-new",
+                    "backend": "pi",
+                }
+            )
+            mgr.delete_session = Mock(return_value=True)
+            mgr.alias_get = Mock(return_value="Inbox cleanup")
+            mgr.alias_set = Mock(return_value="Inbox cleanup")
+            mgr.sidebar_meta_get = Mock(
+                return_value={
+                    "priority_offset": 0.25,
+                    "snooze_until": None,
+                    "dependency_session_id": None,
+                    "focused": True,
+                }
+            )
+            mgr.sidebar_meta_set = Mock(return_value={})
+            mgr.focus_set = Mock(return_value=True)
+            mgr._discover_existing = lambda *args, **kwargs: None  # type: ignore[method-assign]
+
+            def resolve_runtime(session_id: str) -> str | None:
+                if session_id == "rt-old":
+                    return "rt-old"
+                if session_id in {"rt-new", "dur-new"}:
+                    return "rt-new"
+                return None
+
+            mgr._runtime_session_id_for_identifier = resolve_runtime  # type: ignore[method-assign]
+
+            with (
+                patch(
+                    "codoxear.server._pi_new_session_file_for_cwd",
+                    return_value=new_session_path,
+                ),
+                patch("codoxear.server.uuid.uuid4", return_value="dur-new"),
+            ):
+                payload = mgr.handoff_session("rt-old")
+
+            self.assertEqual(payload["session_id"], "dur-new")
+            self.assertEqual(payload["runtime_id"], "rt-new")
+            self.assertEqual(payload["alias"], "Inbox cleanup")
+            history_path = Path(payload["history_path"])
+            self.assertTrue(history_path.exists())
+            self.assertIn("old context", history_path.read_text(encoding="utf-8"))
+            new_text = new_session_path.read_text(encoding="utf-8")
+            self.assertIn('"id": "dur-new"', new_text)
+            self.assertIn("Archived history file", new_text)
+            mgr.spawn_web_session.assert_called_once()
+            self.assertEqual(
+                mgr.spawn_web_session.call_args.kwargs["resume_session_id"], "dur-new"
+            )
+            mgr.delete_session.assert_called_once_with("rt-old")
+            mgr.alias_set.assert_called_once_with("dur-new", "Inbox cleanup")
+            mgr.focus_set.assert_called_once_with("dur-new", True)
+
     def test_get_session_commands_caches_pi_command_results(self) -> None:
         mgr = _make_manager()
         sock = Path("/tmp/pi-session.sock")

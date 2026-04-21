@@ -3,7 +3,7 @@ import { useMemo, useState } from "preact/hooks";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
-import { useSessionsStore, useSessionsStoreApi } from "../../app/providers";
+import { useComposerStoreApi, useSessionsStore, useSessionsStoreApi } from "../../app/providers";
 import { api } from "../../lib/api";
 import { normalizeLaunchBackend, providerChoiceToSettings } from "../../lib/launch";
 import { getSessionRuntimeId } from "../../lib/session-identity";
@@ -36,6 +36,7 @@ function deleteSessionConfirmText(session: SessionSummary) {
 export function SessionsPane({ onNewSession }: SessionsPaneProps) {
   const { items, activeSessionId, remainingCount = 0 } = useSessionsStore();
   const sessionsStoreApi = useSessionsStoreApi();
+  const composerStoreApi = useComposerStoreApi();
   const [editingSession, setEditingSession] = useState<SessionSummary | null>(null);
   const [actionError, setActionError] = useState("");
   const [surfaceTab, setSurfaceTab] = useState<SessionsSurfaceTab>("sessions");
@@ -182,6 +183,21 @@ export function SessionsPane({ onNewSession }: SessionsPaneProps) {
     }
   };
 
+  const handoffSession = async (session: SessionSummary) => {
+    setActionError("");
+    try {
+      const runtimeId = getSessionRuntimeId(session);
+      const response = await api.handoffSession(session.session_id, runtimeId);
+      const nextSessionId = String(response.session_id || "").trim();
+      if (nextSessionId) {
+        composerStoreApi.copyDraft(session.session_id, nextSessionId);
+      }
+      await selectCreatedSession(response);
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Failed to handoff session");
+    }
+  };
+
   return (
     <>
       <aside className="sessionsPane" data-testid="sessions-surface">
@@ -235,6 +251,11 @@ export function SessionsPane({ onNewSession }: SessionsPaneProps) {
                 }}
                 onToggleFocus={() => { void toggleSessionFocus(session); }}
                 onDuplicate={session.historical ? undefined : () => { void duplicateSession(session); }}
+                onHandoff={(!session.historical
+                  && session.pending_startup !== true
+                  && normalizeLaunchBackend(session.agent_backend) === "pi")
+                  ? () => { void handoffSession(session); }
+                  : undefined}
                 onDelete={() => { void deleteSession(session); }}
                 onEdit={session.historical ? undefined : () => {
                   setActionError("");

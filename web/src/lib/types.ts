@@ -85,6 +85,11 @@ export interface DeleteSessionResponse {
   ok?: boolean;
 }
 
+export interface HandoffSessionResponse extends CreateSessionResponse {
+  history_path?: string;
+  previous_session_id?: string;
+}
+
 export interface RenameSessionResponse {
   ok?: boolean;
   alias?: string;
