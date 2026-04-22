@@ -368,6 +368,8 @@ class TestPiBackendRouting(unittest.TestCase):
                 return None
 
             mgr._runtime_session_id_for_identifier = resolve_runtime  # type: ignore[method-assign]
+            handoff_signal_path = root / "handoff.signal.jsonl"
+            handoff_signal_path.write_text('{"kind":"user_message","text":"summary"}\n', encoding="utf-8")
 
             with (
                 patch(
@@ -375,6 +377,10 @@ class TestPiBackendRouting(unittest.TestCase):
                     return_value=new_session_path,
                 ),
                 patch("codoxear.server.uuid.uuid4", return_value="dur-new"),
+                patch(
+                    "codoxear.server._export_pi_handoff_signal",
+                    return_value=handoff_signal_path,
+                ) as export_signal,
             ):
                 payload = mgr.handoff_session("rt-old")
 
@@ -384,16 +390,22 @@ class TestPiBackendRouting(unittest.TestCase):
             history_path = Path(payload["history_path"])
             self.assertTrue(history_path.exists())
             self.assertIn("old context", history_path.read_text(encoding="utf-8"))
+            self.assertEqual(payload["handoff_signal_path"], str(handoff_signal_path))
             new_text = new_session_path.read_text(encoding="utf-8")
             self.assertIn('"id": "dur-new"', new_text)
             self.assertIn("Archived history file", new_text)
+            self.assertIn(f"Extracted handoff JSONL: {handoff_signal_path}", new_text)
             self.assertIn(
-                "Read the archived history file carefully before you respond or take action.",
+                "Read the extracted handoff JSONL carefully before you respond or take action.",
                 new_text,
             )
             self.assertIn(
                 "Use that archived context to prepare to take over the work without asking the user to restate the whole session.",
                 new_text,
+            )
+            export_signal.assert_called_once_with(
+                history_path=history_path,
+                source_session_id="dur-old",
             )
             mgr.spawn_web_session.assert_called_once()
             self.assertEqual(

@@ -390,6 +390,30 @@ BRIDGE_OUTBOUND_FAILURE_MAX_ATTEMPTS = int(
 BRIDGE_OUTBOUND_FAILURE_MAX_AGE_SECONDS = float(
     os.environ.get("CODEX_WEB_BRIDGE_OUTBOUND_FAILURE_MAX_AGE_SECONDS", "8.0")
 )
+
+
+def _pi_handoff_extractor_path() -> Path:
+    raw = str(os.environ.get("CODEX_WEB_PI_HANDOFF_EXTRACTOR", "")).strip()
+    if raw:
+        path = Path(raw).expanduser()
+        return path if path.is_absolute() else (ROOT_DIR / path)
+    return (
+        ROOT_DIR.parent.parent
+        / "docs"
+        / "maintenance"
+        / "pi-session-extract"
+        / "extract_session_signal.py"
+    )
+
+
+def _pi_handoff_export_dir() -> Path:
+    raw = str(os.environ.get("CODEX_WEB_PI_HANDOFF_EXPORT_DIR", "")).strip()
+    if raw:
+        path = Path(raw).expanduser()
+        return path if path.is_absolute() else (APP_DIR / path)
+    return APP_DIR / "pi-handoff-exports"
+
+
 HARNESS_MAX_SCAN_BYTES = int(
     os.environ.get("CODEX_WEB_HARNESS_MAX_SCAN_BYTES", str(8 * 1024 * 1024))
 )
@@ -3363,22 +3387,106 @@ def _append_pi_user_message(session_path: Path, *, text: str) -> None:
         f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
 
+def _export_pi_handoff_signal(
+    *, history_path: Path, source_session_id: str
+) -> Path | None:
+    extractor_path = _pi_handoff_extractor_path()
+    if not extractor_path.exists():
+        LOG.warning(
+            "pi handoff extractor missing; fallback to raw history",
+            extra={"extractor_path": str(extractor_path)},
+        )
+        return None
+    output_dir = (
+        _pi_handoff_export_dir() / _safe_filename(source_session_id, default="session")
+    ).resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / f"{history_path.name}.signal.jsonl"
+    cmd = [
+        sys.executable,
+        str(extractor_path),
+        str(history_path),
+        "--format",
+        "jsonl",
+        "--output",
+        str(output_path),
+    ]
+    try:
+        proc = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except Exception:
+        LOG.exception(
+            "pi handoff export failed",
+            extra={
+                "history_path": str(history_path),
+                "extractor_path": str(extractor_path),
+            },
+        )
+        return None
+    if proc.returncode != 0:
+        LOG.warning(
+            "pi handoff export exited non-zero",
+            extra={
+                "history_path": str(history_path),
+                "extractor_path": str(extractor_path),
+                "returncode": int(proc.returncode),
+                "stderr": (proc.stderr or "")[-2000:],
+            },
+        )
+        _unlink_quiet(output_path)
+        return None
+    if not output_path.exists():
+        LOG.warning(
+            "pi handoff export produced no output file",
+            extra={
+                "history_path": str(history_path),
+                "output_path": str(output_path),
+            },
+        )
+        return None
+    return output_path
+
+
 def _pi_handoff_message_text(
-    *, source_session_id: str, history_path: Path, cwd: str
+    *,
+    source_session_id: str,
+    history_path: Path,
+    cwd: str,
+    signal_path: Path | None = None,
 ) -> str:
-    return "\n".join(
+    lines = [
+        "Handoff context:",
+        f"- Source session id: {source_session_id}",
+        f"- Archived history file: {history_path}",
+        f"- Working directory: {cwd}",
+        "- This is a fresh session with no inherited chat context.",
+    ]
+    if signal_path is not None:
+        lines.extend(
+            [
+                f"- Extracted handoff JSONL: {signal_path}",
+                "- Read the extracted handoff JSONL carefully before you respond or take action.",
+                "- Use the archived history file only when you need details that were intentionally dropped from the extracted handoff JSONL.",
+            ]
+        )
+    else:
+        lines.append(
+            "- Read the archived history file carefully before you respond or take action."
+        )
+    lines.extend(
         [
-            "Handoff context:",
-            f"- Source session id: {source_session_id}",
-            f"- Archived history file: {history_path}",
-            f"- Working directory: {cwd}",
-            "- This is a fresh session with no inherited chat context.",
-            "- Read the archived history file carefully before you respond or take action.",
             "- Extract the current goal, constraints, prior decisions, files changed, validation already run, and any remaining open work.",
             "- Use that archived context to prepare to take over the work without asking the user to restate the whole session.",
             "- After reviewing the history, continue from the latest confirmed state and be ready to proceed.",
         ]
     )
+    return "\n".join(lines)
 
 
 def _write_pi_handoff_session(
@@ -3388,6 +3496,7 @@ def _write_pi_handoff_session(
     cwd: str,
     source_session_id: str,
     history_path: Path,
+    signal_path: Path | None = None,
     provider: str | None = None,
     model_id: str | None = None,
     thinking_level: str | None = None,
@@ -3407,6 +3516,7 @@ def _write_pi_handoff_session(
             source_session_id=source_session_id,
             history_path=history_path,
             cwd=cwd,
+            signal_path=signal_path,
         ),
     )
 
@@ -5147,17 +5257,23 @@ class SessionManager:
         thinking_level = _clean_optional_text(source.reasoning_effort) or thinking_level
         create_in_tmux = (source.transport or "").strip().lower() == "tmux"
         copied_history = False
+        handoff_signal_path: Path | None = None
         launched_session_id = new_session_id
         launched_runtime_id: str | None = None
         try:
             _copy_file_atomic(source_path, history_path)
             copied_history = True
+            handoff_signal_path = _export_pi_handoff_signal(
+                history_path=history_path,
+                source_session_id=source_session_id,
+            )
             _write_pi_handoff_session(
                 new_session_path,
                 session_id=new_session_id,
                 cwd=cwd,
                 source_session_id=source_session_id,
                 history_path=history_path,
+                signal_path=handoff_signal_path,
                 provider=provider,
                 model_id=model_id,
                 thinking_level=thinking_level,
@@ -5188,6 +5304,8 @@ class SessionManager:
             payload["backend"] = "pi"
             payload["history_path"] = str(history_path)
             payload["previous_session_id"] = source_session_id
+            if handoff_signal_path is not None:
+                payload["handoff_signal_path"] = str(handoff_signal_path)
             if alias:
                 payload["alias"] = alias
             return payload

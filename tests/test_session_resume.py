@@ -28,15 +28,25 @@ def _write_jsonl(path: Path, objs: list[dict]) -> None:
 class TestPiHandoffMessage(unittest.TestCase):
     def test_handoff_message_requires_history_review_and_takeover(self) -> None:
         history_path = Path("/tmp/handoff.jsonl.history")
+        signal_path = Path("/tmp/handoff.signal.jsonl")
 
         text = _pi_handoff_message_text(
             source_session_id="source-123",
             history_path=history_path,
             cwd="/repo",
+            signal_path=signal_path,
         )
 
         self.assertIn("Handoff context:", text)
-        self.assertIn("Read the archived history file carefully before you respond or take action.", text)
+        self.assertIn(f"Extracted handoff JSONL: {signal_path}", text)
+        self.assertIn(
+            "Read the extracted handoff JSONL carefully before you respond or take action.",
+            text,
+        )
+        self.assertIn(
+            "Use the archived history file only when you need details that were intentionally dropped from the extracted handoff JSONL.",
+            text,
+        )
         self.assertIn(
             "Extract the current goal, constraints, prior decisions, files changed, validation already run, and any remaining open work.",
             text,
