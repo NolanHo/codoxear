@@ -387,6 +387,14 @@ class TestPiBackendRouting(unittest.TestCase):
             new_text = new_session_path.read_text(encoding="utf-8")
             self.assertIn('"id": "dur-new"', new_text)
             self.assertIn("Archived history file", new_text)
+            self.assertIn(
+                "Read the archived history file carefully before you respond or take action.",
+                new_text,
+            )
+            self.assertIn(
+                "Use that archived context to prepare to take over the work without asking the user to restate the whole session.",
+                new_text,
+            )
             mgr.spawn_web_session.assert_called_once()
             self.assertEqual(
                 mgr.spawn_web_session.call_args.kwargs["resume_session_id"], "dur-new"

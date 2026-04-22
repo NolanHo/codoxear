@@ -3373,7 +3373,10 @@ def _pi_handoff_message_text(
             f"- Archived history file: {history_path}",
             f"- Working directory: {cwd}",
             "- This is a fresh session with no inherited chat context.",
-            "- Read the archived history file only when you need prior context.",
+            "- Read the archived history file carefully before you respond or take action.",
+            "- Extract the current goal, constraints, prior decisions, files changed, validation already run, and any remaining open work.",
+            "- Use that archived context to prepare to take over the work without asking the user to restate the whole session.",
+            "- After reviewing the history, continue from the latest confirmed state and be ready to proceed.",
         ]
     )
 
