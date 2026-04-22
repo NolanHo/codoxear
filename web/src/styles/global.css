@@ -1414,22 +1414,22 @@ select {
 }
 
 .machineTraceToken.pi_event {
-  background: color-mix(in srgb, var(--message-card-system-bg) 90%, white);
+  background: color-mix(in srgb, var(--message-card-system-bg) 82%, var(--message-card-base));
   border-color: var(--message-card-system-border);
   color: var(--text);
 }
 
 .machineTraceToken.pi_event.isAlert {
-  background: color-mix(in srgb, var(--message-card-tool-error-bg) 92%, white);
+  background: color-mix(in srgb, var(--message-card-tool-error-bg) 88%, var(--message-card-base));
   border-color: color-mix(in srgb, var(--message-card-tool-error-border) 88%, var(--chrome-border));
   color: hsl(var(--destructive));
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--message-card-tool-error-border) 42%, transparent);
 }
 
 .machineTraceToken.pi_event.isCompaction {
-  background: color-mix(in srgb, #f59e0b 16%, white);
+  background: color-mix(in srgb, #f59e0b 18%, var(--message-card-system-bg));
   border-color: color-mix(in srgb, #f59e0b 46%, var(--chrome-border));
-  color: color-mix(in srgb, #92400e 82%, var(--text));
+  color: color-mix(in srgb, #92400e 70%, var(--text));
   box-shadow: 0 0 0 1px color-mix(in srgb, #f59e0b 24%, transparent);
 }
 
@@ -1507,12 +1507,12 @@ select {
 }
 
 .machineTraceDetail.pi_event.isAlert {
-  background: color-mix(in srgb, var(--message-card-tool-error-bg) 95%, white);
+  background: color-mix(in srgb, var(--message-card-tool-error-bg) 92%, var(--message-card-base));
   border-color: color-mix(in srgb, var(--message-card-tool-error-border) 88%, var(--chrome-border));
 }
 
 .machineTraceDetail.pi_event.isCompaction {
-  background: color-mix(in srgb, #f59e0b 10%, white);
+  background: color-mix(in srgb, #f59e0b 12%, var(--message-card-system-bg));
   border-color: color-mix(in srgb, #f59e0b 42%, var(--chrome-border));
 }
 

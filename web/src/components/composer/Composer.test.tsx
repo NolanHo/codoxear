@@ -553,6 +553,26 @@ describe("Composer", () => {
     expect(textarea.value).toBe("/reload ");
   });
 
+  it("shows built-in Pi slash commands like /name when provided by the backend", async () => {
+    const getSessionCommands = vi.spyOn(api, "getSessionCommands").mockResolvedValue({
+      commands: [
+        { name: "name", description: "Set session display name", source: "builtin" },
+        { name: "new", description: "Start a new session", source: "builtin" },
+      ],
+    });
+    renderComposer({ draft: "/na" });
+    const composerRoot = getRoot();
+
+    await flushEffects();
+    await act(async () => {
+      await getSessionCommands.mock.results[0]?.value;
+    });
+    await flushEffects();
+
+    expect(composerRoot.textContent).toContain("/name");
+    expect(composerRoot.textContent).not.toContain("/new");
+  });
+
   it("does not request slash commands for non-pi sessions", async () => {
     const getSessionCommands = vi.spyOn(api, "getSessionCommands").mockResolvedValue({
       commands: [{ name: "reload" }],

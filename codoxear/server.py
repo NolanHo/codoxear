@@ -2300,28 +2300,59 @@ def _ui_requests_version(requests: list[dict[str, Any]]) -> str:
     return _b64u(digest)
 
 
+_PI_BUILTIN_COMMANDS: list[dict[str, str]] = [
+    {"name": "login", "description": "OAuth authentication", "source": "builtin"},
+    {"name": "logout", "description": "OAuth authentication", "source": "builtin"},
+    {"name": "model", "description": "Switch models", "source": "builtin"},
+    {"name": "scoped-models", "description": "Enable or disable models for Ctrl+P cycling", "source": "builtin"},
+    {"name": "settings", "description": "Thinking level, theme, message delivery, transport", "source": "builtin"},
+    {"name": "resume", "description": "Pick from previous sessions", "source": "builtin"},
+    {"name": "new", "description": "Start a new session", "source": "builtin"},
+    {"name": "name", "description": "Set session display name", "source": "builtin"},
+    {"name": "session", "description": "Show session info", "source": "builtin"},
+    {"name": "tree", "description": "Jump to any point in the session and continue from there", "source": "builtin"},
+    {"name": "fork", "description": "Create a new session from the current branch", "source": "builtin"},
+    {"name": "compact", "description": "Manually compact context", "source": "builtin"},
+    {"name": "copy", "description": "Copy last assistant message to clipboard", "source": "builtin"},
+    {"name": "export", "description": "Export session to HTML", "source": "builtin"},
+    {"name": "share", "description": "Upload as a private GitHub gist with shareable HTML link", "source": "builtin"},
+    {"name": "reload", "description": "Reload keybindings, extensions, skills, prompts, and context files", "source": "builtin"},
+    {"name": "hotkeys", "description": "Show all keyboard shortcuts", "source": "builtin"},
+    {"name": "changelog", "description": "Display version history", "source": "builtin"},
+    {"name": "quit", "description": "Quit pi", "source": "builtin"},
+    {"name": "exit", "description": "Quit pi", "source": "builtin"},
+]
+
+
 def _sanitize_pi_commands_payload(payload: dict[str, Any]) -> dict[str, Any]:
     commands = payload.get("commands")
-    if not isinstance(commands, list):
-        return {"commands": []}
     filtered: list[dict[str, Any]] = []
-    for item in commands:
-        if not isinstance(item, dict):
+    seen: set[str] = set()
+    if isinstance(commands, list):
+        for item in commands:
+            if not isinstance(item, dict):
+                continue
+            name = item.get("name")
+            if not isinstance(name, str):
+                continue
+            clean_name = name.strip()
+            if not clean_name or clean_name in seen:
+                continue
+            clean_item: dict[str, Any] = {"name": clean_name}
+            description = item.get("description")
+            if isinstance(description, str) and description.strip():
+                clean_item["description"] = description.strip()
+            source = item.get("source")
+            if isinstance(source, str) and source.strip():
+                clean_item["source"] = source.strip()
+            filtered.append(clean_item)
+            seen.add(clean_name)
+    for item in _PI_BUILTIN_COMMANDS:
+        name = item["name"]
+        if name in seen:
             continue
-        name = item.get("name")
-        if not isinstance(name, str):
-            continue
-        clean_name = name.strip()
-        if not clean_name:
-            continue
-        clean_item: dict[str, Any] = {"name": clean_name}
-        description = item.get("description")
-        if isinstance(description, str) and description.strip():
-            clean_item["description"] = description.strip()
-        source = item.get("source")
-        if isinstance(source, str) and source.strip():
-            clean_item["source"] = source.strip()
-        filtered.append(clean_item)
+        filtered.append(dict(item))
+        seen.add(name)
     return {"commands": filtered}
 
 
