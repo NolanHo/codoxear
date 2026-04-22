@@ -83,6 +83,22 @@ def handle_post(handler: Any, path: str, _u: Any) -> bool:
                 backend=res.get("backend") or payload["backend"],
                 name=payload["name"],
             )
+            focused = False
+            focus_targets: list[str] = []
+            for candidate in (res.get("session_id"), res.get("runtime_id")):
+                if not isinstance(candidate, str):
+                    continue
+                target = candidate.strip()
+                if not target or target in focus_targets:
+                    continue
+                focus_targets.append(target)
+            for target in focus_targets:
+                try:
+                    focused = bool(sv.MANAGER.focus_set(target, True))
+                    if focused:
+                        break
+                except (KeyError, ValueError):
+                    continue
         except ValueError as e:
             response_payload: dict[str, Any] = {"error": str(e)}
             if str(e).startswith("cwd "):
@@ -92,7 +108,7 @@ def handle_post(handler: Any, path: str, _u: Any) -> bool:
         except KeyError:
             sv._json_response(handler, 404, {"error": "unknown session"})
             return True
-        response_payload = {"ok": True, **res}
+        response_payload = {"ok": True, **res, "focused": bool(focused)}
         if alias:
             response_payload["alias"] = alias
         sv._publish_sessions_invalidate(reason="session_created")

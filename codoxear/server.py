@@ -7759,6 +7759,7 @@ class SessionManager:
             self._save_sidebar_meta()
         out.sort(
             key=lambda item: (
+                0 if bool(item.get("focused")) else 1,
                 -float(item.get("final_priority", 0.0)),
                 -float(item.get("updated_ts", item.get("start_ts", 0.0))),
                 -float(item.get("start_ts", 0.0)),

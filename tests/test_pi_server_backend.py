@@ -1680,6 +1680,7 @@ class TestPiBackendRouting(unittest.TestCase):
             }
         )
         mgr.set_created_session_name = Mock(return_value="Inbox cleanup")
+        mgr.focus_set = Mock(return_value=True)
         handler = _HandlerHarness(
             "/api/sessions",
             body=json.dumps(
@@ -1700,12 +1701,14 @@ class TestPiBackendRouting(unittest.TestCase):
         payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
         self.assertEqual(handler.status, 200)
         self.assertEqual(payload["alias"], "Inbox cleanup")
+        self.assertTrue(payload["focused"])
         mgr.set_created_session_name.assert_called_once_with(
             session_id="pending-pi-session",
             runtime_id=None,
             backend="pi",
             name="Inbox cleanup",
         )
+        mgr.focus_set.assert_called_once_with("pending-pi-session", True)
 
     def test_delete_session_uses_shutdown_for_pi_backend(self) -> None:
         mgr = _make_manager()

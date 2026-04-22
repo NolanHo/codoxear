@@ -78,6 +78,7 @@ function renderSessionsPane(
   options?: {
     onRefresh?: () => void | Promise<void>;
     composerStore?: any;
+    initialTab?: "focus" | "sessions";
   },
 ) {
   const sessionsStore = createSessionsStore(state, options);
@@ -97,6 +98,14 @@ function renderSessionsPane(
     </AppProviders>,
     root,
   );
+  if ((options?.initialTab ?? "sessions") === "sessions") {
+    const sessionsTab = Array.from(root.querySelectorAll<HTMLButtonElement>("button")).find((button) => button.textContent?.trim() === "Sessions");
+    if (sessionsTab) {
+      act(() => {
+        sessionsTab.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
+    }
+  }
   return Object.assign(sessionsStore, { composerStore });
 }
 
@@ -109,6 +118,27 @@ describe("SessionsPane", () => {
       root.remove();
       root = null;
     }
+  });
+
+  it("defaults to Focus tab and renders Focus before Sessions", () => {
+    renderSessionsPane({
+      items: [
+        { session_id: "sess-1", alias: "Inbox cleanup", agent_backend: "pi", focused: true },
+        { session_id: "sess-2", alias: "Release prep", agent_backend: "pi", focused: false },
+      ],
+      activeSessionId: "sess-1",
+      loading: false,
+      newSessionDefaults: null,
+      recentCwds: [],
+      cwdGroups: {},
+      tmuxAvailable: false,
+    }, { initialTab: "focus" });
+
+    const tabButtons = Array.from(root?.querySelectorAll<HTMLButtonElement>(".sessionsSurfaceTabs button") || []);
+    expect(tabButtons[0]?.textContent).toContain("Focus");
+    expect(tabButtons[1]?.textContent).toContain("Sessions");
+    expect(root?.textContent).toContain("Inbox cleanup");
+    expect(root?.textContent).not.toContain("Release prep");
   });
 
   it("renders active session badges", () => {
