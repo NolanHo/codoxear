@@ -13,7 +13,8 @@ from pathlib import Path
 from typing import Any, cast
 from unittest.mock import ANY, Mock, patch
 
-from codoxear import pi_messages
+from codoxear import pi_messages, server
+from codoxear.runtime import build_server_runtime
 from codoxear.server import (
     Handler,
     Session,
@@ -72,6 +73,7 @@ def _make_manager() -> SessionManager:
     mgr._hidden_sessions = set()
     mgr._files = {}
     mgr._queues = {}
+    mgr._runtime = build_server_runtime(server, manager=mgr, event_hub=server.EVENT_HUB)
     mgr._bridge_events = {}
     mgr._bridge_event_offsets = {}
     mgr._outbound_requests = {}

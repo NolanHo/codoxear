@@ -4,25 +4,11 @@ import time
 import urllib.parse
 from pathlib import Path
 from typing import Any
-
-_SERVER = None
-
-
-def bind_server_runtime(runtime: Any) -> None:
-    global _SERVER
-    _SERVER = runtime
+from ...runtime import ServerRuntime
 
 
-
-def _sv() -> Any:
-    if _SERVER is None:
-        raise RuntimeError("server runtime not bound")
-    return _SERVER
-
-
-
-def handle_get(handler: Any, path: str, u: Any) -> bool:
-    sv = _sv()
+def handle_get(runtime: ServerRuntime, handler: Any, path: str, u: Any) -> bool:
+    sv = runtime
     if path == "/api/sessions/bootstrap":
         if not sv._require_auth(handler):
             handler._unauthorized()

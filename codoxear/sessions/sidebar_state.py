@@ -2,22 +2,13 @@ from __future__ import annotations
 
 from typing import Any
 
-_SERVER = None
-
-
-def bind_server_runtime(runtime: Any) -> None:
-    global _SERVER
-    _SERVER = runtime
-
-
-
-def _sv() -> Any:
-    if _SERVER is None:
-        raise RuntimeError("server runtime not bound")
-    return _SERVER
-
-
 class SidebarStateFacade:
+    def _rt(self) -> Any:
+        runtime = getattr(self.manager, "_runtime", None)
+        if runtime is None:
+            raise RuntimeError("server runtime not bound")
+        return runtime
+
     def __init__(self, manager: Any) -> None:
         self.manager = manager
 
@@ -66,7 +57,7 @@ class SidebarStateFacade:
         backend: Any = None,
         name: Any,
     ) -> str:
-        sv = _sv()
+        sv = self._rt()
         alias = str(sv._clean_alias(name) or "")
         if not alias:
             return ""
@@ -95,7 +86,7 @@ class SidebarStateFacade:
         return alias
 
     def alias_set(self, session_id: str, name: str) -> str:
-        sv = _sv()
+        sv = self._rt()
         alias = str(sv._clean_alias(name) or "")
         ref = self.manager._page_state_ref_for_session_id(session_id)
         runtime_id = self.manager._runtime_session_id_for_identifier(session_id)
@@ -133,7 +124,7 @@ class SidebarStateFacade:
         self.persist_session_ui_state()
 
     def sidebar_meta_get(self, session_id: str) -> dict[str, Any]:
-        sv = _sv()
+        sv = self._rt()
         ref = self.manager._page_state_ref_for_session_id(session_id)
         if ref is None:
             raise KeyError("unknown session")
@@ -163,7 +154,7 @@ class SidebarStateFacade:
         snooze_until: Any,
         dependency_session_id: Any,
     ) -> dict[str, Any]:
-        sv = _sv()
+        sv = self._rt()
         offset = sv._clean_priority_offset(priority_offset)
         snooze_until_clean = sv._clean_snooze_until(snooze_until)
         dependency_clean = sv._clean_dependency_session_id(dependency_session_id)
@@ -196,7 +187,7 @@ class SidebarStateFacade:
         }
 
     def focus_set(self, session_id: str, focused: Any) -> bool:
-        sv = _sv()
+        sv = self._rt()
         focused_clean_raw = sv._clean_optional_bool(focused)
         if focused_clean_raw is None:
             raise ValueError("focused must be a boolean")
@@ -242,7 +233,7 @@ class SidebarStateFacade:
         snooze_until: Any,
         dependency_session_id: Any,
     ) -> tuple[str, dict[str, Any]]:
-        sv = _sv()
+        sv = self._rt()
         alias = str(sv._clean_alias(name) or "")
         offset = sv._clean_priority_offset(priority_offset)
         snooze_until_clean = sv._clean_snooze_until(snooze_until)
@@ -289,7 +280,7 @@ class SidebarStateFacade:
         resume_session_id: str | None,
         backend: str | None,
     ) -> set[str]:
-        sv = _sv()
+        sv = self._rt()
         keys: set[str] = set()
         session_clean = sv._clean_optional_text(session_id)
         thread_clean = sv._clean_optional_text(thread_id)

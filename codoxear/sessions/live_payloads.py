@@ -1,24 +1,11 @@
 from __future__ import annotations
 
 from typing import Any
-
-_SERVER = None
-
-
-def bind_server_runtime(runtime: Any) -> None:
-    global _SERVER
-    _SERVER = runtime
-
-
-
-def _sv() -> Any:
-    if _SERVER is None:
-        raise RuntimeError("server runtime not bound")
-    return _SERVER
-
+from ..runtime import ServerRuntime
 
 
 def session_live_payload(
+    runtime: ServerRuntime,
     manager: Any,
     session_id: str,
     *,
@@ -27,7 +14,7 @@ def session_live_payload(
     bridge_offset: int = 0,
     requests_version: str | None = None,
 ) -> dict[str, Any]:
-    sv = _sv()
+    sv = runtime
     manager.refresh_session_meta(session_id, strict=False)
     s = manager.get_session(session_id)
     if not s:
@@ -102,9 +89,10 @@ def session_live_payload(
     next_live_offset = max(0, int(live_offset))
     next_bridge_offset = max(0, int(bridge_offset))
     if sv._session_supports_live_pi_ui(s):
-        streamed_payload = pi_live_messages_payload(manager, s, offset=live_offset)
+        streamed_payload = pi_live_messages_payload(runtime, manager, s, offset=live_offset)
         next_live_offset = int(streamed_payload.get("offset", max(0, int(live_offset))) or max(0, int(live_offset)))
         merged_events = merge_pi_live_message_events(
+            runtime,
             merged_events,
             [item for item in (streamed_payload.get("events") or []) if isinstance(item, dict)],
         )
@@ -138,8 +126,8 @@ def session_live_payload(
 
 
 
-def pi_live_messages_payload(manager: Any, session: Any, *, offset: int = 0) -> dict[str, Any]:
-    sv = _sv()
+def pi_live_messages_payload(runtime: ServerRuntime, manager: Any, session: Any, *, offset: int = 0) -> dict[str, Any]:
+    sv = runtime
     if not sv._session_supports_live_pi_ui(session):
         return {"offset": max(0, int(offset)), "events": []}
     try:
@@ -183,7 +171,7 @@ def _insert_event_by_ts(
 
 
 
-def merge_pi_live_message_events(
+def merge_pi_live_message_events(runtime: ServerRuntime, 
     durable_events: list[dict[str, Any]], streamed_events: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
     merged = list(durable_events)

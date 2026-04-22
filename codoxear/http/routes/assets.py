@@ -1,24 +1,10 @@
 from __future__ import annotations
 
 from typing import Any
+from ...runtime import ServerRuntime
 
-_SERVER = None
-
-
-def bind_server_runtime(runtime: Any) -> None:
-    global _SERVER
-    _SERVER = runtime
-
-
-
-def _sv() -> Any:
-    if _SERVER is None:
-        raise RuntimeError("server runtime not bound")
-    return _SERVER
-
-
-def handle_get(handler: Any, path: str, u: Any) -> bool:
-    sv = _sv()
+def handle_get(runtime: ServerRuntime, handler: Any, path: str, u: Any) -> bool:
+    sv = runtime
     if path == "/favicon.ico":
         resolved = sv._resolve_public_web_asset("favicon.ico")
         if resolved is not None:

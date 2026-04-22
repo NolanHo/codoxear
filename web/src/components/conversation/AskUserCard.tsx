@@ -6,6 +6,16 @@ import { cn } from "@/lib/utils";
 import type { MessageEvent, SessionUiRequest } from "../../lib/types";
 import { api } from "../../lib/api";
 import { useLiveSessionStore, useLiveSessionStoreApi, useSessionUiStore, useSessionUiStoreApi } from "../../app/providers";
+import { encodeAskUserBridgeResponse, parseAskUserBridgeRequest } from "../../domains/ask-user/codec";
+import { findMatchingLiveRequest } from "../../domains/ask-user/matching";
+import {
+  askUserContextText,
+  askUserEventQuestions,
+  askUserPromptText,
+  askUserRequestId,
+  buildPromptFallbackMessage,
+  normalizeOption,
+} from "../../domains/ask-user/normalize";
 
 interface AskUserCardProps {
   event: MessageEvent;
@@ -16,191 +26,7 @@ interface AskUserCardProps {
   allowLegacyFallback?: boolean;
 }
 
-type OptionInput = { label?: string; value?: string; title?: string; description?: string } | string;
-type AskUserBridgeQuestion = {
-  header: string;
-  question: string;
-  options: Array<{ label: string; description?: string; preview?: string }>;
-  multiSelect?: boolean;
-};
-const CUSTOM_RESPONSE_OPTION_RE = /type custom response/i;
-const ASK_USER_BRIDGE_PREFIX = "__codoxear_ask_user_bridge_v1__";
-
-function splitAskUserTitle(value: string) {
-  const text = value.trim();
-  if (!text) return { prompt: "", context: "" };
-  const marker = "\n\nContext:\n";
-  const index = text.indexOf(marker);
-  if (index < 0) return { prompt: text, context: "" };
-  return {
-    prompt: text.slice(0, index).trim(),
-    context: text.slice(index + marker.length).trim(),
-  };
-}
-
-function normalizeOption(option: OptionInput, index: number) {
-  if (typeof option === "string") {
-    return { title: option, description: "", value: option, key: option || String(index) };
-  }
-
-  const title = option.title ?? option.label ?? option.value ?? `Option ${index + 1}`;
-  const value = String(option.value ?? option.title ?? title ?? "");
-
-  return {
-    title,
-    description: option.description ?? "",
-    value,
-    key: value || String(index),
-  };
-}
-
-function askUserRequestId(ev: MessageEvent | SessionUiRequest) {
-  if (ev && typeof ev.requestId === "string" && ev.requestId) return ev.requestId;
-  if (ev && typeof ev.id === "string" && ev.id) return ev.id;
-  if (ev && typeof ev.tool_call_id === "string" && ev.tool_call_id) return ev.tool_call_id;
-  return "";
-}
-
-function askUserPromptText(ev: MessageEvent | SessionUiRequest) {
-  if (ev && typeof ev.question === "string" && ev.question.trim()) return ev.question.trim();
-  if (ev && typeof ev.message === "string" && ev.message.trim()) return ev.message.trim();
-  if (ev && typeof ev.title === "string" && ev.title.trim()) return splitAskUserTitle(ev.title).prompt;
-  return "";
-}
-
-function askUserContextText(ev: MessageEvent | SessionUiRequest) {
-  if (ev && typeof ev.context === "string" && ev.context.trim()) return ev.context.trim();
-  if (ev && typeof ev.title === "string" && ev.title.trim()) return splitAskUserTitle(ev.title).context;
-  return "";
-}
-
-function buildPromptFallbackMessage(question: string, values: string[], freeform: string) {
-  const trimmedFreeform = freeform.trim();
-  const finalValues = [...values];
-  if (trimmedFreeform) finalValues.push(trimmedFreeform);
-  const answer = finalValues.join(", ").trim();
-  if (!answer) return "";
-  const escapedQuestion = question.replace(/"/g, '\\"');
-  const escapedAnswer = answer.replace(/"/g, '\\"');
-  return question ? `"${escapedQuestion}"="${escapedAnswer}"` : escapedAnswer;
-}
-
-function normalizeAskUserBridgeQuestions(value: unknown): AskUserBridgeQuestion[] {
-  if (!Array.isArray(value)) return [];
-
-  const questions: AskUserBridgeQuestion[] = [];
-  for (const item of value) {
-    if (!item || typeof item !== "object") continue;
-    const row = item as Record<string, unknown>;
-    const header = typeof row.header === "string" ? row.header.trim() : "";
-    const question = typeof row.question === "string" ? row.question.trim() : "";
-    const options: AskUserBridgeQuestion["options"] = [];
-    if (Array.isArray(row.options)) {
-      for (const option of row.options) {
-        if (!option || typeof option !== "object") continue;
-        const value = option as Record<string, unknown>;
-        const label = typeof value.label === "string" ? value.label.trim() : "";
-        if (!label) continue;
-        options.push({
-          label,
-          description: typeof value.description === "string" ? value.description.trim() : undefined,
-          preview: typeof value.preview === "string" ? value.preview : undefined,
-        });
-      }
-    }
-    if (!header || !question || !options.length) continue;
-    questions.push({
-      header,
-      question,
-      options,
-      multiSelect: row.multiSelect === true,
-    });
-  }
-  return questions;
-}
-
-function parseAskUserBridgeRequest(request: SessionUiRequest | undefined | null) {
-  if (!request || request.method !== "editor") return null;
-  const prefill = typeof request.prefill === "string" ? request.prefill : "";
-  if (!prefill.startsWith(`${ASK_USER_BRIDGE_PREFIX}\n`)) return null;
-
-  try {
-    const parsed = JSON.parse(prefill.slice(ASK_USER_BRIDGE_PREFIX.length + 1)) as { questions?: unknown };
-    const questions = normalizeAskUserBridgeQuestions(parsed.questions);
-    return questions.length ? { questions } : null;
-  } catch {
-    return null;
-  }
-}
-
-function askUserBridgeQuestionSignature(questions: AskUserBridgeQuestion[]) {
-  return questions
-    .map((question) => [
-      question.header,
-      question.question,
-      question.multiSelect ? "multi" : "single",
-      question.options.map((option) => option.label).join("\u0001"),
-    ].join("\u0002"))
-    .join("\u0003");
-}
-
-function askUserEventQuestions(event: MessageEvent) {
-  return normalizeAskUserBridgeQuestions(event.questions);
-}
-
-function encodeAskUserBridgeResponse(answers: Record<string, string | string[]>) {
-  return `${ASK_USER_BRIDGE_PREFIX}\n${JSON.stringify({ action: "answered", answers })}`;
-}
-
-function askUserOptionSignature(options: Array<OptionInput> | undefined) {
-  if (!Array.isArray(options) || !options.length) return "";
-  return options
-    .map((option, index) => {
-      const normalized = normalizeOption(option, index);
-      return normalized.title;
-    })
-    .filter((signature) => !CUSTOM_RESPONSE_OPTION_RE.test(signature))
-    .join("\u0001");
-}
-
-export function askUserHistorySignature(event: MessageEvent) {
-  const questions = askUserEventQuestions(event);
-  if (questions.length) {
-    return `bridge\u0002${askUserBridgeQuestionSignature(questions)}`;
-  }
-  const prompt = askUserPromptText(event);
-  if (!prompt) return "";
-  return [prompt, askUserContextText(event), askUserOptionSignature(Array.isArray(event.options) ? event.options : undefined)].join("\u0002");
-}
-
-export function isUnresolvedAskUserEvent(event: MessageEvent) {
-  return event.type === "ask_user" && !event.resolved && !event.answer && !event.cancelled;
-}
-
-function findMatchingLiveRequest(event: MessageEvent, requests: SessionUiRequest[], allowFuzzyLiveMatch: boolean) {
-  const directRequestId = askUserRequestId(event);
-  const direct = requests.find((request) => askUserRequestId(request) === directRequestId);
-  if (direct) return direct;
-
-  if (!allowFuzzyLiveMatch) return undefined;
-
-  const prompt = askUserPromptText(event);
-  const eventQuestions = askUserEventQuestions(event);
-  if (!prompt && !eventQuestions.length) return undefined;
-  const context = askUserContextText(event);
-  const optionSignature = askUserOptionSignature(Array.isArray(event.options) ? event.options : undefined);
-  const matches = requests.filter((request) => {
-    const bridgeRequest = parseAskUserBridgeRequest(request);
-    if (bridgeRequest && eventQuestions.length) {
-      return askUserBridgeQuestionSignature(bridgeRequest.questions) === askUserBridgeQuestionSignature(eventQuestions);
-    }
-    if (askUserPromptText(request) !== prompt) return false;
-    if (askUserContextText(request) !== context) return false;
-    return askUserOptionSignature(Array.isArray(request.options) ? request.options : undefined) === optionSignature;
-  });
-  if (matches.length === 1) return matches[0];
-  return undefined;
-}
+export { askUserHistorySignature, isUnresolvedAskUserEvent } from "../../domains/ask-user/matching";
 
 export function AskUserCard({
   event,

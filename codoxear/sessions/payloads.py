@@ -4,24 +4,11 @@ import time
 from pathlib import Path
 from typing import Any, cast
 
-_SERVER = None
+from ..runtime import ServerRuntime
 
 
-def bind_server_runtime(runtime: Any) -> None:
-    global _SERVER
-    _SERVER = runtime
-
-
-
-def _sv() -> Any:
-    if _SERVER is None:
-        raise RuntimeError("server runtime not bound")
-    return _SERVER
-
-
-
-def session_details_payload(manager: Any, session_id: str) -> dict[str, Any]:
-    sv = _sv()
+def session_details_payload(runtime: ServerRuntime, manager: Any, session_id: str) -> dict[str, Any]:
+    sv = runtime
     row = sv._listed_session_row(manager, session_id)
     if row is not None:
         return {"ok": True, "session": sv._normalize_session_cwd_row(row)}
@@ -32,8 +19,8 @@ def session_details_payload(manager: Any, session_id: str) -> dict[str, Any]:
 
 
 
-def session_context_usage_payload(s: Any, token_val: dict[str, Any] | None) -> dict[str, Any] | None:
-    sv = _sv()
+def session_context_usage_payload(runtime: ServerRuntime, s: Any, token_val: dict[str, Any] | None) -> dict[str, Any] | None:
+    sv = runtime
     if s.backend != "pi":
         return None
     context_window = None
@@ -62,9 +49,10 @@ def session_context_usage_payload(s: Any, token_val: dict[str, Any] | None) -> d
 
 
 def _turn_timing_from_events(
+    runtime: ServerRuntime,
     events: list[dict[str, Any]],
 ) -> tuple[float | None, float | None]:
-    sv = _sv()
+    sv = runtime
     return cast(
         tuple[float | None, float | None],
         sv._pi_messages.latest_turn_bounds_from_events(events),
@@ -73,13 +61,14 @@ def _turn_timing_from_events(
 
 
 def session_turn_timing_payload(
+    runtime: ServerRuntime,
     s: Any,
     events: list[dict[str, Any]],
     *,
     busy: bool,
 ) -> dict[str, Any] | None:
-    sv = _sv()
-    start_ts, last_event_ts = _turn_timing_from_events(events)
+    sv = runtime
+    start_ts, last_event_ts = _turn_timing_from_events(runtime, events)
     if start_ts is None and s.backend == "pi" and s.session_path is not None and s.session_path.exists():
         scan_bytes = int(getattr(s, "chat_index_scan_bytes", 0) or 0)
         start_ts, last_event_ts = sv._pi_messages.read_pi_latest_turn_bounds(
@@ -98,8 +87,8 @@ def session_turn_timing_payload(
 
 
 
-def session_diagnostics_payload(manager: Any, session_id: str, s: Any, state: dict[str, Any]) -> dict[str, Any]:
-    sv = _sv()
+def session_diagnostics_payload(runtime: ServerRuntime, manager: Any, session_id: str, s: Any, state: dict[str, Any]) -> dict[str, Any]:
+    sv = runtime
     state = sv._validated_session_state(state)
     st_token = state.get("token")
     token_val = sv._resolved_session_token(
@@ -123,6 +112,7 @@ def session_diagnostics_payload(manager: Any, session_id: str, s: Any, state: di
     busy, broker_busy = sv._display_session_busy(manager, session_id, s, state)
     durable_session_id = sv._durable_session_id_for_live_session(s)
     turn_timing = session_turn_timing_payload(
+        runtime,
         s,
         list(getattr(s, "chat_index_events", []) or []),
         busy=bool(busy),
@@ -146,7 +136,7 @@ def session_diagnostics_payload(manager: Any, session_id: str, s: Any, state: di
         "broker_busy": broker_busy,
         "queue_len": manager._queue_len(session_id),
         "token": token_val,
-        "context_usage": session_context_usage_payload(s, token_val),
+        "context_usage": session_context_usage_payload(runtime, s, token_val),
         "turn_timing": turn_timing,
         "model_provider": model_provider,
         "preferred_auth_method": preferred_auth_method,
@@ -172,8 +162,8 @@ def session_diagnostics_payload(manager: Any, session_id: str, s: Any, state: di
 
 
 
-def session_workspace_payload(manager: Any, session_id: str) -> dict[str, Any]:
-    sv = _sv()
+def session_workspace_payload(runtime: ServerRuntime, manager: Any, session_id: str) -> dict[str, Any]:
+    sv = runtime
     manager.refresh_session_meta(session_id, strict=False)
     s = manager.get_session(session_id)
     if not s:
@@ -189,7 +179,7 @@ def session_workspace_payload(manager: Any, session_id: str) -> dict[str, Any]:
             "diagnostics": None,
             "queue": {"items": []},
         }
-    diagnostics = session_diagnostics_payload(manager, session_id, s, manager.get_state(session_id))
+    diagnostics = session_diagnostics_payload(runtime, manager, session_id, s, manager.get_state(session_id))
     return {
         "ok": True,
         "session_id": sv._durable_session_id_for_live_session(s),

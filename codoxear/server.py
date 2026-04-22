@@ -7,7 +7,6 @@ import errno
 import fnmatch
 import gzip
 import hashlib
-import heapq
 import hmac
 import http.server
 import io
@@ -63,11 +62,25 @@ from .pi_log import pi_model_context_window as _pi_model_context_window_impl
 from .pi_log import pi_user_text as _pi_user_text
 from .pi_log import read_pi_run_settings as _read_pi_run_settings
 from .pi_log import read_pi_session_id as _read_pi_session_id
+from .runtime import ServerRuntime, build_server_runtime
+from .sessions import background as _session_background
+from .sessions import creation as _session_creation
+from .sessions import lifecycle as _session_lifecycle
+from .sessions import listing as _session_listing
 from .sessions import live_payloads as _session_live_payloads
+from .sessions import message_history as _message_history
+from .sessions import page_state as _page_state
 from .sessions import payloads as _session_payloads
+from .sessions import pi_session_files as _pi_session_files
+from .sessions import resume_candidates as _resume_candidates
+from .sessions import session_catalog as _session_catalog
+from .sessions import session_control as _session_control
 from .sessions import sidebar_state as _sidebar_state_module
+from .sessions import transport as _session_transport
 from .sessions.sidebar_state import SidebarStateFacade
 from .util import default_app_dir as _default_app_dir
+from .workspace import file_access as _workspace_file_access
+from .workspace import file_search as _workspace_file_search
 from .util import find_new_session_log as _find_new_session_log_impl
 from .util import (
     find_session_log_for_session_id as _find_session_log_for_session_id_impl,
@@ -82,21 +95,6 @@ from .util import subagent_parent_thread_id as _subagent_parent_thread_id
 from .voice_push import VoicePushCoordinator
 
 SessionStateKey = SessionRef | str
-
-for _seam_module in (
-    _http_assets_routes,
-    _http_auth_routes,
-    _http_events_routes,
-    _http_file_routes,
-    _http_notification_routes,
-    _http_session_read_routes,
-    _http_session_write_routes,
-    _session_live_payloads,
-    _session_payloads,
-    _sidebar_state_module,
-    _pi_ui_bridge,
-):
-    _seam_module.bind_server_runtime(sys.modules[__name__])
 
 
 LOG = logging.getLogger(__name__)
@@ -822,7 +820,7 @@ def _unlink_quiet(path: Path) -> None:
 
 
 def _sock_error_definitely_stale(exc: BaseException) -> bool:
-    if isinstance(exc, (FileNotFoundError, ConnectionRefusedError)):
+    if isinstance(exc, (FileNotFoundError, ConnectionRefusedError, TimeoutError)):
         return True
     if isinstance(exc, OSError):
         return exc.errno in (errno.ENOENT, errno.ECONNREFUSED, errno.ENOTSOCK)
@@ -1309,58 +1307,11 @@ def _resolve_git_path(cwd: Path, raw_path: str) -> tuple[Path, Path, str]:
 
 
 def _resolve_unique_bare_filename(search_root: Path, raw_path: str) -> Path | None:
-    name = str(raw_path).strip()
-    if not name or "/" in name or "\\" in name or "\x00" in name:
-        return None
-    if "." not in Path(name).name:
-        return None
-    root = search_root.resolve()
-    match: Path | None = None
-    for current_root, dirnames, filenames in os.walk(root):
-        dirnames[:] = [
-            d
-            for d in dirnames
-            if d
-            not in {
-                ".git",
-                ".hg",
-                ".svn",
-                "__pycache__",
-                "node_modules",
-                "build",
-                "dist",
-            }
-        ]
-        if name not in filenames:
-            continue
-        candidate = (Path(current_root) / name).resolve()
-        if match is None:
-            match = candidate
-            continue
-        if candidate != match:
-            return None
-    return match
+    return _workspace_file_access.resolve_unique_bare_filename(search_root, raw_path)
 
 
 def _resolve_tracked_file_by_basename(session_id: str, raw_path: str) -> Path | None:
-    name = str(raw_path).strip()
-    if not name or "/" in name or "\\" in name or "\x00" in name:
-        return None
-    try:
-        tracked = MANAGER.files_get(session_id)
-    except KeyError:
-        return None
-    match: Path | None = None
-    for raw in tracked:
-        candidate = _safe_expanduser(Path(raw)).resolve()
-        if candidate.name != name:
-            continue
-        if match is None:
-            match = candidate
-            continue
-        if candidate != match:
-            return None
-    return match
+    return _workspace_file_access.resolve_tracked_file_by_basename(session_id, raw_path)
 
 
 def _resolve_session_relative_child(base: Path, raw_path: str) -> Path:
@@ -1562,189 +1513,58 @@ def _git_repo_root(cwd: Path) -> Path | None:
 
 
 def _file_search_score(candidate: str, query: str) -> int:
-    text = str(candidate or "")
-    raw = str(query or "").strip().lower()
-    if not raw:
-        return 0
-    lower = text.lower()
-    if lower == raw:
-        return 12000
-    base = Path(text).name.lower()
-    if base == raw:
-        return 10000
-    total = 0
-    for token in [part for part in raw.split() if part]:
-        exact_idx = lower.find(token)
-        if exact_idx >= 0:
-            prev = lower[exact_idx - 1] if exact_idx > 0 else ""
-            boundary_bonus = 24 if (not prev or prev in "/._-") else 0
-            base_idx = base.find(token)
-            total += (
-                240
-                - exact_idx * 2
-                + boundary_bonus
-                + (44 - base_idx if base_idx >= 0 else 0)
-            )
-            continue
-        pos = -1
-        first = -1
-        last = -1
-        consecutive = 0
-        boundaries = 0
-        for ch in token:
-            pos = lower.find(ch, pos + 1)
-            if pos < 0:
-                return -1
-            if first < 0:
-                first = pos
-            if last >= 0 and pos == last + 1:
-                consecutive += 1
-            if pos == 0 or lower[pos - 1] in "/._-":
-                boundaries += 1
-            last = pos
-        span = last - first + 1
-        total += (
-            120
-            - first
-            - max(0, span - len(token)) * 4
-            + consecutive * 10
-            + boundaries * 8
-        )
-    return total
+    return _workspace_file_search.file_search_score(candidate, query)
 
 
 def _push_file_search_match(
     heap: list[tuple[int, str]], *, path: str, score: int, limit: int
 ) -> None:
-    item = (score, path)
-    if len(heap) < limit:
-        heapq.heappush(heap, item)
-        return
-    if item > heap[0]:
-        heapq.heapreplace(heap, item)
+    return _workspace_file_search._push_file_search_match(
+        heap,
+        path=path,
+        score=score,
+        limit=limit,
+    )
 
 
 def _finish_file_search(
     heap: list[tuple[int, str]], *, mode: str, query: str, scanned: int, truncated: bool
 ) -> dict[str, Any]:
-    matches = [
-        {"path": path, "score": score}
-        for score, path in sorted(heap, key=lambda item: (-item[0], item[1]))
-    ]
-    return {
-        "mode": mode,
-        "query": query,
-        "matches": matches,
-        "scanned": scanned,
-        "truncated": truncated,
-    }
+    return _workspace_file_search._finish_file_search(
+        heap,
+        mode=mode,
+        query=query,
+        scanned=scanned,
+        truncated=truncated,
+    )
 
 
 def _search_walk_relative_files(
     root: Path, *, query: str, limit: int
 ) -> dict[str, Any]:
-    deadline = time.monotonic() + FILE_SEARCH_TIMEOUT_SECONDS
-    heap: list[tuple[int, str]] = []
-    scanned = 0
-    truncated = False
-
-    def _onerror(err: OSError) -> None:
-        raise err
-
-    for current_root, dirnames, filenames in os.walk(
-        root, topdown=True, onerror=_onerror, followlinks=False
-    ):
-        dirnames[:] = [
-            name for name in sorted(dirnames) if name not in FILE_LIST_IGNORED_DIRS
-        ]
-        current_path = Path(current_root)
-        for name in sorted(filenames):
-            scanned += 1
-            if scanned > FILE_SEARCH_MAX_CANDIDATES or time.monotonic() > deadline:
-                truncated = True
-                return _finish_file_search(
-                    heap,
-                    mode="walk",
-                    query=query,
-                    scanned=scanned - 1,
-                    truncated=truncated,
-                )
-            rel = (current_path / name).relative_to(root).as_posix()
-            score = _file_search_score(rel, query)
-            if score < 0:
-                continue
-            _push_file_search_match(heap, path=rel, score=score, limit=limit)
-    return _finish_file_search(
-        heap, mode="walk", query=query, scanned=scanned, truncated=truncated
+    return _workspace_file_search.search_walk_relative_files(
+        root,
+        query=query,
+        limit=limit,
     )
 
 
 def _search_git_relative_files(cwd: Path, *, query: str, limit: int) -> dict[str, Any]:
-    deadline = time.monotonic() + FILE_SEARCH_TIMEOUT_SECONDS
-    heap: list[tuple[int, str]] = []
-    scanned = 0
-    truncated = False
-    proc = subprocess.Popen(
-        ["git", "ls-files", "--cached", "--others", "--exclude-standard"],
-        cwd=str(cwd),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-    )
-    try:
-        assert proc.stdout is not None
-        for raw_line in proc.stdout:
-            path = raw_line.rstrip("\n")
-            if not path:
-                continue
-            scanned += 1
-            if scanned > FILE_SEARCH_MAX_CANDIDATES or time.monotonic() > deadline:
-                truncated = True
-                proc.kill()
-                break
-            score = _file_search_score(path, query)
-            if score < 0:
-                continue
-            _push_file_search_match(heap, path=path, score=score, limit=limit)
-        stderr = proc.stderr.read() if proc.stderr is not None else ""
-        return_code = proc.wait()
-    finally:
-        if proc.stdout is not None:
-            proc.stdout.close()
-        if proc.stderr is not None:
-            proc.stderr.close()
-    if truncated:
-        return _finish_file_search(
-            heap, mode="git", query=query, scanned=scanned - 1, truncated=True
-        )
-    if return_code != 0:
-        err = stderr.strip()
-        raise RuntimeError(err or f"git ls-files failed with code {return_code}")
-    return _finish_file_search(
-        heap, mode="git", query=query, scanned=scanned, truncated=False
+    return _workspace_file_search.search_git_relative_files(
+        cwd,
+        query=query,
+        limit=limit,
     )
 
 
 def _search_session_relative_files(
     base: Path, *, query: str, limit: int = FILE_SEARCH_LIMIT
 ) -> dict[str, Any]:
-    root = _safe_expanduser(base)
-    if not root.is_absolute():
-        root = root.resolve()
-    if not root.exists():
-        raise FileNotFoundError("session cwd not found")
-    if not root.is_dir():
-        raise ValueError("session cwd is not a directory")
-    raw_query = str(query).strip()
-    if not raw_query:
-        raise ValueError("query required")
-    clamped_limit = max(1, min(int(limit), FILE_SEARCH_LIMIT))
-    repo_root = _git_repo_root(root)
-    if repo_root is not None:
-        return _search_git_relative_files(root, query=raw_query, limit=clamped_limit)
-    return _search_walk_relative_files(root, query=raw_query, limit=clamped_limit)
+    return _workspace_file_search.search_session_relative_files(
+        base,
+        query=query,
+        limit=limit,
+    )
 
 
 def _describe_session_cwd(cwd: Path) -> dict[str, Any]:
@@ -1951,16 +1771,7 @@ SESSION_LIST_FALLBACK_GROUP_KEY = "__no_working_directory__"
 
 
 def _session_row_display_name(row: dict[str, Any], *, fallback: str = "Session") -> str:
-    if not isinstance(row, dict):
-        return fallback
-    for key in ("alias", "title", "first_user_message", "session_id"):
-        value = row.get(key)
-        if not isinstance(value, str):
-            continue
-        out = value.strip()
-        if out:
-            return out
-    return fallback
+    return _session_listing.session_row_display_name(row, fallback=fallback)
 
 
 def _clean_optional_bool(value: Any) -> bool | None:
@@ -1970,27 +1781,15 @@ def _clean_optional_bool(value: Any) -> bool | None:
 
 
 def _normalize_session_cwd_row(row: dict[str, Any]) -> dict[str, Any]:
-    if not isinstance(row, dict):
-        return row
-    normalized = dict(row)
-    if "cwd" in normalized:
-        canonical_cwd = _canonical_session_cwd(normalized.get("cwd"))
-        if canonical_cwd is not None:
-            normalized["cwd"] = canonical_cwd
-    normalized["display_name"] = _session_row_display_name(normalized)
-    return normalized
+    return _session_listing.normalize_session_cwd_row(row)
 
 
 def _frontend_session_list_row(row: dict[str, Any]) -> dict[str, Any]:
-    normalized = _normalize_session_cwd_row(row)
-    if not isinstance(normalized, dict):
-        return normalized
-    return {key: normalized[key] for key in SESSION_LIST_ROW_KEYS if key in normalized}
+    return _session_listing.frontend_session_list_row(row)
 
 
 def _session_list_group_key(row: dict[str, Any]) -> str:
-    cwd = _canonical_session_cwd(row.get("cwd"))
-    return cwd or SESSION_LIST_FALLBACK_GROUP_KEY
+    return _session_listing.session_list_group_key(row)
 
 
 def _session_list_payload(
@@ -2002,109 +1801,24 @@ def _session_list_payload(
     group_offset: int = 0,
     group_limit: int = SESSION_LIST_RECENT_GROUP_LIMIT,
 ) -> dict[str, Any]:
-    start = max(0, int(offset))
-    stop = start + max(1, int(limit))
-
-    if group_key is None and group_offset <= 0 and group_limit == SESSION_LIST_RECENT_GROUP_LIMIT:
-        page_rows = [_frontend_session_list_row(row) for row in rows[start:stop]]
-        remaining = max(0, len(rows) - stop)
-        payload: dict[str, Any] = {"sessions": page_rows}
-        if remaining > 0:
-            payload["remaining_count"] = remaining
-        return payload
-
-    grouped: dict[str, list[dict[str, Any]]] = {}
-    for row in rows:
-        key = _session_list_group_key(row)
-        if key not in grouped:
-            grouped[key] = []
-        grouped[key].append(row)
-
-    def _page_rows_for_group(group_rows: list[dict[str, Any]], page_size: int) -> list[dict[str, Any]]:
-        if len(group_rows) <= page_size:
-            return list(group_rows)
-        page_rows = list(group_rows[:page_size])
-        focused_rows = [row for row in group_rows if bool(row.get("focused"))]
-        if not focused_rows:
-            return page_rows
-        existing_ids = {id(row) for row in page_rows}
-        extras = [row for row in focused_rows if id(row) not in existing_ids]
-        if not extras:
-            return page_rows
-        keep = [row for row in page_rows if bool(row.get("focused"))]
-        keep.extend(extras)
-        keep = keep[:page_size]
-        keep_ids = {id(item) for item in keep}
-        for row in group_rows:
-            if len(keep) >= page_size:
-                break
-            if id(row) in keep_ids:
-                continue
-            keep.append(row)
-            keep_ids.add(id(row))
-        return keep
-
-    def _group_sort_key(key: str) -> tuple[int, float]:
-        group_rows = grouped[key]
-        busy = any(bool(row.get("busy")) for row in group_rows)
-        latest_updated = max(float(row.get("updated_ts") or 0.0) for row in group_rows)
-        return (0 if busy else 1, -latest_updated)
-
-    group_order = sorted(grouped.keys(), key=_group_sort_key)
-
-    if group_key is not None:
-        group_rows = grouped.get(group_key, [])
-        page_rows = [_frontend_session_list_row(row) for row in group_rows[start:stop]]
-        remaining = max(0, len(group_rows) - stop)
-        return {
-            "sessions": page_rows,
-            "remaining_by_group": {group_key: remaining} if remaining > 0 else {},
-        }
-
-    selected_group_keys = set(group_order[:SESSION_LIST_RECENT_GROUP_LIMIT])
-    omitted_group_count = 0
-    for key, group_rows in grouped.items():
-        if any(bool(row.get("busy")) for row in group_rows) or any(bool(row.get("focused")) for row in group_rows):
-            selected_group_keys.add(key)
-
-    if group_offset > 0 or group_limit != SESSION_LIST_RECENT_GROUP_LIMIT:
-        group_stop = max(group_offset, 0) + max(1, int(group_limit))
-        extra_group_order = group_order[group_offset:group_stop]
-        selected_group_keys = set(extra_group_order)
-        omitted_group_count = max(0, len(group_order) - group_stop)
-
-    sessions: list[dict[str, Any]] = []
-    remaining_by_group: dict[str, int] = {}
-    for key in group_order:
-        if key not in selected_group_keys:
-            continue
-        group_rows = grouped[key]
-        page_rows = _page_rows_for_group(group_rows, SESSION_LIST_GROUP_PAGE_SIZE)
-        sessions.extend(_frontend_session_list_row(row) for row in page_rows)
-        remaining = len(group_rows) - len(page_rows)
-        if remaining > 0:
-            remaining_by_group[key] = remaining
-    result: dict[str, Any] = {
-        "sessions": sessions,
-        "remaining_by_group": remaining_by_group,
-    }
-    if group_offset <= 0 and group_limit == SESSION_LIST_RECENT_GROUP_LIMIT:
-        omitted_group_count = max(0, len(group_order) - len(selected_group_keys))
-    result["omitted_group_count"] = omitted_group_count
-    return result
+    return _session_listing.session_list_payload(
+        rows,
+        group_key=group_key,
+        offset=offset,
+        limit=limit,
+        group_offset=group_offset,
+        group_limit=group_limit,
+    )
 
 
 def _listed_session_row(manager: "SessionManager", session_id: str) -> dict[str, Any] | None:
-    for row in manager.list_sessions():
-        if str(row.get("session_id") or "") == session_id:
-            return dict(row)
-    return None
+    return _session_catalog.listed_session_row(manager, session_id)
 
 
 def _session_details_payload(
     manager: "SessionManager", session_id: str
 ) -> dict[str, Any]:
-    return _session_payloads.session_details_payload(manager, session_id)
+    return _session_payloads.session_details_payload(RUNTIME, manager, session_id)
 
 
 def _clean_recent_cwd(value: Any) -> str | None:
@@ -2350,143 +2064,38 @@ def _legacy_pi_ui_response_text(payload: dict[str, Any]) -> str | None:
 
 
 def _resolve_client_file_path(*, session_id: str, raw_path: str) -> Path:
-    if not isinstance(raw_path, str) or not raw_path.strip():
-        raise ValueError("empty path")
-    if "\n" in raw_path or len(raw_path) > 1024:
-        # Likely a code snippet or pasted content, not a path.
-        # Rejecting here avoids OSError: File name too long in Path.exists().
-        raise ValueError("invalid path format")
-
-    try:
-        path_obj = _safe_expanduser(Path(raw_path))
-        for part in path_obj.parts:
-            if len(part.encode("utf-8", errors="ignore")) > 255:
-                raise ValueError("invalid path format (name too long)")
-    except ValueError:
-        raise
-    except Exception:
-        raise ValueError("invalid path format")
-
-    if not path_obj.is_absolute():
-        if session_id:
-            MANAGER.refresh_session_meta(session_id, strict=False)
-            s = MANAGER.get_session(session_id)
-            if s:
-                base = _safe_expanduser(Path(s.cwd))
-                if not base.is_absolute():
-                    base = base.resolve()
-                direct = (base / path_obj).resolve()
-                if direct.exists():
-                    path_obj = direct
-                else:
-                    tracked = _resolve_tracked_file_by_basename(session_id, raw_path)
-                    if tracked is not None:
-                        path_obj = tracked
-                        return path_obj
-                    try:
-                        repo_root = Path(
-                            _run_git(
-                                base,
-                                ["rev-parse", "--show-toplevel"],
-                                timeout_s=GIT_DIFF_TIMEOUT_SECONDS,
-                                max_bytes=64 * 1024,
-                            ).strip()
-                        ).resolve()
-                    except RuntimeError:
-                        repo_root = base.resolve()
-                    path_obj = (
-                        _resolve_unique_bare_filename(repo_root, raw_path) or direct
-                    )
-            else:
-                path_obj = (Path.cwd() / path_obj).resolve()
-        else:
-            path_obj = (Path.cwd() / path_obj).resolve()
-    else:
-        path_obj = path_obj.resolve()
-    return path_obj
-
-
-def _inspect_openable_file(path_obj: Path) -> tuple[bytes, int, str, str | None]:
-    view = _read_client_file_view(path_obj)
-    if view.kind == "directory":
-        raise ValueError("path is not a file")
-    if view.kind == "download_only":
-        if view.blocked_reason == "too_large":
-            raise ValueError(f"file too large (max {FILE_READ_MAX_BYTES} bytes)")
-        raise ValueError("binary file not supported")
-    raw = path_obj.read_bytes()
-    return raw, view.size, view.kind, view.content_type
-
-
-def _inspect_path_metadata(path_obj: Path) -> tuple[int, str, str | None]:
-    view = _read_client_file_view(path_obj)
-    return view.size, view.kind, view.content_type
-
-
-def _read_client_file_view(path_obj: Path) -> ClientFileView:
-    if not path_obj.exists():
-        raise FileNotFoundError("file not found")
-    if path_obj.is_dir():
-        return ClientFileView(kind="directory", size=0)
-    if not path_obj.is_file():
-        raise ValueError("path is not a file")
-    try:
-        size = int(path_obj.stat().st_size)
-        with path_obj.open("rb") as f:
-            prefix = f.read(4096)
-    except PermissionError as e:
-        raise PermissionError("permission denied") from e
-    kind, content_type = _file_kind(path_obj, prefix)
-    if kind in {"image", "pdf"}:
-        return ClientFileView(kind=kind, size=size, content_type=content_type)
-    if size > FILE_READ_MAX_BYTES:
-        return ClientFileView(
-            kind="download_only",
-            size=size,
-            blocked_reason="too_large",
-            viewer_max_bytes=FILE_READ_MAX_BYTES,
-        )
-    raw = path_obj.read_bytes()
-    text_payload = _decode_text_view_for_client(path_obj, raw)
-    if text_payload is None:
-        return ClientFileView(kind="download_only", size=size, blocked_reason="binary")
-    text, editable, version = text_payload
-    return ClientFileView(
-        kind=_markdown_kind(path_obj),
-        size=size,
-        text=text,
-        editable=editable,
-        version=version,
+    return _workspace_file_access.resolve_client_file_path(
+        session_id=session_id,
+        raw_path=raw_path,
     )
 
 
+def _inspect_openable_file(path_obj: Path) -> tuple[bytes, int, str, str | None]:
+    return _workspace_file_access.inspect_openable_file(path_obj)
+
+
+def _inspect_path_metadata(path_obj: Path) -> tuple[int, str, str | None]:
+    return _workspace_file_access.inspect_path_metadata(path_obj)
+
+
+def _read_client_file_view(path_obj: Path) -> ClientFileView:
+    return _workspace_file_access.read_client_file_view(path_obj)
+
+
 def _read_text_or_image(path_obj: Path) -> tuple[str, int, str | None, bytes | None]:
-    view = _read_client_file_view(path_obj)
-    if view.kind in {"image", "pdf", "download_only", "directory"}:
-        return view.kind, view.size, view.content_type, None
-    raw = path_obj.read_bytes()
-    return view.kind, view.size, view.content_type, raw
+    return _workspace_file_access.read_text_or_image(path_obj)
 
 
 def _read_downloadable_file(path_obj: Path) -> tuple[bytes, int]:
-    if not path_obj.exists():
-        raise FileNotFoundError("file not found")
-    if not path_obj.is_file():
-        raise ValueError("path is not a file")
-    try:
-        raw = path_obj.read_bytes()
-    except PermissionError as e:
-        raise PermissionError("permission denied") from e
-    return raw, len(raw)
+    return _workspace_file_access.read_downloadable_file(path_obj)
 
 
 def _inspect_client_path(path_obj: Path) -> tuple[int, str, str | None]:
-    view = _read_client_file_view(path_obj)
-    return view.size, view.kind, view.content_type
+    return _workspace_file_access.inspect_client_path(path_obj)
 
 
 def _download_disposition(path_obj: Path) -> str:
-    return f"attachment; filename*=UTF-8''{urllib.parse.quote(path_obj.name, safe='')}"
+    return _workspace_file_access.download_disposition(path_obj)
 
 
 def _iter_session_logs(*, agent_backend: str = "codex") -> list[Path]:
@@ -2639,137 +2248,11 @@ def _normalize_requested_backend(raw: Any) -> str:
 
 
 def _parse_create_session_request(obj: dict[str, Any]) -> dict[str, Any]:
-    cwd = obj.get("cwd")
-    if not isinstance(cwd, str) or not cwd.strip():
-        raise ValueError("cwd required")
-
-    name_raw = obj.get("name")
-    if name_raw is None:
-        name = None
-    elif isinstance(name_raw, str):
-        name = name_raw
-    else:
-        raise ValueError("name must be a string")
-
-    backend = normalize_agent_backend(
-        obj.get("backend"),
-        default=normalize_agent_backend(obj.get("agent_backend"), default="codex"),
-    )
-    args = obj.get("args")
-    if args is None:
-        args_list = None
-    elif isinstance(args, list) and all(isinstance(x, str) for x in args):
-        args_list = [x for x in args if x]
-    else:
-        raise ValueError("args must be a list of strings")
-
-    resume_session_id = _clean_optional_resume_session_id(obj.get("resume_session_id"))
-
-    if backend == "pi":
-        create_in_tmux_raw = obj.get("create_in_tmux")
-        if create_in_tmux_raw is None:
-            create_in_tmux = False
-        elif isinstance(create_in_tmux_raw, bool):
-            create_in_tmux = create_in_tmux_raw
-        else:
-            raise ValueError("create_in_tmux must be a boolean")
-
-        pi_provider_choices = {
-            str(value)
-            for value in (_read_pi_launch_defaults().get("provider_choices") or [])
-            if isinstance(value, str) and value.strip()
-        }
-        model_provider = _normalize_requested_model_provider(
-            obj.get("model_provider"),
-            allowed=pi_provider_choices or None,
-        )
-        model = _normalize_requested_model(obj.get("model"))
-        reasoning_effort = _normalize_requested_pi_reasoning_effort(
-            obj.get("reasoning_effort")
-        )
-        return {
-            "cwd": cwd,
-            "name": name,
-            "backend": backend,
-            "args": args_list,
-            "resume_session_id": resume_session_id,
-            "worktree_branch": None,
-            "model_provider": model_provider,
-            "preferred_auth_method": None,
-            "model": model,
-            "reasoning_effort": reasoning_effort,
-            "service_tier": None,
-            "create_in_tmux": create_in_tmux,
-        }
-
-    allowed_providers = set(
-        _read_codex_launch_defaults().get("model_providers") or ["openai"]
-    )
-    model_provider = _normalize_requested_model_provider(
-        obj.get("model_provider"),
-        allowed=set(
-            [
-                "openai",
-                *[p for p in allowed_providers if p not in {"chatgpt", "openai-api"}],
-            ]
-        ),
-    )
-    preferred_auth_method = _normalize_requested_preferred_auth_method(
-        obj.get("preferred_auth_method")
-    )
-    model = _normalize_requested_model(obj.get("model"))
-    reasoning_effort = _normalize_requested_reasoning_effort(
-        obj.get("reasoning_effort")
-    )
-    service_tier = _normalize_requested_service_tier(obj.get("service_tier"))
-
-    create_in_tmux_raw = obj.get("create_in_tmux")
-    if create_in_tmux_raw is None:
-        create_in_tmux = False
-    elif isinstance(create_in_tmux_raw, bool):
-        create_in_tmux = create_in_tmux_raw
-    else:
-        raise ValueError("create_in_tmux must be a boolean")
-
-    worktree_branch_raw = obj.get("worktree_branch")
-    if worktree_branch_raw is None:
-        worktree_branch = None
-    elif isinstance(worktree_branch_raw, str):
-        worktree_branch = worktree_branch_raw.strip() or None
-    else:
-        raise ValueError("worktree_branch must be a string")
-
-    return {
-        "cwd": cwd,
-        "name": name,
-        "backend": backend,
-        "args": args_list,
-        "resume_session_id": resume_session_id,
-        "worktree_branch": worktree_branch,
-        "model_provider": model_provider,
-        "preferred_auth_method": preferred_auth_method,
-        "model": model,
-        "reasoning_effort": reasoning_effort,
-        "service_tier": service_tier,
-        "create_in_tmux": create_in_tmux,
-    }
+    return _session_creation.parse_create_session_request(obj)
 
 
 def _configured_model_providers(data: dict[str, Any]) -> list[str]:
-    providers = ["openai"]
-    seen = {"openai"}
-    raw = data.get("model_providers")
-    if not isinstance(raw, dict):
-        return providers
-    for key in raw.keys():
-        if not isinstance(key, str):
-            continue
-        name = key.strip()
-        if not name or name in seen:
-            continue
-        seen.add(name)
-        providers.append(name)
-    return providers
+    return _session_creation.configured_model_providers(data)
 
 
 def _provider_choice_for_settings(
@@ -2869,171 +2352,16 @@ def _patch_metadata_pi_binding(sock: Path, session_path: Path) -> None:
 
 
 def _read_codex_launch_defaults() -> dict[str, Any]:
-    configured_model = None
-    configured_effort = None
-    configured_provider = "openai"
-    configured_auth_method = "apikey"
-    configured_service_tier = "flex"
-    configured_providers = ["chatgpt", "openai-api"]
-    if CODEX_CONFIG_PATH.exists():
-        data = tomllib.loads(CODEX_CONFIG_PATH.read_text(encoding="utf-8"))
-        if not isinstance(data, dict):
-            raise ValueError(f"invalid Codex config in {CODEX_CONFIG_PATH}")
-        configured_model = _clean_optional_text(data.get("model"))
-        configured_effort = _display_reasoning_effort(
-            data.get("model_reasoning_effort")
-        )
-        configured_auth_method = (
-            _normalize_requested_preferred_auth_method(
-                data.get("preferred_auth_method")
-            )
-            or configured_auth_method
-        )
-        configured_providers = [
-            "chatgpt",
-            "openai-api",
-            *[p for p in _configured_model_providers(data) if p != "openai"],
-        ]
-        configured_provider = (
-            _normalize_requested_model_provider(
-                data.get("model_provider") or data.get("model_provider_id"),
-                allowed=set(
-                    [
-                        "openai",
-                        *[
-                            p
-                            for p in configured_providers
-                            if p not in {"chatgpt", "openai-api"}
-                        ],
-                    ]
-                ),
-            )
-            or configured_provider
-        )
-        configured_service_tier = (
-            _normalize_requested_service_tier(
-                data.get("service_tier"),
-            )
-            or configured_service_tier
-        )
-    defaults: dict[str, Any] = {
-        "model_provider": configured_provider,
-        "preferred_auth_method": configured_auth_method,
-        "provider_choice": _provider_choice_for_settings(
-            model_provider=configured_provider,
-            preferred_auth_method=configured_auth_method,
-        ),
-        "model": configured_model,
-        "model_providers": configured_providers,
-        "service_tier": configured_service_tier,
-    }
-    if configured_effort is not None:
-        defaults["reasoning_effort"] = configured_effort
-        return defaults
-    if not MODELS_CACHE_PATH.exists():
-        defaults["reasoning_effort"] = None
-        return defaults
-    cache = json.loads(MODELS_CACHE_PATH.read_text(encoding="utf-8"))
-    models = cache.get("models") if isinstance(cache, dict) else None
-    if not isinstance(models, list):
-        raise ValueError(f"invalid models cache in {MODELS_CACHE_PATH}")
-    rows: list[dict[str, Any]] = [row for row in models if isinstance(row, dict)]
-    if not rows:
-        defaults["reasoning_effort"] = None
-        return defaults
-    if configured_model is not None:
-        for row in rows:
-            names = {
-                _clean_optional_text(row.get("slug")),
-                _clean_optional_text(row.get("display_name")),
-            }
-            if configured_model in names:
-                defaults["reasoning_effort"] = _display_reasoning_effort(
-                    row.get("default_reasoning_level")
-                )
-                return defaults
-    ranked = sorted(
-        rows,
-        key=lambda row: (
-            row.get("priority") if isinstance(row.get("priority"), int) else 999999,
-            _clean_optional_text(row.get("slug")) or "",
-        ),
-    )
-    defaults["reasoning_effort"] = _display_reasoning_effort(
-        ranked[0].get("default_reasoning_level")
-    )
-    return defaults
+    return _session_creation.read_codex_launch_defaults()
 
 
 def _normalize_pi_provider_models_snapshot(raw: Any) -> dict[str, Any] | None:
-    if not isinstance(raw, dict):
-        return None
-    provider_models_raw = raw.get("provider_models")
-    if not isinstance(provider_models_raw, dict):
-        return None
-    provider_choices_raw = raw.get("provider_choices")
-    provider_choices: list[str] = []
-    if isinstance(provider_choices_raw, list):
-        for value in provider_choices_raw:
-            name = _clean_optional_text(value)
-            if name is None or name in provider_choices:
-                continue
-            provider_choices.append(name)
-    provider_models: dict[str, list[str]] = {}
-    for key, value in provider_models_raw.items():
-        name = _clean_optional_text(key)
-        if name is None:
-            continue
-        model_choices: list[str] = []
-        if isinstance(value, list):
-            for item in value:
-                model_id = _clean_optional_text(item)
-                if model_id is None or model_id in model_choices:
-                    continue
-                model_choices.append(model_id)
-        provider_models[name] = model_choices
-        if name not in provider_choices:
-            provider_choices.append(name)
-    cached_at = raw.get("cached_at")
-    return {
-        "provider_choices": provider_choices,
-        "provider_models": provider_models,
-        "cached_at": float(cached_at) if isinstance(cached_at, (int, float)) else None,
-    }
+    return _session_creation.normalize_pi_provider_models_snapshot(raw)
 
 
 
 def _read_pi_provider_models_snapshot_from_source() -> dict[str, Any]:
-    provider_choices: list[str] = []
-    provider_models: dict[str, list[str]] = {}
-    if PI_MODELS_PATH.exists():
-        data = json.loads(PI_MODELS_PATH.read_text(encoding="utf-8"))
-        if not isinstance(data, dict):
-            raise ValueError(f"invalid Pi models config in {PI_MODELS_PATH}")
-        providers = data.get("providers")
-        if isinstance(providers, dict):
-            for key, value in providers.items():
-                name = _clean_optional_text(key)
-                if name is None or name in provider_choices:
-                    continue
-                provider_choices.append(name)
-                model_choices: list[str] = []
-                if isinstance(value, dict):
-                    models = value.get("models")
-                    if isinstance(models, list):
-                        for row in models:
-                            if not isinstance(row, dict):
-                                continue
-                            model_id = _clean_optional_text(row.get("id"))
-                            if model_id is None or model_id in model_choices:
-                                continue
-                            model_choices.append(model_id)
-                provider_models[name] = model_choices
-    return {
-        "provider_choices": provider_choices,
-        "provider_models": provider_models,
-        "cached_at": time.time(),
-    }
+    return _session_creation.read_pi_provider_models_snapshot_from_source()
 
 
 
@@ -3042,16 +2370,10 @@ def _read_pi_provider_models_snapshot(
     page_state_db: PageStateDB | None = None,
     force_refresh: bool = False,
 ) -> dict[str, Any]:
-    if not force_refresh and page_state_db is not None:
-        cached = _normalize_pi_provider_models_snapshot(
-            page_state_db.load_app_kv(PI_MODELS_CACHE_NAMESPACE).get("snapshot")
-        )
-        if cached is not None:
-            return cached
-    snapshot = _read_pi_provider_models_snapshot_from_source()
-    if page_state_db is not None:
-        page_state_db.save_app_kv(PI_MODELS_CACHE_NAMESPACE, {"snapshot": snapshot})
-    return snapshot
+    return _session_creation.read_pi_provider_models_snapshot(
+        page_state_db=page_state_db,
+        force_refresh=force_refresh,
+    )
 
 
 
@@ -3060,59 +2382,10 @@ def _read_pi_launch_defaults(
     page_state_db: PageStateDB | None = None,
     force_refresh: bool = False,
 ) -> dict[str, Any]:
-    configured_provider: str | None = None
-    configured_model: str | None = None
-    configured_effort: str | None = "high"
-
-    if PI_SETTINGS_PATH.exists():
-        data = json.loads(PI_SETTINGS_PATH.read_text(encoding="utf-8"))
-        if not isinstance(data, dict):
-            raise ValueError(f"invalid Pi settings in {PI_SETTINGS_PATH}")
-        configured_provider = _clean_optional_text(data.get("defaultProvider"))
-        configured_model = _clean_optional_text(data.get("defaultModel"))
-
-    snapshot = _read_pi_provider_models_snapshot(
+    return _session_creation.read_pi_launch_defaults(
         page_state_db=page_state_db,
         force_refresh=force_refresh,
     )
-    provider_choices = list(snapshot.get("provider_choices") or [])
-    provider_models = {
-        str(key): [str(item) for item in value]
-        for key, value in dict(snapshot.get("provider_models") or {}).items()
-        if isinstance(key, str) and isinstance(value, list)
-    }
-
-    fallback_provider = next(
-        (name for name in provider_choices if provider_models.get(name)),
-        provider_choices[0] if provider_choices else None,
-    )
-    selected_provider = (
-        configured_provider
-        if configured_provider in provider_choices
-        else fallback_provider
-    )
-    selected_models = provider_models.get(selected_provider or "", [])
-    selected_model = (
-        configured_model
-        if configured_model in selected_models
-        else (selected_models[0] if selected_models else None)
-    )
-
-    return {
-        "agent_backend": "pi",
-        "model_provider": selected_provider,
-        "preferred_auth_method": None,
-        "provider_choice": selected_provider,
-        "provider_choices": provider_choices,
-        "model": selected_model,
-        "models": selected_models,
-        "provider_models": provider_models,
-        "reasoning_effort": configured_effort,
-        "reasoning_efforts": list(SUPPORTED_PI_REASONING_EFFORTS),
-        "service_tier": None,
-        "supports_fast": False,
-        "models_cached_at": snapshot.get("cached_at"),
-    }
 
 
 def _read_new_session_defaults(
@@ -3120,117 +2393,42 @@ def _read_new_session_defaults(
     page_state_db: PageStateDB | None = None,
     refresh_pi_models: bool = False,
 ) -> dict[str, Any]:
-    codex = _read_codex_launch_defaults()
-    codex["agent_backend"] = "codex"
-    codex["provider_choices"] = list(codex.get("model_providers") or [])
-    codex["reasoning_efforts"] = list(SUPPORTED_REASONING_EFFORTS)
-    codex["supports_fast"] = True
-    pi = _read_pi_launch_defaults(
+    return _session_creation.read_new_session_defaults(
         page_state_db=page_state_db,
-        force_refresh=refresh_pi_models,
+        refresh_pi_models=refresh_pi_models,
     )
-    return {
-        "default_backend": DEFAULT_AGENT_BACKEND,
-        "backends": {
-            "codex": codex,
-            "pi": pi,
-        },
-    }
 
 
 def _fallback_path_mtime(path: Path) -> float | None:
-    try:
-        stat = path.stat()
-    except FileNotFoundError:
-        return None
-    except Exception:
-        return 0.0
-    return float(stat.st_mtime)
+    return _resume_candidates.fallback_path_mtime(path)
 
 
 def _last_pi_conversation_ts(path: Path) -> float | None:
-    try:
-        for entry in _rollout_log._iter_jsonl_objects_reverse(path):
-            if entry.get("type") != "message":
-                continue
-            message = entry.get("message")
-            if not isinstance(message, dict):
-                continue
-            role = message.get("role")
-            if role not in {"user", "assistant", "toolResult"}:
-                continue
-            ts = _pi_messages._entry_ts(message)
-            if ts is None:
-                ts = _pi_messages._entry_ts(entry)
-            if isinstance(ts, (int, float)) and math.isfinite(float(ts)) and float(ts) > 0:
-                return float(ts)
-    except FileNotFoundError:
-        return None
-    except Exception:
-        return 0.0
-    return None
+    return _resume_candidates.last_pi_conversation_ts(path)
 
 
 def _resume_candidate_updated_ts(path: Path, *, agent_backend: str) -> float | None:
-    backend_name = normalize_agent_backend(agent_backend)
-    if backend_name == "pi":
-        ts = _last_pi_conversation_ts(path)
-    else:
-        ts = _last_conversation_ts_from_tail(path)
-    if isinstance(ts, (int, float)) and math.isfinite(float(ts)) and float(ts) > 0:
-        return float(ts)
-    return _fallback_path_mtime(path)
+    return _resume_candidates.resume_candidate_updated_ts(
+        path,
+        agent_backend=agent_backend,
+    )
 
 
 def _resume_candidate_from_log(
     log_path: Path, *, agent_backend: str = "codex"
 ) -> dict[str, Any] | None:
-    backend_name = normalize_agent_backend(agent_backend)
-    meta = _read_session_meta(log_path, agent_backend=backend_name)
-    if backend_name == "codex" and _is_subagent_session_meta(meta):
-        return None
-    session_id = meta.get("id")
-    cwd = meta.get("cwd")
-    if not isinstance(session_id, str) or not session_id:
-        return None
-    if not isinstance(cwd, str) or not cwd:
-        return None
-    updated_ts = _resume_candidate_updated_ts(log_path, agent_backend=backend_name)
-    if updated_ts is None:
-        return None
-    git_branch = ""
-    if backend_name == "codex":
-        git_info = meta.get("git")
-        if isinstance(git_info, dict):
-            branch_raw = git_info.get("branch")
-            if isinstance(branch_raw, str):
-                git_branch = branch_raw
-    return {
-        "session_id": session_id,
-        "cwd": cwd,
-        "log_path": str(log_path),
-        "updated_ts": updated_ts,
-        "timestamp": meta.get("timestamp"),
-        "git_branch": git_branch,
-        "agent_backend": backend_name,
-    }
+    return _resume_candidates.resume_candidate_from_log(
+        log_path,
+        agent_backend=agent_backend,
+    )
 
 
 def _pi_native_session_dir_for_cwd(cwd: str | Path) -> Path:
-    cwd_path = _safe_expanduser(Path(cwd)).resolve()
-    slug = str(cwd_path).strip("/").replace("/", "-")
-    return PI_NATIVE_SESSIONS_DIR / f"--{slug}--"
+    return _pi_session_files.pi_native_session_dir_for_cwd(cwd)
 
 
 def _pi_new_session_file_for_cwd(cwd: str | Path) -> Path:
-    now = float(_now())
-    millis = int(round((now - math.floor(now)) * 1000))
-    if millis >= 1000:
-        now = math.floor(now) + 1.0
-        millis = 0
-    stamp = time.strftime("%Y-%m-%dT%H-%M-%S", time.gmtime(now))
-    name = f"{stamp}-{millis:03d}Z_{uuid.uuid4()}.jsonl"
-    return _pi_native_session_dir_for_cwd(cwd) / name
+    return _pi_session_files.pi_new_session_file_for_cwd(cwd)
 
 
 def _write_pi_session_header(
@@ -3243,107 +2441,44 @@ def _write_pi_session_header(
     model_id: str | None = None,
     thinking_level: str | None = None,
 ) -> None:
-    session_path.parent.mkdir(parents=True, exist_ok=True)
-    now = float(_now())
-    millis = int(round((now - math.floor(now)) * 1000))
-    if millis >= 1000:
-        now = math.floor(now) + 1.0
-        millis = 0
-    timestamp = f"{time.strftime('%Y-%m-%dT%H:%M:%S', time.gmtime(now))}.{millis:03d}Z"
-    header: dict[str, Any] = {
-        "type": "session",
-        "version": 3,
-        "id": session_id,
-        "timestamp": timestamp,
-        "cwd": cwd,
-    }
-    if isinstance(parent_session, str) and parent_session.strip():
-        header["parentSession"] = parent_session.strip()
-    if isinstance(provider, str) and provider.strip():
-        header["provider"] = provider.strip()
-    if isinstance(model_id, str) and model_id.strip():
-        header["modelId"] = model_id.strip()
-    if isinstance(thinking_level, str) and thinking_level.strip():
-        header["thinkingLevel"] = thinking_level.strip()
-    with session_path.open("w", encoding="utf-8") as f:
-        f.write(json.dumps(header, ensure_ascii=False) + "\n")
+    return _pi_session_files.write_pi_session_header(
+        session_path,
+        session_id=session_id,
+        cwd=cwd,
+        parent_session=parent_session,
+        provider=provider,
+        model_id=model_id,
+        thinking_level=thinking_level,
+    )
 
 
 def _pi_session_history_glob(session_path: Path) -> str:
-    return f"{session_path.name}.history*"
+    return _pi_session_files.pi_session_history_glob(session_path)
 
 
 def _pi_session_has_handoff_history(session_path: Path) -> bool:
-    try:
-        return any(session_path.parent.glob(_pi_session_history_glob(session_path)))
-    except OSError:
-        return False
+    return _pi_session_files.pi_session_has_handoff_history(session_path)
 
 
 def _next_pi_handoff_history_path(session_path: Path) -> Path:
-    base_name = f"{session_path.name}.history"
-    candidate = session_path.with_name(base_name)
-    if not candidate.exists():
-        return candidate
-    i = 1
-    while True:
-        candidate = session_path.with_name(f"{base_name}.{i}")
-        if not candidate.exists():
-            return candidate
-        i += 1
+    return _pi_session_files.next_pi_handoff_history_path(session_path)
 
 
 def _copy_file_atomic(source_path: Path, target_path: Path) -> None:
-    target_path.parent.mkdir(parents=True, exist_ok=True)
-    if target_path.exists():
-        raise FileExistsError(f"target already exists: {target_path}")
-    tmp_path = target_path.with_name(
-        f".{target_path.name}.codoxear-tmp-{secrets.token_hex(6)}"
-    )
-    try:
-        with source_path.open("rb") as src, tmp_path.open("xb") as dst:
-            shutil.copyfileobj(src, dst)
-        try:
-            st = source_path.stat()
-            os.chmod(tmp_path, st.st_mode & 0o777)
-        except OSError:
-            pass
-        os.replace(tmp_path, target_path)
-    finally:
-        try:
-            if tmp_path.exists():
-                tmp_path.unlink()
-        except OSError:
-            pass
+    return _pi_session_files.copy_file_atomic(source_path, target_path)
 
 
 def _append_pi_user_message(session_path: Path, *, text: str) -> None:
-    now = float(_now())
-    millis = int(round(now * 1000))
-    entry = {
-        "type": "message",
-        "message": {
-            "role": "user",
-            "content": [{"type": "text", "text": text}],
-            "timestamp": millis,
-        },
-    }
-    with session_path.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    return _pi_session_files.append_pi_user_message(session_path, text=text)
 
 
 def _pi_handoff_message_text(
     *, source_session_id: str, history_path: Path, cwd: str
 ) -> str:
-    return "\n".join(
-        [
-            "Handoff context:",
-            f"- Source session id: {source_session_id}",
-            f"- Archived history file: {history_path}",
-            f"- Working directory: {cwd}",
-            "- This is a fresh session with no inherited chat context.",
-            "- Read the archived history file only when you need prior context.",
-        ]
+    return _pi_session_files.pi_handoff_message_text(
+        source_session_id=source_session_id,
+        history_path=history_path,
+        cwd=cwd,
     )
 
 
@@ -3358,114 +2493,40 @@ def _write_pi_handoff_session(
     model_id: str | None = None,
     thinking_level: str | None = None,
 ) -> None:
-    _write_pi_session_header(
+    return _pi_session_files.write_pi_handoff_session(
         session_path,
         session_id=session_id,
         cwd=cwd,
-        parent_session=source_session_id,
+        source_session_id=source_session_id,
+        history_path=history_path,
         provider=provider,
         model_id=model_id,
         thinking_level=thinking_level,
-    )
-    _append_pi_user_message(
-        session_path,
-        text=_pi_handoff_message_text(
-            source_session_id=source_session_id,
-            history_path=history_path,
-            cwd=cwd,
-        ),
     )
 
 
 def _pi_session_name_from_session_file(
     session_path: Path, *, max_scan_bytes: int = 512 * 1024
 ) -> str:
-    try:
-        objs = _read_jsonl_tail(session_path, max_scan_bytes)
-    except Exception:
-        return ""
-    for obj in reversed(objs):
-        if not isinstance(obj, dict) or obj.get("type") != "session_info":
-            continue
-        name = obj.get("name")
-        if isinstance(name, str):
-            return name.strip()
-    return ""
+    return _pi_session_files.pi_session_name_from_session_file(
+        session_path,
+        max_scan_bytes=max_scan_bytes,
+    )
 
 
 
 def _pi_resume_candidate_from_session_file(session_path: Path) -> dict[str, Any] | None:
-    if _pi_session_has_handoff_history(session_path):
-        return None
-    try:
-        with session_path.open("rb") as f:
-            for raw in f:
-                if not raw.strip():
-                    continue
-                try:
-                    obj = json.loads(raw.decode("utf-8"))
-                except Exception:
-                    continue
-                if not isinstance(obj, dict) or obj.get("type") != "session":
-                    continue
-                session_id = obj.get("id") or obj.get("session_id")
-                cwd = obj.get("cwd")
-                if not (isinstance(session_id, str) and session_id):
-                    return None
-                if not (isinstance(cwd, str) and cwd):
-                    return None
-                updated_ts = _resume_candidate_updated_ts(session_path, agent_backend="pi")
-                if updated_ts is None:
-                    return None
-                return {
-                    "session_id": session_id,
-                    "cwd": cwd,
-                    "session_path": str(session_path),
-                    "updated_ts": updated_ts,
-                    "timestamp": obj.get("timestamp"),
-                    "git_branch": None,
-                    "agent_backend": "pi",
-                    "backend": "pi",
-                    "title": _pi_session_name_from_session_file(session_path),
-                }
-    except OSError:
-        return None
-    return None
+    return _resume_candidates.pi_resume_candidate_from_session_file(session_path)
 
 
 def _discover_pi_session_for_cwd(
     cwd: str, start_ts: float, *, exclude: set[Path] | None = None
 ) -> Path | None:
-    """Auto-discover the pi session file for a PTY-wrapped pi broker.
-
-    When pi runs inside the PTY broker (piox), pi writes its own session file
-    to ~/.pi/agent/sessions/ but the broker sidecar has no session_path.
-    This function finds the most recently modified session file that was
-    created around/after the broker start time.
-
-    *exclude* contains session paths already claimed by other active sessions
-    so that two brokers sharing the same CWD pick different files.
-    """
-    session_dir = _pi_native_session_dir_for_cwd(cwd)
-    if not session_dir.is_dir():
-        return None
-    best: Path | None = None
-    best_mtime: float = 0
-    for f in session_dir.glob("*.jsonl"):
-        if exclude and f in exclude:
-            continue
-        if _pi_session_has_handoff_history(f):
-            continue
-        try:
-            mtime = f.stat().st_mtime
-        except OSError:
-            continue
-        if mtime < start_ts - 10:
-            continue
-        if mtime > best_mtime:
-            best = f
-            best_mtime = mtime
-    return best
+    return _resume_candidates.discover_pi_session_for_cwd(
+        cwd,
+        start_ts,
+        exclude=exclude,
+    )
 
 
 def _resolve_pi_session_path(
@@ -3476,33 +2537,13 @@ def _resolve_pi_session_path(
     preferred: Path | None = None,
     exclude: set[Path] | None = None,
 ) -> tuple[Path | None, str | None]:
-    """Resolve the Pi session file, preferring the current backend thread id.
-
-    Returns ``(path, source)`` where ``source`` is one of ``exact``,
-    ``preferred``, ``discovered``, or ``None``.
-    """
-
-    clean_thread_id = str(thread_id or "").strip()
-    if preferred is not None:
-        try:
-            preferred_exists = preferred.exists()
-        except OSError:
-            preferred_exists = False
-        if preferred_exists:
-            if (not clean_thread_id) or (
-                _read_pi_session_id(preferred) == clean_thread_id
-            ):
-                return preferred, "preferred"
-    if clean_thread_id:
-        exact = _find_session_log_for_session_id(clean_thread_id, agent_backend="pi")
-        if exact is not None:
-            return exact, "exact"
-    if preferred is not None:
-        return preferred, "preferred"
-    discovered = _discover_pi_session_for_cwd(cwd, start_ts, exclude=exclude)
-    if discovered is not None:
-        return discovered, "discovered"
-    return None, None
+    return _resume_candidates.resolve_pi_session_path(
+        thread_id=thread_id,
+        cwd=cwd,
+        start_ts=start_ts,
+        preferred=preferred,
+        exclude=exclude,
+    )
 
 
 def _safe_path_mtime(path: Path) -> float | None:
@@ -3520,85 +2561,17 @@ def _list_resume_candidates_for_cwd(
     backend: str | None = None,
     agent_backend: str | None = None,
 ) -> list[dict[str, Any]]:
-    cwd2 = str(_safe_expanduser(Path(cwd)).resolve())
-    backend_raw = backend if backend is not None else agent_backend
-    backend2 = normalize_agent_backend(backend_raw, default="codex")
-    limit2 = max(1, int(limit))
-    offset2 = max(0, int(offset))
-    if backend2 == "pi":
-        rows: list[dict[str, Any]] = []
-        session_dir = _pi_native_session_dir_for_cwd(cwd2)
-        if not session_dir.exists():
-            return rows
-        for session_path in session_dir.glob("*.jsonl"):
-            row = _pi_resume_candidate_from_session_file(session_path)
-            if not isinstance(row, dict):
-                continue
-            if row.get("cwd") != cwd2:
-                continue
-            rows.append(row)
-        rows.sort(key=lambda row: -float(row.get("updated_ts") or 0.0))
-        return rows[offset2 : offset2 + limit2]
-    out: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    for log_path in _iter_session_logs(agent_backend=backend2):
-        try:
-            row = _resume_candidate_from_log(log_path, agent_backend=backend2)
-        except Exception:
-            continue
-        if not isinstance(row, dict):
-            continue
-        session_id = row.get("session_id")
-        row_cwd = row.get("cwd")
-        if not (isinstance(session_id, str) and session_id):
-            continue
-        if not (isinstance(row_cwd, str) and row_cwd == cwd2):
-            continue
-        if session_id in seen:
-            continue
-        out.append(row)
-        seen.add(session_id)
-    out.sort(key=lambda row: -float(row.get("updated_ts") or 0.0))
-    return out[offset2 : offset2 + limit2]
+    return _resume_candidates.list_resume_candidates_for_cwd(
+        cwd,
+        limit=limit,
+        offset=offset,
+        backend=backend,
+        agent_backend=agent_backend,
+    )
 
 
 def _iter_all_resume_candidates(*, limit: int = 200) -> list[dict[str, Any]]:
-    seen: set[tuple[str, str]] = set()
-
-    ranked_rows: list[tuple[float, dict[str, Any]]] = []
-
-    if PI_NATIVE_SESSIONS_DIR.exists():
-        for session_path in PI_NATIVE_SESSIONS_DIR.glob("--*--/*.jsonl"):
-            row = _pi_resume_candidate_from_session_file(session_path)
-            if not isinstance(row, dict):
-                continue
-            session_id = row.get("session_id")
-            if not isinstance(session_id, str) or not session_id:
-                continue
-            key = ("pi", session_id)
-            if key in seen:
-                continue
-            seen.add(key)
-            ranked_rows.append((float(row.get("updated_ts") or 0.0), row))
-
-    for log_path in _iter_session_logs(agent_backend="codex"):
-        try:
-            row = _resume_candidate_from_log(log_path, agent_backend="codex")
-        except Exception:
-            continue
-        if not isinstance(row, dict):
-            continue
-        session_id = row.get("session_id")
-        if not isinstance(session_id, str) or not session_id:
-            continue
-        key = ("codex", session_id)
-        if key in seen:
-            continue
-        seen.add(key)
-        ranked_rows.append((float(row.get("updated_ts") or 0.0), row))
-
-    ranked_rows.sort(key=lambda item: -item[0])
-    return [row for _updated_ts, row in ranked_rows[:limit]]
+    return _resume_candidates.iter_all_resume_candidates(limit=limit)
 
 
 def _historical_session_id(backend: str, resume_session_id: str) -> str:
@@ -3645,208 +2618,40 @@ def _historical_session_row(session_id: str) -> dict[str, Any] | None:
 def _historical_sidebar_items(
     *, live_resume_keys: set[tuple[str, str]], now_ts: float
 ) -> list[dict[str, Any]]:
-    out: list[dict[str, Any]] = []
-    for row in _iter_all_resume_candidates():
-        resume_session_id = row.get("session_id")
-        cwd = row.get("cwd")
-        if not isinstance(resume_session_id, str) or not resume_session_id:
-            continue
-        if not isinstance(cwd, str) or not cwd:
-            continue
-        backend = normalize_agent_backend(
-            row.get("agent_backend", row.get("backend")), default="codex"
-        )
-        live_key = (backend, resume_session_id)
-        if live_key in live_resume_keys:
-            continue
-        updated_ts_raw = row.get("updated_ts")
-        updated_ts = (
-            float(updated_ts_raw)
-            if isinstance(updated_ts_raw, (int, float))
-            else float(now_ts)
-        )
-        elapsed_s = max(0.0, now_ts - updated_ts)
-        time_priority = _priority_from_elapsed_seconds(elapsed_s)
-        first_user_message = ""
-        try:
-            if backend == "pi":
-                session_path_raw = row.get("session_path")
-                if isinstance(session_path_raw, str) and session_path_raw:
-                    first_user_message = _first_user_message_preview_from_pi_session(
-                        Path(session_path_raw)
-                    )
-            else:
-                log_path_raw = row.get("log_path")
-                if isinstance(log_path_raw, str) and log_path_raw:
-                    first_user_message = _first_user_message_preview_from_log(
-                        Path(log_path_raw)
-                    )
-        except Exception:
-            first_user_message = ""
-        out.append(
-            {
-                "session_id": _historical_session_id(backend, resume_session_id),
-                "runtime_id": None,
-                "thread_id": resume_session_id,
-                "backend": backend,
-                "pid": None,
-                "broker_pid": None,
-                "agent_backend": backend,
-                "owned": False,
-                "transport": None,
-                "cwd": cwd,
-                "start_ts": updated_ts,
-                "updated_ts": updated_ts,
-                "log_path": row.get("log_path")
-                if isinstance(row.get("log_path"), str)
-                else row.get("session_path")
-                if isinstance(row.get("session_path"), str)
-                else None,
-                "queue_len": 0,
-                "token": None,
-                "thinking": 0,
-                "tools": 0,
-                "system": 0,
-                "harness_enabled": False,
-                "harness_cooldown_minutes": HARNESS_DEFAULT_IDLE_MINUTES,
-                "harness_remaining_injections": HARNESS_DEFAULT_MAX_INJECTIONS,
-                "alias": "",
-                "first_user_message": first_user_message,
-                "files": [],
-                "git_branch": row.get("git_branch"),
-                "model_provider": None,
-                "preferred_auth_method": None,
-                "provider_choice": None,
-                "model": None,
-                "reasoning_effort": None,
-                "service_tier": None,
-                "tmux_session": None,
-                "tmux_window": None,
-                "priority_offset": 0.0,
-                "snooze_until": None,
-                "dependency_session_id": None,
-                "time_priority": time_priority,
-                "base_priority": time_priority,
-                "final_priority": time_priority,
-                "blocked": False,
-                "snoozed": False,
-                "busy": False,
-                "historical": True,
-                "resume_session_id": resume_session_id,
-            }
-        )
-    return out
+    return _session_listing.historical_sidebar_items(
+        live_resume_keys=live_resume_keys,
+        now_ts=now_ts,
+    )
 
 
 def _resume_preview_from_text(text: str, *, max_chars: int = 120) -> str:
-    lines = [line.strip() for line in text.splitlines()]
-    compact = " ".join(line for line in lines if line)
-    compact = re.sub(r"\s+", " ", compact).strip()
-    if len(compact) <= max_chars:
-        return compact
-    head = compact[: max_chars - 1].rstrip()
-    cut = head.rfind(" ")
-    if cut >= max_chars * 0.6:
-        head = head[:cut].rstrip()
-    return head + "..."
+    return _session_listing.resume_preview_from_text(text, max_chars=max_chars)
 
 
 def _user_message_text(payload: dict[str, Any]) -> str:
-    content = payload.get("content")
-    if not isinstance(content, list):
-        return ""
-    parts: list[str] = []
-    for item in content:
-        if not isinstance(item, dict):
-            continue
-        item_type = item.get("type")
-        if item_type not in ("input_text", "output_text", "text"):
-            continue
-        text = item.get("text")
-        if isinstance(text, str) and text.strip():
-            parts.append(text)
-    return "\n".join(parts).strip()
+    return _session_listing.user_message_text(payload)
 
 
 def _is_scaffold_user_text(text: str) -> bool:
-    s = text.strip()
-    return s.startswith("# AGENTS.md instructions") or s.startswith(
-        "<environment_context>"
-    )
+    return _session_listing.is_scaffold_user_text(text)
 
 
 def _first_user_message_preview_from_log(
     log_path: Path, *, max_scan_bytes: int = 256 * 1024
 ) -> str:
-    try:
-        with log_path.open("rb") as f:
-            total = 0
-            for raw in f:
-                total += len(raw)
-                if total > max_scan_bytes:
-                    break
-                try:
-                    obj = json.loads(raw.decode("utf-8"))
-                except Exception:
-                    continue
-                if not isinstance(obj, dict):
-                    continue
-                if obj.get("type") == "message":
-                    text = _pi_user_text(obj) or ""
-                elif obj.get("type") == "response_item":
-                    payload = obj.get("payload")
-                    if not isinstance(payload, dict):
-                        continue
-                    if (
-                        payload.get("type") != "message"
-                        or payload.get("role") != "user"
-                    ):
-                        continue
-                    text = _user_message_text(payload)
-                else:
-                    continue
-                if not text or _is_scaffold_user_text(text):
-                    continue
-                return _resume_preview_from_text(text)
-    except FileNotFoundError:
-        return ""
-    return ""
+    return _session_listing.first_user_message_preview_from_log(
+        log_path,
+        max_scan_bytes=max_scan_bytes,
+    )
 
 
 def _first_user_message_preview_from_pi_session(
     session_path: Path, *, max_scan_bytes: int = 256 * 1024
 ) -> str:
-    try:
-        with session_path.open("rb") as f:
-            total = 0
-            for raw in f:
-                total += len(raw)
-                if total > max_scan_bytes:
-                    break
-                try:
-                    obj = json.loads(raw.decode("utf-8"))
-                except Exception:
-                    continue
-                if not isinstance(obj, dict) or obj.get("type") != "message":
-                    continue
-                payload = obj.get("message")
-                if not isinstance(payload, dict):
-                    payload = obj.get("payload")
-                if not isinstance(payload, dict):
-                    payload = obj
-                if payload.get("role") != "user":
-                    continue
-                text = _user_message_text(payload)
-                if not text:
-                    content = payload.get("content")
-                    if isinstance(content, str):
-                        text = content.strip()
-                if not text or _is_scaffold_user_text(text):
-                    continue
-                return _resume_preview_from_text(text)
-    except FileNotFoundError:
-        return ""
-    return ""
+    return _session_listing.first_user_message_preview_from_pi_session(
+        session_path,
+        max_scan_bytes=max_scan_bytes,
+    )
 
 
 def _coerce_main_thread_log(*, thread_id: str, log_path: Path) -> tuple[str, Path]:
@@ -4256,7 +3061,7 @@ def _resolved_session_token(
 def _session_context_usage_payload(
     s: Session, token_val: dict[str, Any] | None
 ) -> dict[str, Any] | None:
-    return _session_payloads.session_context_usage_payload(s, token_val)
+    return _session_payloads.session_context_usage_payload(RUNTIME, s, token_val)
 
 
 
@@ -4266,19 +3071,19 @@ def _session_turn_timing_payload(
     *,
     busy: bool,
 ) -> dict[str, Any] | None:
-    return _session_payloads.session_turn_timing_payload(s, events, busy=busy)
+    return _session_payloads.session_turn_timing_payload(RUNTIME, s, events, busy=busy)
 
 
 def _session_diagnostics_payload(
     manager: "SessionManager", session_id: str, s: Session, state: dict[str, Any]
 ) -> dict[str, Any]:
-    return _session_payloads.session_diagnostics_payload(manager, session_id, s, state)
+    return _session_payloads.session_diagnostics_payload(RUNTIME, manager, session_id, s, state)
 
 
 def _session_workspace_payload(
     manager: "SessionManager", session_id: str
 ) -> dict[str, Any]:
-    return _session_payloads.session_workspace_payload(manager, session_id)
+    return _session_payloads.session_workspace_payload(RUNTIME, manager, session_id)
 
 
 def _session_live_payload(
@@ -4291,6 +3096,7 @@ def _session_live_payload(
     requests_version: str | None = None,
 ) -> dict[str, Any]:
     return _session_live_payloads.session_live_payload(
+        RUNTIME,
         manager,
         session_id,
         offset=offset,
@@ -4303,13 +3109,13 @@ def _session_live_payload(
 def _pi_live_messages_payload(
     manager: "SessionManager", session: Session, *, offset: int = 0
 ) -> dict[str, Any]:
-    return _session_live_payloads.pi_live_messages_payload(manager, session, offset=offset)
+    return _session_live_payloads.pi_live_messages_payload(RUNTIME, manager, session, offset=offset)
 
 
 def _merge_pi_live_message_events(
     durable_events: list[dict[str, Any]], streamed_events: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
-    return _session_live_payloads.merge_pi_live_message_events(durable_events, streamed_events)
+    return _session_live_payloads.merge_pi_live_message_events(RUNTIME, durable_events, streamed_events)
 
 
 def _supports_web_control(meta: dict[str, Any]) -> bool:
@@ -4343,6 +3149,11 @@ class SessionManager:
         self._recent_cwds: dict[str, float] = {}
         self._cwd_groups: dict[str, dict[str, Any]] = {}
         self._prune_missing_workspace_dirs = True
+        self._runtime = build_server_runtime(
+            sys.modules[__name__],
+            manager=self,
+            event_hub=EVENT_HUB,
+        )
         self._sidebar_state = SidebarStateFacade(self)
         self._harness_last_injected: dict[str, float] = {}
         self._harness_last_injected_scope: dict[str, float] = {}
@@ -4380,6 +3191,8 @@ class SessionManager:
         self._voice_push_scan_thr.start()
 
     def _sidebar_state_facade(self) -> SidebarStateFacade:
+        if getattr(self, "_runtime", None) is None:
+            self._runtime = RUNTIME
         facade = getattr(self, "_sidebar_state", None)
         if isinstance(facade, SidebarStateFacade):
             return facade
@@ -4405,35 +3218,10 @@ class SessionManager:
         return str(session.session_id)
 
     def _runtime_session_id_for_identifier(self, session_id: str) -> str | None:
-        target = _clean_optional_text(session_id)
-        if target is None:
-            return None
-        with self._lock:
-            if target in self._sessions:
-                return target
-            matches: list[tuple[float, str]] = []
-            for runtime_id, session in self._sessions.items():
-                ref = self._page_state_ref_for_session(session)
-                if ref is not None and ref[1] == target:
-                    matches.append((float(session.start_ts or 0.0), runtime_id))
-                    continue
-                thread_id = _clean_optional_text(session.thread_id)
-                if thread_id == target:
-                    matches.append((float(session.start_ts or 0.0), runtime_id))
-            if not matches:
-                return None
-            matches.sort(key=lambda item: (-item[0], item[1]))
-            return matches[0][1]
+        return _session_catalog.runtime_session_id_for_identifier(self, session_id)
 
     def _durable_session_id_for_identifier(self, session_id: str) -> str | None:
-        runtime_id = self._runtime_session_id_for_identifier(session_id)
-        if runtime_id is not None:
-            with self._lock:
-                session = self._sessions.get(runtime_id)
-            if session is not None:
-                return self._durable_session_id_for_session(session)
-        target = _clean_optional_text(session_id)
-        return target if target is not None else None
+        return _session_catalog.durable_session_id_for_identifier(self, session_id)
 
     def _append_bridge_event(self, durable_session_id: str, event: dict[str, Any]) -> dict[str, Any]:
         key = _clean_optional_text(durable_session_id)
@@ -4489,300 +3277,45 @@ class SessionManager:
         error: str | None = None,
         checked_ts: float | None = None,
     ) -> None:
-        publish = False
-        durable_session_id: str | None = None
-        with self._lock:
-            session = self._sessions.get(runtime_id)
-            if session is None:
-                return
-            next_error = _clean_optional_text(error)
-            publish = (
-                session.bridge_transport_state != state
-                or session.bridge_transport_error != next_error
-            )
-            session.bridge_transport_state = state
-            session.bridge_transport_error = next_error
-            session.bridge_transport_checked_ts = float(checked_ts if checked_ts is not None else time.time())
-            durable_session_id = self._durable_session_id_for_session(session)
-        if publish and durable_session_id is not None:
-            _publish_session_transport_invalidate(
-                durable_session_id,
-                runtime_id=runtime_id,
-                reason="transport_state",
-            )
-            _publish_session_live_invalidate(
-                durable_session_id,
-                runtime_id=runtime_id,
-                reason="transport_state",
-            )
+        _session_background.set_bridge_transport_state(
+            self,
+            runtime_id,
+            state=state,
+            error=error,
+            checked_ts=checked_ts,
+        )
 
-    def _probe_bridge_transport(self, session_id: str, *, force_rpc: bool = False) -> tuple[str, str | None]:
-        runtime_id = self._runtime_session_id_for_identifier(session_id)
-        if runtime_id is None:
-            return "dead", "unknown session"
-        with self._lock:
-            session = self._sessions.get(runtime_id)
-        if session is None:
-            return "dead", "unknown session"
-        processes_dead = (not _pid_alive(session.broker_pid)) and (not _pid_alive(session.codex_pid))
-        now = time.time()
-        last_checked = float(session.bridge_transport_checked_ts or 0.0)
-        if (
-            not force_rpc
-            and session.bridge_transport_state in {"alive", "degraded"}
-            and (now - last_checked) < BRIDGE_TRANSPORT_PROBE_STALE_SECONDS
-        ):
-            return session.bridge_transport_state, session.bridge_transport_error
-        try:
-            resp = self._sock_call(
-                session.sock_path,
-                {"cmd": "state"},
-                timeout_s=BRIDGE_TRANSPORT_RPC_TIMEOUT_SECONDS,
-            )
-            if not isinstance(resp, dict):
-                raise ValueError("invalid state probe response")
-        except Exception as exc:
-            if processes_dead:
-                self._set_bridge_transport_state(runtime_id, state="dead", error="broker exited", checked_ts=now)
-                return "dead", "broker exited"
-            error = str(exc).strip() or type(exc).__name__
-            self._set_bridge_transport_state(runtime_id, state="degraded", error=error, checked_ts=now)
-            return "degraded", error
-        self._set_bridge_transport_state(runtime_id, state="alive", error=None, checked_ts=now)
-        return "alive", None
+    def _probe_bridge_transport(
+        self, session_id: str, *, force_rpc: bool = False
+    ) -> tuple[str, str | None]:
+        return _session_background.probe_bridge_transport(
+            self,
+            session_id,
+            force_rpc=force_rpc,
+        )
 
     def _enqueue_outbound_request(self, runtime_id: str, text: str) -> BridgeOutboundRequest:
-        with self._lock:
-            session = self._sessions.get(runtime_id)
-            if session is None:
-                raise KeyError("unknown session")
-            durable_session_id = self._durable_session_id_for_session(session)
-            requests_by_runtime = getattr(self, "_outbound_requests", None)
-            if not isinstance(requests_by_runtime, dict):
-                self._outbound_requests = {}
-                requests_by_runtime = self._outbound_requests
-            request = BridgeOutboundRequest(
-                request_id=f"bridge-send-{uuid.uuid4().hex}",
-                runtime_id=runtime_id,
-                durable_session_id=durable_session_id,
-                text=str(text),
-                created_ts=time.time(),
-            )
-            requests_by_runtime.setdefault(runtime_id, []).append(request)
-        queue_wakeup = getattr(self, "_queue_wakeup", None)
-        if isinstance(queue_wakeup, threading.Event):
-            queue_wakeup.set()
-        return request
+        return _session_background.enqueue_outbound_request(self, runtime_id, text)
 
     def _fail_outbound_request(self, request: BridgeOutboundRequest, error: str) -> None:
-        event = {
-            "type": "pi_event",
-            "summary": "Bridge send failed",
-            "text": f"Bridge could not deliver the queued prompt: {error}\n\nOriginal prompt:\n{request.text}",
-            "is_error": True,
-            "request_id": request.request_id,
-            "request_state": "failed",
-            "pending_text": request.text,
-            "ts": time.time(),
-        }
-        self._append_bridge_event(request.durable_session_id, event)
+        _session_background.fail_outbound_request(self, request, error)
 
     def _mark_outbound_request_buffered_for_compaction(
         self, request: BridgeOutboundRequest
     ) -> None:
-        if request.state == "buffered":
-            return
-        request.state = "buffered"
-        event = {
-            "type": "pi_event",
-            "summary": "Bridge buffered prompt during compaction",
-            "text": "Waiting for Pi compaction to finish before delivering this prompt.\n\nQueued prompt:\n"
-            f"{request.text}",
-            "request_id": request.request_id,
-            "request_state": "buffered",
-            "pending_text": request.text,
-            "ts": time.time(),
-        }
-        self._append_bridge_event(request.durable_session_id, event)
+        _session_background.mark_outbound_request_buffered_for_compaction(self, request)
 
     def _maybe_drain_outbound_request(self, runtime_id: str) -> bool:
-        with self._lock:
-            requests_by_runtime = getattr(self, "_outbound_requests", None)
-            session = self._sessions.get(runtime_id)
-            queue = requests_by_runtime.get(runtime_id) if isinstance(requests_by_runtime, dict) else None
-            request = queue[0] if session is not None and isinstance(queue, list) and queue else None
-        if session is None or request is None:
-            return False
-        if request.runtime_id != runtime_id:
-            with self._lock:
-                queue2 = self._outbound_requests.get(runtime_id)
-                if isinstance(queue2, list) and queue2 and queue2[0] is request:
-                    queue2.pop(0)
-            self._fail_outbound_request(request, "stale runtime")
-            return True
-        state, transport_error = self._probe_bridge_transport(runtime_id)
-        if state == "dead":
-            with self._lock:
-                queue2 = self._outbound_requests.get(runtime_id)
-                if isinstance(queue2, list) and queue2 and queue2[0] is request:
-                    queue2.pop(0)
-                    if not queue2:
-                        self._outbound_requests.pop(runtime_id, None)
-            self._fail_outbound_request(request, transport_error or "broker exited")
-            return True
-        try:
-            st = self.get_state(runtime_id)
-        except Exception as exc:
-            request.attempts += 1
-            request.last_attempt_ts = time.time()
-            request.last_error = str(exc).strip() or type(exc).__name__
-            if request.attempts >= BRIDGE_OUTBOUND_FAILURE_MAX_ATTEMPTS or (time.time() - request.created_ts) >= BRIDGE_OUTBOUND_FAILURE_MAX_AGE_SECONDS:
-                with self._lock:
-                    queue2 = self._outbound_requests.get(runtime_id)
-                    if isinstance(queue2, list) and queue2 and queue2[0] is request:
-                        queue2.pop(0)
-                        if not queue2:
-                            self._outbound_requests.pop(runtime_id, None)
-                self._fail_outbound_request(request, request.last_error)
-                return True
-            return False
-        if not isinstance(st, dict):
-            return False
-        if bool(st.get("isCompacting")):
-            self._mark_outbound_request_buffered_for_compaction(request)
-            return False
-        if bool(st.get("busy")) or int(st.get("queue_len") or 0) > 0:
-            return False
-        request.state = "sending"
-        request.attempts += 1
-        request.last_attempt_ts = time.time()
-        try:
-            resp = self._sock_call(session.sock_path, {"cmd": "send", "text": request.text}, timeout_s=1.0)
-        except Exception as exc:
-            request.last_error = str(exc).strip() or type(exc).__name__
-            state2, transport_error2 = self._probe_bridge_transport(runtime_id, force_rpc=True)
-            if state2 == "dead" or request.attempts >= BRIDGE_OUTBOUND_FAILURE_MAX_ATTEMPTS or (time.time() - request.created_ts) >= BRIDGE_OUTBOUND_FAILURE_MAX_AGE_SECONDS:
-                with self._lock:
-                    queue2 = self._outbound_requests.get(runtime_id)
-                    if isinstance(queue2, list) and queue2 and queue2[0] is request:
-                        queue2.pop(0)
-                        if not queue2:
-                            self._outbound_requests.pop(runtime_id, None)
-                self._fail_outbound_request(request, transport_error2 or request.last_error)
-                return True
-            return False
-        error = resp.get("error") if isinstance(resp, dict) else None
-        if isinstance(error, str) and error:
-            with self._lock:
-                queue2 = self._outbound_requests.get(runtime_id)
-                if isinstance(queue2, list) and queue2 and queue2[0] is request:
-                    queue2.pop(0)
-                    if not queue2:
-                        self._outbound_requests.pop(runtime_id, None)
-            self._fail_outbound_request(request, error)
-            return True
-        with self._lock:
-            queue2 = self._outbound_requests.get(runtime_id)
-            if isinstance(queue2, list) and queue2 and queue2[0] is request:
-                queue2.pop(0)
-                if not queue2:
-                    self._outbound_requests.pop(runtime_id, None)
-            session2 = self._sessions.get(runtime_id)
-            if session2 is not None:
-                if isinstance(resp, dict) and isinstance(resp.get("busy"), bool):
-                    session2.busy = _state_busy_value(resp)
-                if isinstance(resp, dict):
-                    queue_len_raw = resp.get("queue_len")
-                    if type(queue_len_raw) is int and int(queue_len_raw) >= 0:
-                        session2.queue_len = _state_queue_len_value(resp)
-                session2.pi_idle_activity_ts = None
-                if session2.backend == "pi":
-                    activity_ts = _touch_session_file(session2.session_path)
-                    session2.pi_busy_activity_floor = activity_ts if session2.busy else None
-                else:
-                    session2.pi_busy_activity_floor = None
-        return True
+        return _session_background.maybe_drain_outbound_request(self, runtime_id)
 
     def _catalog_record_for_ref(self, ref: SessionRef) -> DurableSessionRecord | None:
-        backend, durable_session_id = ref
-        source_path = _find_session_log_for_session_id(
-            durable_session_id, agent_backend=backend
-        )
-        if source_path is None or (not source_path.exists()):
-            return None
-        if backend == "pi":
-            row = _pi_resume_candidate_from_session_file(source_path)
-            if not isinstance(row, dict):
-                return None
-            title = _clean_optional_text(row.get("title")) or ""
-            first_user_message = _clean_optional_text(
-                _first_user_message_preview_from_pi_session(source_path)
-            )
-        else:
-            row = _resume_candidate_from_log(source_path, agent_backend=backend)
-            if not isinstance(row, dict):
-                return None
-            title = _clean_optional_text(row.get("title")) or ""
-            first_user_message = _clean_optional_text(
-                _first_user_message_preview_from_log(source_path)
-            )
-        cwd = _clean_optional_text(row.get("cwd"))
-        updated_ts = row.get("updated_ts")
-        updated_at = float(updated_ts) if isinstance(updated_ts, (int, float)) else _safe_path_mtime(source_path)
-        return DurableSessionRecord(
-            backend=backend,
-            session_id=durable_session_id,
-            cwd=cwd,
-            source_path=str(source_path),
-            title=title,
-            first_user_message=first_user_message,
-            created_at=updated_at,
-            updated_at=updated_at,
-        )
+        return _session_lifecycle.catalog_record_for_ref(self, ref)
 
     def _refresh_durable_session_catalog(self, *, force: bool = False) -> None:
-        db = getattr(self, "_page_state_db", None)
-        if not isinstance(db, PageStateDB):
-            return
-        now = time.time()
-        last_refresh = float(getattr(self, "_last_session_catalog_refresh_ts", 0.0) or 0.0)
-        if (not force) and (now - last_refresh) < 5.0:
-            return
-        refs = set(db.known_session_refs())
-        with self._lock:
-            for session in self._sessions.values():
-                ref = self._page_state_ref_for_session(session)
-                if ref is not None:
-                    refs.add(ref)
-        existing = db.load_sessions()
-        rows: dict[SessionRef, DurableSessionRecord] = {}
-        for ref in sorted(refs):
-            record = self._catalog_record_for_ref(ref)
-            if record is None:
-                record = existing.get(ref)
-            if record is not None:
-                rows[ref] = record
-        db.save_sessions(rows)
-        self._last_session_catalog_refresh_ts = now
+        _session_lifecycle.refresh_durable_session_catalog(self, force=force)
 
     def _page_state_ref_for_session_id(self, session_id: str) -> SessionRef | None:
-        runtime_id = self._runtime_session_id_for_identifier(session_id)
-        if runtime_id is not None:
-            with self._lock:
-                session = self._sessions.get(runtime_id)
-            if session is not None:
-                return self._page_state_ref_for_session(session)
-        parsed = _parse_historical_session_id(session_id)
-        if parsed is not None:
-            backend, durable_id = parsed
-            return backend, durable_id
-        target = _clean_optional_text(session_id)
-        db = getattr(self, "_page_state_db", None)
-        if target is not None and isinstance(db, PageStateDB):
-            matches = [ref for ref in db.known_session_refs() if ref[1] == target]
-            if len(matches) == 1:
-                return matches[0]
-        return None
+        return _session_catalog.page_state_ref_for_session_id(self, session_id)
 
     def _persist_durable_session_record(self, row: DurableSessionRecord) -> None:
         db = getattr(self, "_page_state_db", None)
@@ -4800,18 +3333,10 @@ class SessionManager:
         *,
         timeout_s: float = 8.0,
     ) -> Session:
-        deadline = time.time() + max(timeout_s, 0.1)
-        while time.time() < deadline:
-            self._discover_existing(force=True, skip_invalid_sidecars=True)
-            runtime_id = self._runtime_session_id_for_identifier(durable_session_id)
-            if runtime_id is not None:
-                with self._lock:
-                    session = self._sessions.get(runtime_id)
-                if session is not None:
-                    return session
-            time.sleep(0.05)
-        raise RuntimeError(
-            f"spawned session is not yet discoverable: {durable_session_id}"
+        return _session_lifecycle.wait_for_live_session(
+            self,
+            durable_session_id,
+            timeout_s=timeout_s,
         )
 
     def _copy_session_ui_identity(
@@ -4820,140 +3345,40 @@ class SessionManager:
         source_session_id: str,
         target_session_id: str,
     ) -> str | None:
-        alias = _clean_optional_text(self.alias_get(source_session_id))
-        meta = self.sidebar_meta_get(source_session_id)
-        if alias is not None:
-            alias = self.alias_set(target_session_id, alias)
-        self.sidebar_meta_set(
-            target_session_id,
-            priority_offset=meta.get("priority_offset"),
-            snooze_until=meta.get("snooze_until"),
-            dependency_session_id=meta.get("dependency_session_id"),
+        return _session_lifecycle.copy_session_ui_identity(
+            self,
+            source_session_id=source_session_id,
+            target_session_id=target_session_id,
         )
-        if bool(meta.get("focused")):
-            self.focus_set(target_session_id, True)
-        return alias
 
     def _capture_runtime_bound_restart_state(
         self, runtime_id: str, ref: SessionRef
     ) -> dict[str, Any]:
-        with self._lock:
-            files_src = getattr(self, "_files", None)
-            queues_src = getattr(self, "_queues", None)
-            harness_src = getattr(self, "_harness", None)
-            harness_last_src = getattr(self, "_harness_last_injected", None)
-            files = (
-                list(files_src.get(runtime_id, files_src.get(ref, [])))
-                if isinstance(files_src, dict)
-                else []
-            )
-            queue = (
-                list(queues_src.get(runtime_id, queues_src.get(ref, [])))
-                if isinstance(queues_src, dict)
-                else []
-            )
-            harness = (
-                dict(harness_src.get(runtime_id, {}))
-                if isinstance(harness_src, dict) and isinstance(harness_src.get(runtime_id), dict)
-                else None
-            )
-            harness_last = (
-                harness_last_src.get(runtime_id)
-                if isinstance(harness_last_src, dict)
-                else None
-            )
-        return {
-            "files": files,
-            "queue": queue,
-            "harness": harness,
-            "harness_last_injected": harness_last,
-        }
+        return _session_lifecycle.capture_runtime_bound_restart_state(
+            self,
+            runtime_id,
+            ref,
+        )
 
     def _stage_runtime_bound_restart_state(
         self, runtime_id: str, ref: SessionRef, state: dict[str, Any]
     ) -> None:
-        save_files = False
-        save_queues = False
-        save_harness = False
-        with self._lock:
-            files_src = getattr(self, "_files", None)
-            if isinstance(files_src, dict):
-                files = state.get("files")
-                if isinstance(files, list):
-                    files_src[ref] = list(files)
-                if runtime_id in files_src:
-                    files_src.pop(runtime_id, None)
-                save_files = True
-            queues_src = getattr(self, "_queues", None)
-            if isinstance(queues_src, dict):
-                queue = state.get("queue")
-                if isinstance(queue, list):
-                    queues_src[ref] = list(queue)
-                if runtime_id in queues_src:
-                    queues_src.pop(runtime_id, None)
-                save_queues = True
-            harness_src = getattr(self, "_harness", None)
-            if isinstance(harness_src, dict):
-                harness_src.pop(runtime_id, None)
-                harness = state.get("harness")
-                if isinstance(harness, dict):
-                    harness_src[ref[1]] = dict(harness)
-                save_harness = True
-            harness_last_src = getattr(self, "_harness_last_injected", None)
-            if isinstance(harness_last_src, dict):
-                harness_last_src.pop(runtime_id, None)
-            outbound_src = getattr(self, "_outbound_requests", None)
-            if isinstance(outbound_src, dict):
-                outbound_src.pop(runtime_id, None)
-            command_cache = getattr(self, "_pi_commands_cache", None)
-            if isinstance(command_cache, dict):
-                command_cache.pop(runtime_id, None)
-        if save_files:
-            self._save_files()
-        if save_queues:
-            self._save_queues()
-        if save_harness:
-            self._save_harness()
+        _session_lifecycle.stage_runtime_bound_restart_state(
+            self,
+            runtime_id,
+            ref,
+            state,
+        )
 
     def _restore_runtime_bound_restart_state(
         self, runtime_id: str, ref: SessionRef, state: dict[str, Any]
     ) -> None:
-        save_files = False
-        save_queues = False
-        save_harness = False
-        with self._lock:
-            files_src = getattr(self, "_files", None)
-            if isinstance(files_src, dict):
-                files = state.get("files")
-                if isinstance(files, list):
-                    files_src[runtime_id] = list(files)
-                    files_src[ref] = list(files)
-                    save_files = True
-            queues_src = getattr(self, "_queues", None)
-            if isinstance(queues_src, dict):
-                queue = state.get("queue")
-                if isinstance(queue, list):
-                    queues_src[runtime_id] = list(queue)
-                    queues_src[ref] = list(queue)
-                    save_queues = True
-            harness_src = getattr(self, "_harness", None)
-            if isinstance(harness_src, dict):
-                harness = state.get("harness")
-                if isinstance(harness, dict):
-                    harness_src[runtime_id] = dict(harness)
-                    save_harness = True
-                harness_src.pop(ref[1], None)
-            harness_last_src = getattr(self, "_harness_last_injected", None)
-            if isinstance(harness_last_src, dict):
-                harness_last = state.get("harness_last_injected")
-                if isinstance(harness_last, (int, float)):
-                    harness_last_src[runtime_id] = float(harness_last)
-        if save_files:
-            self._save_files()
-        if save_queues:
-            self._save_queues()
-        if save_harness:
-            self._save_harness()
+        _session_lifecycle.restore_runtime_bound_restart_state(
+            self,
+            runtime_id,
+            ref,
+            state,
+        )
 
     def _finalize_pending_pi_restart_state(
         self,
@@ -4964,214 +3389,19 @@ class SessionManager:
         timeout_s: float = 8.0,
     ) -> None:
         try:
-            session = self._wait_for_live_session(durable_session_id, timeout_s=timeout_s)
+            session = self._wait_for_live_session(
+                durable_session_id,
+                timeout_s=timeout_s,
+            )
         except Exception:
             return
         self._restore_runtime_bound_restart_state(session.session_id, ref, state)
 
     def restart_session(self, session_id: str) -> dict[str, Any]:
-        runtime_id = self._runtime_session_id_for_identifier(session_id)
-        if runtime_id is None:
-            listed_row = _listed_session_row(self, session_id)
-            if isinstance(listed_row, dict) and listed_row.get("pending_startup"):
-                raise ValueError("session is still starting")
-            raise KeyError("unknown session")
-        with self._lock:
-            source = self._sessions.get(runtime_id)
-        if source is None:
-            raise KeyError("unknown session")
-        if normalize_agent_backend(source.backend, default=source.agent_backend) != "pi":
-            raise ValueError("restart is only supported for pi sessions")
-        source_path = source.session_path
-        if source_path is None or (not source_path.exists()):
-            raise ValueError("pi session file not found")
-        cwd = _clean_optional_text(source.cwd)
-        if cwd is None:
-            raise ValueError("session is missing cwd")
-        durable_session_id = self._durable_session_id_for_session(source)
-        ref = ("pi", durable_session_id)
-        create_in_tmux = (source.transport or "").strip().lower() == "tmux"
-        preserved_state = self._capture_runtime_bound_restart_state(runtime_id, ref)
-        db = getattr(self, "_page_state_db", None)
-        restore_record = (
-            db.load_sessions().get(ref)
-            if isinstance(db, PageStateDB)
-            else None
-        )
-        if restore_record is None:
-            restore_record = DurableSessionRecord(
-                backend="pi",
-                session_id=durable_session_id,
-                cwd=cwd,
-                source_path=str(source_path),
-                title=source.title,
-                first_user_message=source.first_user_message,
-                created_at=_safe_path_mtime(source_path),
-                updated_at=_safe_path_mtime(source_path),
-                pending_startup=False,
-            )
-        self._persist_durable_session_record(
-            DurableSessionRecord(
-                backend="pi",
-                session_id=durable_session_id,
-                cwd=restore_record.cwd or cwd,
-                source_path=restore_record.source_path or str(source_path),
-                title=restore_record.title,
-                first_user_message=restore_record.first_user_message,
-                created_at=restore_record.created_at,
-                updated_at=max(restore_record.updated_at, _safe_path_mtime(source_path)),
-                pending_startup=True,
-            )
-        )
-        self._stage_runtime_bound_restart_state(runtime_id, ref, preserved_state)
-        if not self.kill_session(runtime_id):
-            self._restore_runtime_bound_restart_state(runtime_id, ref, preserved_state)
-            self._persist_durable_session_record(restore_record)
-            raise RuntimeError("failed to stop source session for restart")
-        _unlink_quiet(source.sock_path)
-        _unlink_quiet(source.sock_path.with_suffix(".json"))
-        with self._lock:
-            self._sessions.pop(runtime_id, None)
-        _publish_sessions_invalidate(reason="session_created")
-
-        provider = _clean_optional_text(source.model_provider)
-        model_id = _clean_optional_text(source.model)
-        thinking_level = _clean_optional_text(source.reasoning_effort)
-        try:
-            spawn_res = self.spawn_web_session(
-                cwd=cwd,
-                backend="pi",
-                resume_session_id=durable_session_id,
-                model_provider=provider,
-                model=model_id,
-                reasoning_effort=thinking_level,
-                create_in_tmux=create_in_tmux,
-            )
-        except Exception:
-            self._persist_durable_session_record(restore_record)
-            _publish_sessions_invalidate(reason="session_created")
-            raise
-
-        payload = dict(spawn_res)
-        payload["session_id"] = durable_session_id
-        payload["backend"] = "pi"
-        payload["previous_runtime_id"] = runtime_id
-        launched_runtime_id = _clean_optional_text(payload.get("runtime_id"))
-        if launched_runtime_id is not None:
-            self._restore_runtime_bound_restart_state(launched_runtime_id, ref, preserved_state)
-            self._persist_durable_session_record(
-                DurableSessionRecord(
-                    backend="pi",
-                    session_id=durable_session_id,
-                    cwd=restore_record.cwd or cwd,
-                    source_path=restore_record.source_path or str(source_path),
-                    title=restore_record.title,
-                    first_user_message=restore_record.first_user_message,
-                    created_at=restore_record.created_at,
-                    updated_at=max(restore_record.updated_at, _safe_path_mtime(source_path)),
-                    pending_startup=False,
-                )
-            )
-        else:
-            threading.Thread(
-                target=self._finalize_pending_pi_restart_state,
-                kwargs={
-                    "durable_session_id": durable_session_id,
-                    "ref": ref,
-                    "state": preserved_state,
-                },
-                daemon=True,
-            ).start()
-        return payload
+        return _session_control.restart_session(self, session_id)
 
     def handoff_session(self, session_id: str) -> dict[str, Any]:
-        runtime_id = self._runtime_session_id_for_identifier(session_id)
-        if runtime_id is None:
-            listed_row = _listed_session_row(self, session_id)
-            if isinstance(listed_row, dict) and listed_row.get("pending_startup"):
-                raise ValueError("session is still starting")
-            raise KeyError("unknown session")
-        with self._lock:
-            source = self._sessions.get(runtime_id)
-        if source is None:
-            raise KeyError("unknown session")
-        if normalize_agent_backend(source.backend, default=source.agent_backend) != "pi":
-            raise ValueError("handoff is only supported for pi sessions")
-        source_path = source.session_path
-        if source_path is None or (not source_path.exists()):
-            raise ValueError("pi session file not found")
-        cwd = _clean_optional_text(source.cwd)
-        if cwd is None:
-            raise ValueError("session is missing cwd")
-        source_session_id = self._durable_session_id_for_session(source)
-        history_path = _next_pi_handoff_history_path(source_path)
-        new_session_id = str(uuid.uuid4())
-        new_session_path = _pi_new_session_file_for_cwd(cwd)
-        provider, model_id, thinking_level = _read_pi_run_settings(source_path)
-        provider = _clean_optional_text(source.model_provider) or provider
-        model_id = _clean_optional_text(source.model) or model_id
-        thinking_level = _clean_optional_text(source.reasoning_effort) or thinking_level
-        create_in_tmux = (source.transport or "").strip().lower() == "tmux"
-        copied_history = False
-        launched_session_id = new_session_id
-        launched_runtime_id: str | None = None
-        try:
-            _copy_file_atomic(source_path, history_path)
-            copied_history = True
-            _write_pi_handoff_session(
-                new_session_path,
-                session_id=new_session_id,
-                cwd=cwd,
-                source_session_id=source_session_id,
-                history_path=history_path,
-                provider=provider,
-                model_id=model_id,
-                thinking_level=thinking_level,
-            )
-            spawn_res = self.spawn_web_session(
-                cwd=cwd,
-                backend="pi",
-                resume_session_id=new_session_id,
-                model_provider=provider,
-                model=model_id,
-                reasoning_effort=thinking_level,
-                create_in_tmux=create_in_tmux,
-            )
-            launched_session_id = (
-                _clean_optional_text(spawn_res.get("session_id")) or new_session_id
-            )
-            launched = self._wait_for_live_session(launched_session_id)
-            launched_runtime_id = launched.session_id
-            alias = self._copy_session_ui_identity(
-                source_session_id=session_id,
-                target_session_id=launched_session_id,
-            )
-            if not self.delete_session(runtime_id):
-                raise RuntimeError("failed to stop source session after handoff launch")
-            payload = dict(spawn_res)
-            payload["session_id"] = launched_session_id
-            payload["runtime_id"] = launched_runtime_id
-            payload["backend"] = "pi"
-            payload["history_path"] = str(history_path)
-            payload["previous_session_id"] = source_session_id
-            if alias:
-                payload["alias"] = alias
-            return payload
-        except Exception:
-            if launched_runtime_id is not None:
-                try:
-                    self.delete_session(launched_runtime_id)
-                except Exception:
-                    pass
-            else:
-                try:
-                    self.delete_session(launched_session_id)
-                except Exception:
-                    pass
-            _unlink_quiet(new_session_path)
-            if copied_history:
-                _unlink_quiet(history_path)
-            raise
+        return _session_control.handoff_session(self, session_id)
 
     def _finalize_pending_pi_spawn(
         self,
@@ -5184,50 +3414,16 @@ class SessionManager:
         delete_on_failure: bool = True,
         restore_record_on_failure: DurableSessionRecord | None = None,
     ) -> None:
-        ref = ("pi", durable_session_id)
-        try:
-            if proc is not None:
-                _wait_or_raise(proc, label="pi broker", timeout_s=0.25)
-                _start_proc_stderr_drain(proc)
-            meta = _wait_for_spawned_broker_meta(spawn_nonce)
-            live_session_id = _clean_optional_text(meta.get("session_id")) or durable_session_id
-            if live_session_id != durable_session_id:
-                raise RuntimeError(
-                    f"pi session id mismatch: expected {durable_session_id}, got {live_session_id}"
-                )
-            self._discover_existing(force=True, skip_invalid_sidecars=True)
-            self._refresh_durable_session_catalog(force=True)
-            db = getattr(self, "_page_state_db", None)
-            current = (
-                db.load_sessions().get(ref)
-                if isinstance(db, PageStateDB)
-                else None
-            )
-            self._persist_durable_session_record(
-                DurableSessionRecord(
-                    backend="pi",
-                    session_id=durable_session_id,
-                    cwd=(current.cwd if current is not None else cwd),
-                    source_path=(current.source_path if current is not None else str(session_path)),
-                    title=current.title if current is not None else None,
-                    first_user_message=current.first_user_message if current is not None else None,
-                    created_at=(current.created_at if current is not None else _safe_path_mtime(session_path)),
-                    updated_at=(current.updated_at if current is not None else _safe_path_mtime(session_path)),
-                    pending_startup=False,
-                )
-            )
-            _publish_sessions_invalidate(reason="session_created")
-        except Exception:
-            if delete_on_failure:
-                self._delete_durable_session_record(ref)
-                self._clear_deleted_session_state(durable_session_id)
-                _publish_sessions_invalidate(reason="session_removed")
-                return
-            if restore_record_on_failure is not None:
-                self._persist_durable_session_record(restore_record_on_failure)
-            else:
-                self._refresh_durable_session_catalog(force=True)
-            _publish_sessions_invalidate(reason="session_created")
+        _session_lifecycle.finalize_pending_pi_spawn(
+            self,
+            spawn_nonce=spawn_nonce,
+            durable_session_id=durable_session_id,
+            cwd=cwd,
+            session_path=session_path,
+            proc=proc,
+            delete_on_failure=delete_on_failure,
+            restore_record_on_failure=restore_record_on_failure,
+        )
 
     def _persist_session_ui_state(self) -> None:
         self._sidebar_state_facade().persist_session_ui_state()
@@ -5277,70 +3473,33 @@ class SessionManager:
         db.save_cwd_groups(cwd_groups)
 
     def _reset_log_caches(self, s: Session, *, meta_log_off: int) -> None:
-        s.meta_thinking = 0
-        s.meta_tools = 0
-        s.meta_system = 0
-        s.last_chat_ts = None
-        s.last_chat_history_scanned = False
-        s.pi_idle_activity_ts = None
-        s.pi_busy_activity_floor = None
-        s.meta_log_off = int(meta_log_off)
-        s.chat_index_events = []
-        s.chat_index_scan_bytes = 0
-        s.chat_index_scan_complete = False
-        s.chat_index_log_off = int(meta_log_off)
-        s.delivery_log_off = int(meta_log_off)
-        s.idle_cache_log_off = -1
-        s.idle_cache_value = None
-        s.queue_idle_since = None
-        s.model_provider = None
-        s.preferred_auth_method = None
-        s.model = None
-        s.reasoning_effort = None
-        s.service_tier = None
-        s.first_user_message = None
+        _session_lifecycle.reset_log_caches(self, s, meta_log_off=meta_log_off)
 
     def _session_source_changed(
         self, s: Session, *, log_path: Path | None, session_path: Path | None
     ) -> bool:
-        if s.log_path != log_path:
-            return True
-        if s.backend == "pi" and s.session_path != session_path:
-            return True
-        return False
+        return _session_lifecycle.session_source_changed(
+            self,
+            s,
+            log_path=log_path,
+            session_path=session_path,
+        )
 
     def _claimed_pi_session_paths(self, *, exclude_sid: str = "") -> set[Path]:
-        """Return session_path values already assigned to active pi sessions."""
-        with self._lock:
-            out: set[Path] = set()
-            for s in self._sessions.values():
-                if (
-                    s.backend == "pi"
-                    and s.session_path is not None
-                    and s.session_id != exclude_sid
-                ):
-                    out.add(s.session_path)
-            return out
+        return _session_lifecycle.claimed_pi_session_paths(
+            self,
+            exclude_sid=exclude_sid,
+        )
 
     def _apply_session_source(
         self, s: Session, *, log_path: Path | None, session_path: Path | None
     ) -> None:
-        # For PTY-wrapped pi sessions, preserve a previously discovered
-        # session_path when the sidecar doesn't provide one.
-        if s.backend == "pi" and session_path is None and s.session_path is not None:
-            session_path = s.session_path
-        source_changed = self._session_source_changed(
-            s, log_path=log_path, session_path=session_path
+        _session_lifecycle.apply_session_source(
+            self,
+            s,
+            log_path=log_path,
+            session_path=session_path,
         )
-        s.log_path = log_path
-        s.session_path = session_path
-        if source_changed:
-            log_off = (
-                int(log_path.stat().st_size)
-                if log_path is not None and log_path.exists()
-                else 0
-            )
-            self._reset_log_caches(s, meta_log_off=log_off)
 
     def _session_run_settings(
         self,
@@ -5350,30 +3509,13 @@ class SessionManager:
         backend: str | None = None,
         agent_backend: str | None = None,
     ) -> tuple[str | None, str | None, str | None, str | None]:
-        backend_name = normalize_agent_backend(
-            backend if backend is not None else agent_backend, default="codex"
+        return _session_lifecycle.session_run_settings(
+            self,
+            meta=meta,
+            log_path=log_path,
+            backend=backend,
+            agent_backend=agent_backend,
         )
-        model_provider = _clean_optional_text(meta.get("model_provider"))
-        preferred_auth_method = _normalize_requested_preferred_auth_method(
-            meta.get("preferred_auth_method")
-        )
-        model = _clean_optional_text(meta.get("model"))
-        reasoning_effort = (
-            _display_reasoning_effort(meta.get("reasoning_effort"))
-            if backend_name == "codex"
-            else _display_pi_reasoning_effort(meta.get("reasoning_effort"))
-        )
-        if log_path is not None and log_path.exists():
-            log_provider, log_model, log_effort = _read_run_settings_from_log(
-                log_path, agent_backend=backend_name
-            )
-            if log_provider is not None:
-                model_provider = log_provider
-            if log_model is not None:
-                model = log_model
-            if log_effort is not None:
-                reasoning_effort = log_effort
-        return model_provider, preferred_auth_method, model, reasoning_effort
 
     def _session_transport(
         self, *, meta: dict[str, Any]
@@ -5447,54 +3589,10 @@ class SessionManager:
             bad_sidecars.pop(str(sock), None)
 
     def _load_harness(self) -> None:
-        try:
-            raw = HARNESS_PATH.read_text(encoding="utf-8")
-        except FileNotFoundError:
-            return
-        obj = json.loads(raw)
-        if not isinstance(obj, dict):
-            raise ValueError("invalid harness.json (expected object)")
-        cleaned: dict[str, dict[str, Any]] = {}
-        for sid, v in obj.items():
-            if not isinstance(sid, str) or not sid:
-                continue
-            if not isinstance(v, dict):
-                continue
-            enabled = bool(v.get("enabled")) if "enabled" in v else False
-            if "text" in v:
-                raise ValueError(
-                    f"invalid harness config for session {sid!r} (use 'request', not 'text')"
-                )
-            request = v.get("request")
-            if request is None:
-                request = ""
-            if not isinstance(request, str):
-                raise ValueError(f"invalid harness request for session {sid!r}")
-            cooldown_minutes = _clean_harness_cooldown_minutes(
-                v.get("cooldown_minutes")
-            )
-            remaining_injections = _clean_harness_remaining_injections(
-                v.get("remaining_injections"), allow_zero=True
-            )
-            cleaned[sid] = {
-                "enabled": enabled,
-                "request": request,
-                "cooldown_minutes": cooldown_minutes,
-                "remaining_injections": remaining_injections,
-            }
-        with self._lock:
-            self._harness = cleaned
+        _page_state.load_harness(self)
 
     def _save_harness(self) -> None:
-        with self._lock:
-            obj = dict(self._harness)
-        os.makedirs(APP_DIR, exist_ok=True)
-        tmp = HARNESS_PATH.with_suffix(".json.tmp")
-        tmp.write_text(
-            json.dumps(obj, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
-            encoding="utf-8",
-        )
-        os.replace(tmp, HARNESS_PATH)
+        _page_state.save_harness(self)
 
     def _load_aliases(self) -> None:
         self._sidebar_state_facade().load_aliases()
@@ -5628,682 +3726,97 @@ class SessionManager:
         return payload
 
     def _clear_deleted_session_state(self, session_id: str) -> None:
-        changed_sidebar = False
-        changed_harness = False
-        changed_files = False
-        changed_queues = False
-        ref = self._page_state_ref_for_session_id(session_id)
-        with self._lock:
-            aliases = getattr(self, "_aliases", None)
-            if isinstance(aliases, dict):
-                aliases.pop(session_id, None)
-                if ref is not None:
-                    aliases.pop(ref, None)
-            meta_map = getattr(self, "_sidebar_meta", None)
-            if isinstance(meta_map, dict):
-                if session_id in meta_map:
-                    meta_map.pop(session_id, None)
-                    changed_sidebar = True
-                if ref is not None and ref in meta_map:
-                    meta_map.pop(ref, None)
-                    changed_sidebar = True
-            if isinstance(meta_map, dict) and ref is not None:
-                for entry in meta_map.values():
-                    if not isinstance(entry, dict):
-                        continue
-                    if entry.get("dependency_session_id") != ref[1]:
-                        continue
-                    entry.pop("dependency_session_id", None)
-                    changed_sidebar = True
-            harness = getattr(self, "_harness", None)
-            if isinstance(harness, dict) and session_id in harness:
-                harness.pop(session_id, None)
-                changed_harness = True
-            files = getattr(self, "_files", None)
-            if isinstance(files, dict):
-                for legacy_key in (session_id, f"sid:{session_id}"):
-                    if legacy_key in files:
-                        files.pop(legacy_key, None)
-                        changed_files = True
-                if ref is not None and ref in files:
-                    files.pop(ref, None)
-                    changed_files = True
-            queues = getattr(self, "_queues", None)
-            if isinstance(queues, dict):
-                if session_id in queues:
-                    queues.pop(session_id, None)
-                    changed_queues = True
-                if ref is not None and ref in queues:
-                    queues.pop(ref, None)
-                    changed_queues = True
-            command_cache = getattr(self, "_pi_commands_cache", None)
-            if isinstance(command_cache, dict):
-                command_cache.pop(session_id, None)
-        self._save_aliases()
-        if changed_sidebar:
-            self._save_sidebar_meta()
-        if changed_harness:
-            self._save_harness()
-        if changed_files:
-            self._save_files()
-        if changed_queues:
-            self._save_queues()
+        _page_state.clear_deleted_session_state(self, session_id)
 
     def _load_files(self) -> None:
-        db = getattr(self, "_page_state_db", None)
-        if db is None:
-            try:
-                raw = FILE_HISTORY_PATH.read_text(encoding="utf-8")
-            except FileNotFoundError:
-                return
-            obj = json.loads(raw)
-            if not isinstance(obj, dict):
-                raise ValueError("invalid session_files.json (expected object)")
-            cleaned: dict[SessionStateKey, list[str]] = {}
-            for sid, arr in obj.items():
-                if not isinstance(sid, str) or not sid:
-                    continue
-                if sid.startswith("cwd:"):
-                    continue
-                key = sid if sid.startswith("sid:") else f"sid:{sid}"
-                if not isinstance(arr, list):
-                    continue
-                out: list[str] = []
-                for v in arr:
-                    if not isinstance(v, str):
-                        continue
-                    p = v.strip()
-                    if not p or p in out:
-                        continue
-                    out.append(p)
-                    if len(out) >= FILE_HISTORY_MAX:
-                        break
-                if out:
-                    cleaned[key] = out
-            with self._lock:
-                self._files = cleaned
-            return
-        with self._lock:
-            self._files = db.load_files()
+        _page_state.load_files(self)
 
     def _save_files(self) -> None:
-        db = getattr(self, "_page_state_db", None)
-        if db is None:
-            with self._lock:
-                obj = dict(self._files)
-            os.makedirs(APP_DIR, exist_ok=True)
-            tmp = FILE_HISTORY_PATH.with_suffix(".json.tmp")
-            tmp.write_text(
-                json.dumps(obj, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
-                encoding="utf-8",
-            )
-            os.replace(tmp, FILE_HISTORY_PATH)
-            return
-        self._persist_files()
+        _page_state.save_files(self)
 
     def _load_queues(self) -> None:
-        db = getattr(self, "_page_state_db", None)
-        if db is None:
-            try:
-                raw = QUEUE_PATH.read_text(encoding="utf-8")
-            except FileNotFoundError:
-                return
-            obj = json.loads(raw)
-            if not isinstance(obj, dict):
-                raise ValueError("invalid session_queues.json (expected object)")
-            cleaned: dict[SessionStateKey, list[str]] = {}
-            for sid, arr in obj.items():
-                if not isinstance(sid, str) or not sid:
-                    continue
-                if not isinstance(arr, list):
-                    continue
-                out: list[str] = []
-                for v in arr:
-                    if not isinstance(v, str):
-                        continue
-                    t = v.strip()
-                    if not t:
-                        continue
-                    out.append(v)
-                if out:
-                    cleaned[sid] = out
-            with self._lock:
-                self._queues = cleaned
-            return
-        with self._lock:
-            self._queues = db.load_queues()
+        _page_state.load_queues(self)
 
     def _save_queues(self) -> None:
-        db = getattr(self, "_page_state_db", None)
-        if db is None:
-            with self._lock:
-                obj = dict(self._queues)
-            os.makedirs(APP_DIR, exist_ok=True)
-            tmp = QUEUE_PATH.with_suffix(".json.tmp")
-            tmp.write_text(
-                json.dumps(obj, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
-                encoding="utf-8",
-            )
-            os.replace(tmp, QUEUE_PATH)
-            return
-        self._persist_queues()
+        _page_state.save_queues(self)
 
     def _load_recent_cwds(self) -> None:
-        db = getattr(self, "_page_state_db", None)
-        if db is None:
-            try:
-                raw = RECENT_CWD_PATH.read_text(encoding="utf-8")
-            except FileNotFoundError:
-                return
-            obj = json.loads(raw)
-            if not isinstance(obj, dict):
-                raise ValueError("invalid recent_cwds.json (expected object)")
-            source_items = obj.items()
-        else:
-            source_items = db.load_recent_cwds().items()
-        cleaned: dict[str, float] = {}
-        for raw_cwd, raw_ts in source_items:
-            cwd = _clean_recent_cwd(raw_cwd)
-            if cwd is None or isinstance(raw_ts, bool):
-                continue
-            try:
-                ts = float(raw_ts)
-            except (TypeError, ValueError):
-                continue
-            if not math.isfinite(ts) or ts <= 0:
-                continue
-            prev = cleaned.get(cwd)
-            if prev is None or ts > prev:
-                cleaned[cwd] = ts
-        top = sorted(cleaned.items(), key=lambda item: (-item[1], item[0]))[:RECENT_CWD_MAX]
-        with self._lock:
-            self._recent_cwds = dict(top)
+        _page_state.load_recent_cwds(self)
 
     def _save_recent_cwds(self) -> None:
-        db = getattr(self, "_page_state_db", None)
-        with self._lock:
-            items = sorted(
-                getattr(self, "_recent_cwds", {}).items(),
-                key=lambda item: (-float(item[1]), item[0]),
-            )[:RECENT_CWD_MAX]
-            self._recent_cwds = dict(items)
-        if db is not None:
-            self._persist_recent_cwds()
-            return
-        obj = {cwd: ts for cwd, ts in items}
-        os.makedirs(APP_DIR, exist_ok=True)
-        tmp = RECENT_CWD_PATH.with_suffix(".json.tmp")
-        tmp.write_text(
-            json.dumps(obj, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
-            encoding="utf-8",
-        )
-        os.replace(tmp, RECENT_CWD_PATH)
+        _page_state.save_recent_cwds(self)
+
+    def _load_recent_cwds(self) -> None:
+        _page_state.load_recent_cwds(self)
+
+    def _save_recent_cwds(self) -> None:
+        _page_state.save_recent_cwds(self)
 
     def _load_cwd_groups(self) -> None:
-        db = getattr(self, "_page_state_db", None)
-        source_items: Any
-        if db is None:
-            try:
-                raw = CWD_GROUPS_PATH.read_text(encoding="utf-8")
-            except FileNotFoundError:
-                with self._lock:
-                    self._cwd_groups = {}
-                return
-            try:
-                obj = json.loads(raw)
-                if not isinstance(obj, dict):
-                    raise ValueError("invalid cwd_groups.json (expected object)")
-                source_items = obj.items()
-            except (json.JSONDecodeError, TypeError, ValueError) as e:
-                LOG.warning("recovering malformed cwd_groups.json as empty state: %s", e)
-                source_items = []
-        else:
-            source_items = db.load_cwd_groups().items()
-        cleaned: dict[str, dict[str, Any]] = {}
-        for cwd, v in source_items:
-            try:
-                normalized_cwd = _normalize_cwd_group_key(cwd)
-            except ValueError:
-                continue
-            if not isinstance(v, dict):
-                continue
-            label = _clean_alias(v.get("label", ""))
-            persisted_collapsed = v.get("collapsed", False)
-            collapsed = (
-                persisted_collapsed if isinstance(persisted_collapsed, bool) else False
-            )
-            if label or collapsed:
-                cleaned[normalized_cwd] = {"label": label, "collapsed": collapsed}
-        with self._lock:
-            self._cwd_groups = cleaned
+        _page_state.load_cwd_groups(self)
 
     def _save_cwd_groups(self) -> None:
-        db = getattr(self, "_page_state_db", None)
-        if db is not None:
-            self._persist_cwd_groups()
-            return
-        with self._lock:
-            obj = dict(self._cwd_groups)
-        os.makedirs(APP_DIR, exist_ok=True)
-        tmp = CWD_GROUPS_PATH.with_suffix(".json.tmp")
-        tmp.write_text(
-            json.dumps(obj, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
-            encoding="utf-8",
-        )
-        os.replace(tmp, CWD_GROUPS_PATH)
+        _page_state.save_cwd_groups(self)
 
     def cwd_groups_get(self) -> dict[str, dict[str, Any]]:
-        self._prune_stale_workspace_dirs()
-        with self._lock:
-            return copy.deepcopy(self._cwd_groups)
+        return _page_state.cwd_groups_get(self)
 
     def _prune_stale_workspace_dirs(self) -> None:
-        if not bool(getattr(self, "_prune_missing_workspace_dirs", False)):
-            return
-        active_cwds: set[str] = set()
-        with self._lock:
-            sessions = list(getattr(self, "_sessions", {}).values())
-            recent_items = list(getattr(self, "_recent_cwds", {}).keys())
-            grouped_items = list(getattr(self, "_cwd_groups", {}).keys())
-        for session in sessions:
-            try:
-                active_cwds.add(_normalize_cwd_group_key(getattr(session, "cwd", None)))
-            except ValueError:
-                continue
-        stale_recent = {
-            cwd
-            for cwd in recent_items
-            if cwd not in active_cwds and _existing_workspace_dir(cwd) is None
-        }
-        stale_groups = {
-            cwd
-            for cwd in grouped_items
-            if cwd not in active_cwds and _existing_workspace_dir(cwd) is None
-        }
-        save_recent = False
-        save_groups = False
-        if stale_recent or stale_groups:
-            with self._lock:
-                recent_map = getattr(self, "_recent_cwds", None)
-                if isinstance(recent_map, dict):
-                    for cwd in stale_recent:
-                        if recent_map.pop(cwd, None) is not None:
-                            save_recent = True
-                group_map = getattr(self, "_cwd_groups", None)
-                if isinstance(group_map, dict):
-                    for cwd in stale_groups:
-                        if group_map.pop(cwd, None) is not None:
-                            save_groups = True
-        if save_recent:
-            self._save_recent_cwds()
-        if save_groups:
-            self._save_cwd_groups()
+        _page_state.prune_stale_workspace_dirs(self)
 
     def _known_cwd_group_keys(self) -> set[str]:
-        self._prune_stale_workspace_dirs()
-        known: set[str] = set()
-        with self._lock:
-            sessions = list(getattr(self, "_sessions", {}).values())
-            recent_items = list(getattr(self, "_recent_cwds", {}).keys())
-            grouped_items = list(getattr(self, "_cwd_groups", {}).keys())
-        for session in sessions:
-            try:
-                normalized = _normalize_cwd_group_key(getattr(session, "cwd", None))
-            except ValueError:
-                continue
-            known.add(normalized)
-        for cwd in recent_items:
-            try:
-                normalized = _normalize_cwd_group_key(cwd)
-            except ValueError:
-                continue
-            known.add(normalized)
-        for cwd in grouped_items:
-            try:
-                normalized = _normalize_cwd_group_key(cwd)
-            except ValueError:
-                continue
-            known.add(normalized)
-        return known
+        return _page_state.known_cwd_group_keys(self)
 
     def cwd_group_set(
         self, cwd: str, label: str | None = None, collapsed: bool | None = None
     ) -> tuple[str, dict[str, Any]]:
-        normalized_cwd = _normalize_cwd_group_key(cwd)
-        if label is not None and not isinstance(label, str):
-            raise ValueError("label must be a string")
-
-        requested_label = _clean_alias(label) if label is not None else None
-        requested_collapsed = collapsed
-        if requested_collapsed is not None and not isinstance(
-            requested_collapsed, bool
-        ):
-            raise ValueError("collapsed must be a boolean")
-
-        self._prune_stale_workspace_dirs()
-        with self._lock:
-            existing = self._cwd_groups.get(
-                normalized_cwd, {"label": "", "collapsed": False}
-            )
-        known_cwds = self._known_cwd_group_keys()
-        if normalized_cwd not in known_cwds:
-            effective_label = (
-                requested_label if requested_label is not None else existing["label"]
-            )
-            effective_collapsed = (
-                requested_collapsed
-                if requested_collapsed is not None
-                else existing["collapsed"]
-            )
-            if not effective_label and not effective_collapsed:
-                return normalized_cwd, {"label": "", "collapsed": False}
-            raise ValueError("cwd is not a known session working directory")
-
-        with self._lock:
-            existing = self._cwd_groups.get(normalized_cwd, existing)
-            new_label = (
-                requested_label if requested_label is not None else existing["label"]
-            )
-            new_collapsed = (
-                requested_collapsed
-                if requested_collapsed is not None
-                else existing["collapsed"]
-            )
-
-            entry = {"label": new_label, "collapsed": new_collapsed}
-
-            if not new_label and not new_collapsed:
-                self._cwd_groups.pop(normalized_cwd, None)
-            else:
-                self._cwd_groups[normalized_cwd] = entry
-
-        self._save_cwd_groups()
-        return normalized_cwd, dict(entry)
+        return _page_state.cwd_group_set(
+            self,
+            cwd,
+            label=label,
+            collapsed=collapsed,
+        )
 
     def _remember_recent_cwd(self, cwd: Any, *, ts: Any = None) -> bool:
-        cleaned = _clean_recent_cwd(cwd)
-        if cleaned is None:
-            return False
-        if isinstance(ts, bool):
-            ts_value = time.time()
-        else:
-            try:
-                ts_value = float(ts) if ts is not None else time.time()
-            except (TypeError, ValueError):
-                ts_value = time.time()
-        if not math.isfinite(ts_value) or ts_value <= 0:
-            ts_value = time.time()
-        with self._lock:
-            recent = getattr(self, "_recent_cwds", None)
-            if not isinstance(recent, dict):
-                self._recent_cwds = {}
-                recent = self._recent_cwds
-            prev = recent.get(cleaned)
-            if prev is not None and prev >= ts_value:
-                return False
-            recent[cleaned] = ts_value
-            if len(recent) > RECENT_CWD_MAX * 2:
-                keep = dict(
-                    sorted(recent.items(), key=lambda item: (-float(item[1]), item[0]))[
-                        :RECENT_CWD_MAX
-                    ]
-                )
-                recent.clear()
-                recent.update(keep)
-        return True
+        return _page_state.remember_recent_cwd(self, cwd, ts=ts)
 
     def _backfill_recent_cwds_from_logs(self) -> None:
-        changed = False
-        seen: set[str] = set()
-        for log_path in _iter_session_logs():
-            try:
-                row = _resume_candidate_from_log(log_path)
-            except Exception:
-                continue
-            if not isinstance(row, dict):
-                continue
-            cwd = row.get("cwd")
-            if not isinstance(cwd, str) or not cwd or cwd in seen:
-                continue
-            seen.add(cwd)
-            if self._remember_recent_cwd(cwd, ts=row.get("updated_ts")):
-                changed = True
-            if len(seen) >= RECENT_CWD_MAX:
-                break
-        if changed:
-            self._save_recent_cwds()
+        _page_state.backfill_recent_cwds_from_logs(self)
 
     def recent_cwds(self, *, limit: int = RECENT_CWD_MAX) -> list[str]:
-        self._prune_stale_workspace_dirs()
-        with self._lock:
-            items = sorted(
-                getattr(self, "_recent_cwds", {}).items(),
-                key=lambda item: (-float(item[1]), item[0]),
-            )
-        return [cwd for cwd, _ts in items[: max(0, int(limit))]]
+        return _page_state.recent_cwds(self, limit=limit)
 
     def _queue_len(self, session_id: str) -> int:
-        ref = self._page_state_ref_for_session_id(session_id)
-        runtime_id = self._runtime_session_id_for_identifier(session_id)
-        if ref is None:
-            return 0
-        with self._lock:
-            qmap = getattr(self, "_queues", None)
-            if not isinstance(qmap, dict):
-                return 0
-            q = qmap.get(ref)
-            if not isinstance(q, list) and runtime_id is not None:
-                q = qmap.get(runtime_id)
-            if not isinstance(q, list):
-                q = qmap.get(session_id)
-            return int(len(q)) if isinstance(q, list) else 0
+        return _page_state.queue_len(self, session_id)
 
     def _queue_list_local(self, session_id: str) -> list[str]:
-        ref = self._page_state_ref_for_session_id(session_id)
-        runtime_id = self._runtime_session_id_for_identifier(session_id)
-        if ref is None:
-            return []
-        with self._lock:
-            qmap = getattr(self, "_queues", None)
-            if not isinstance(qmap, dict):
-                return []
-            q = qmap.get(ref)
-            if not isinstance(q, list) and runtime_id is not None:
-                q = qmap.get(runtime_id)
-            if not isinstance(q, list):
-                q = qmap.get(session_id)
-            if not isinstance(q, list) or not q:
-                return []
-            return list(q)
+        return _page_state.queue_list_local(self, session_id)
 
     def _queue_enqueue_local(self, session_id: str, text: str) -> dict[str, Any]:
-        t = str(text)
-        if not t.strip():
-            raise ValueError("text required")
-        touched_ts: float | None = None
-        ref = self._page_state_ref_for_session_id(session_id)
-        runtime_id = self._runtime_session_id_for_identifier(session_id)
-        durable_session_id = _clean_optional_text(session_id)
-        with self._lock:
-            if runtime_id is not None:
-                s0 = self._sessions.get(runtime_id)
-                if s0 is not None:
-                    durable_session_id = self._durable_session_id_for_session(s0)
-        if ref is None:
-            raise KeyError("unknown session")
-        with self._lock:
-            s = self._sessions.get(runtime_id) if runtime_id is not None else None
-            q = self._queues.get(runtime_id) if runtime_id is not None else None
-            if not isinstance(q, list):
-                q = self._queues.get(ref)
-            if not isinstance(q, list):
-                q = []
-                if runtime_id is not None:
-                    self._queues[runtime_id] = q
-                else:
-                    self._queues[ref] = q
-            q.append(t)
-            ql = len(q)
-            if s is not None and s.backend == "pi":
-                touched_ts = _touch_session_file(s.session_path)
-                s.pi_idle_activity_ts = None
-                s.pi_busy_activity_floor = touched_ts
-        self._save_queues()
-        if durable_session_id is not None:
-            _publish_session_workspace_invalidate(
-                durable_session_id,
-                runtime_id=runtime_id,
-                reason="queue_changed",
-            )
-            _publish_session_live_invalidate(
-                durable_session_id,
-                runtime_id=runtime_id,
-                reason="queue_changed",
-            )
-        return {"queued": True, "queue_len": int(ql)}
+        return _page_state.queue_enqueue_local(self, session_id, text)
 
     def _queue_delete_local(self, session_id: str, index: int) -> dict[str, Any]:
-        ref = self._page_state_ref_for_session_id(session_id)
-        runtime_id = self._runtime_session_id_for_identifier(session_id)
-        if ref is None or runtime_id is None:
-            raise KeyError("unknown session")
-        with self._lock:
-            session = self._sessions.get(runtime_id)
-            if session is None:
-                raise KeyError("unknown session")
-            durable_session_id = self._durable_session_id_for_session(session)
-            q = self._queues.get(runtime_id)
-            if not isinstance(q, list):
-                q = []
-                self._queues[runtime_id] = q
-            if index < 0 or index >= len(q):
-                raise ValueError("index out of range")
-            q.pop(int(index))
-            ql = len(q)
-            if not q:
-                self._queues.pop(runtime_id, None)
-                self._queues.pop(ref, None)
-        self._save_queues()
-        _publish_session_workspace_invalidate(
-            durable_session_id,
-            runtime_id=runtime_id,
-            reason="queue_changed",
-        )
-        _publish_session_live_invalidate(
-            durable_session_id,
-            runtime_id=runtime_id,
-            reason="queue_changed",
-        )
-        return {"ok": True, "queue_len": int(ql)}
+        return _page_state.queue_delete_local(self, session_id, index)
 
     def _queue_update_local(
         self, session_id: str, index: int, text: str
     ) -> dict[str, Any]:
-        t = str(text)
-        if not t.strip():
-            raise ValueError("text required")
-        ref = self._page_state_ref_for_session_id(session_id)
-        runtime_id = self._runtime_session_id_for_identifier(session_id)
-        if ref is None or runtime_id is None:
-            raise KeyError("unknown session")
-        with self._lock:
-            session = self._sessions.get(runtime_id)
-            if session is None:
-                raise KeyError("unknown session")
-            durable_session_id = self._durable_session_id_for_session(session)
-            q = self._queues.get(runtime_id)
-            if not isinstance(q, list):
-                q = []
-                self._queues[runtime_id] = q
-            if index < 0 or index >= len(q):
-                raise ValueError("index out of range")
-            q[int(index)] = t
-            ql = len(q)
-        self._save_queues()
-        _publish_session_workspace_invalidate(
-            durable_session_id,
-            runtime_id=runtime_id,
-            reason="queue_changed",
-        )
-        return {"ok": True, "queue_len": int(ql)}
+        return _page_state.queue_update_local(self, session_id, index, text)
 
     def _files_key_for_session(self, session_id: str) -> tuple[str, SessionRef, "Session"]:
-        runtime_id = self._runtime_session_id_for_identifier(session_id)
-        if runtime_id is None:
-            raise KeyError("unknown session")
-        s = self._sessions.get(runtime_id)
-        if not s:
-            raise KeyError("unknown session")
-        ref = self._page_state_ref_for_session(s)
-        if ref is None:
-            raise KeyError("unknown session")
-        return runtime_id, ref, s
+        return _page_state.files_key_for_session(self, session_id)
 
     def files_get(self, session_id: str) -> list[str]:
-        runtime_id, key, _s = self._files_key_for_session(session_id)
-        with self._lock:
-            arr = self._files.get(runtime_id)
-            if not isinstance(arr, list):
-                arr = self._files.get(key)
-            if not isinstance(arr, list):
-                arr = self._files.get(session_id)
-            return list(arr) if isinstance(arr, list) else []
+        return _page_state.files_get(self, session_id)
 
     def files_add(self, session_id: str, path: str) -> list[str]:
-        p = str(path).strip()
-        if not p:
-            return self.files_get(session_id)
-        runtime_id, key, _s = self._files_key_for_session(session_id)
-        with self._lock:
-            cur = list(self._files.get(runtime_id, self._files.get(key, self._files.get(session_id, []))))
-            cur = [x for x in cur if x != p]
-            cur.insert(0, p)
-            if len(cur) > FILE_HISTORY_MAX:
-                cur = cur[:FILE_HISTORY_MAX]
-            self._files[runtime_id] = cur
-        self._save_files()
-        return list(cur)
+        return _page_state.files_add(self, session_id, path)
 
     def files_clear(self, session_id: str) -> None:
-        dirty = False
-        runtime_id, key, _s = self._files_key_for_session(session_id)
-        with self._lock:
-            if runtime_id in self._files:
-                self._files.pop(runtime_id, None)
-                dirty = True
-            if session_id in self._files:
-                self._files.pop(session_id, None)
-                dirty = True
-            if key in self._files:
-                self._files.pop(key, None)
-                dirty = True
-        if dirty:
-            self._save_files()
+        _page_state.files_clear(self, session_id)
 
     def harness_get(self, session_id: str) -> dict[str, Any]:
-        runtime_id = self._runtime_session_id_for_identifier(session_id)
-        if runtime_id is None:
-            raise KeyError("unknown session")
-        with self._lock:
-            s = self._sessions.get(runtime_id)
-            if not s:
-                raise KeyError("unknown session")
-            cfg0 = self._harness.get(runtime_id)
-            cfg = dict(cfg0) if isinstance(cfg0, dict) else {}
-        enabled = bool(cfg.get("enabled"))
-        request = cfg.get("request")
-        if not isinstance(request, str):
-            request = ""
-        cooldown_minutes = _clean_harness_cooldown_minutes(cfg.get("cooldown_minutes"))
-        remaining_injections = _clean_harness_remaining_injections(
-            cfg.get("remaining_injections"), allow_zero=True
-        )
-        return {
-            "enabled": enabled,
-            "request": request,
-            "cooldown_minutes": cooldown_minutes,
-            "remaining_injections": remaining_injections,
-        }
+        return _page_state.harness_get(self, session_id)
 
     def harness_set(
         self,
@@ -6314,1496 +3827,93 @@ class SessionManager:
         cooldown_minutes: int | None = None,
         remaining_injections: int | None = None,
     ) -> dict[str, Any]:
-        runtime_id = self._runtime_session_id_for_identifier(session_id)
-        if runtime_id is None:
-            raise KeyError("unknown session")
-        with self._lock:
-            s = self._sessions.get(runtime_id)
-            if not s:
-                raise KeyError("unknown session")
-            cur0 = self._harness.get(runtime_id)
-            cur = dict(cur0) if isinstance(cur0, dict) else {}
-            if enabled is not None:
-                cur["enabled"] = bool(enabled)
-            if request is not None:
-                cur["request"] = str(request)
-            if cooldown_minutes is not None:
-                cur["cooldown_minutes"] = _clean_harness_cooldown_minutes(
-                    cooldown_minutes
-                )
-            if remaining_injections is not None:
-                cur["remaining_injections"] = _clean_harness_remaining_injections(
-                    remaining_injections, allow_zero=True
-                )
-            cur["cooldown_minutes"] = _clean_harness_cooldown_minutes(
-                cur.get("cooldown_minutes")
-            )
-            cur["remaining_injections"] = _clean_harness_remaining_injections(
-                cur.get("remaining_injections"), allow_zero=True
-            )
-            self._harness[runtime_id] = cur
-            if enabled is not None and bool(enabled) is False:
-                self._harness_last_injected.pop(runtime_id, None)
-        self._save_harness()
-        return self.harness_get(session_id)
+        return _page_state.harness_set(
+            self,
+            session_id,
+            enabled=enabled,
+            request=request,
+            cooldown_minutes=cooldown_minutes,
+            remaining_injections=remaining_injections,
+        )
 
     def _session_display_name(self, session_id: str) -> str:
-        runtime_id = self._runtime_session_id_for_identifier(session_id)
-        if runtime_id is None:
-            return "Session"
-        with self._lock:
-            s = self._sessions.get(runtime_id)
-            if not s:
-                return "Session"
-            ref = self._page_state_ref_for_session(s)
-            alias = self._aliases.get(ref) if ref is not None else None
-            return _session_row_display_name(
-                {
-                    "session_id": self._durable_session_id_for_session(s),
-                    "alias": alias,
-                    "title": s.title or "",
-                    "first_user_message": s.first_user_message or "",
-                }
-            )
+        return _session_background.session_display_name(self, session_id)
 
     def _observe_rollout_delta(
         self, session_id: str, *, objs: list[dict[str, Any]], new_off: int
     ) -> None:
-        voice_push = getattr(self, "_voice_push", None)
-        if voice_push is None:
-            with self._lock:
-                s = self._sessions.get(session_id)
-                if s is not None:
-                    s.delivery_log_off = max(int(s.delivery_log_off), int(new_off))
-            return
-        with self._lock:
-            s0 = self._sessions.get(session_id)
-            resume_muted = bool(s0 and s0.resume_session_id)
-        messages = _extract_delivery_messages(objs)
-        if (not messages) or resume_muted:
-            with self._lock:
-                s = self._sessions.get(session_id)
-                if s is not None:
-                    s.delivery_log_off = max(int(s.delivery_log_off), int(new_off))
-            return
-        session_name = self._session_display_name(session_id)
-        voice_push.observe_messages(
-            session_id=session_id, session_display_name=session_name, messages=messages
+        _session_background.observe_rollout_delta(
+            self,
+            session_id,
+            objs=objs,
+            new_off=new_off,
         )
-        with self._lock:
-            s = self._sessions.get(session_id)
-            if s is not None:
-                s.delivery_log_off = max(int(s.delivery_log_off), int(new_off))
 
     def _voice_push_scan_loop(self) -> None:
-        while not self._stop.is_set():
-            try:
-                self._voice_push_scan_sweep()
-            except Exception as e:
-                sys.stderr.write(
-                    f"error: voice-push scan failed: {type(e).__name__}: {e}\n"
-                )
-                traceback.print_exc(file=sys.stderr)
-                sys.stderr.flush()
-            self._stop.wait(VOICE_PUSH_SWEEP_SECONDS)
+        _session_background.voice_push_scan_loop(self)
 
     def _voice_push_scan_sweep(self) -> None:
-        self._discover_existing_if_stale()
-        self._prune_dead_sessions()
-        with self._lock:
-            session_ids = list(self._sessions.keys())
-        for sid in session_ids:
-            try:
-                self.refresh_session_meta(sid)
-            except Exception:
-                continue
-            with self._lock:
-                s = self._sessions.get(sid)
-                if s is None:
-                    continue
-                log_path = s.log_path
-                delivery_off = int(s.delivery_log_off)
-            if log_path is None or (not log_path.exists()):
-                continue
-            try:
-                size = int(log_path.stat().st_size)
-            except FileNotFoundError:
-                continue
-            off = 0 if size < delivery_off else int(delivery_off)
-            loops = 0
-            while off < size and loops < 16:
-                objs, new_off = _read_jsonl_from_offset(
-                    log_path, off, max_bytes=256 * 1024
-                )
-                if new_off <= off:
-                    break
-                self._observe_rollout_delta(sid, objs=objs, new_off=new_off)
-                off = new_off
-                loops += 1
+        _session_background.voice_push_scan_sweep(self)
 
     def _harness_loop(self) -> None:
-        # Persist across browser disconnects: server is the scheduler.
-        while not self._stop.is_set():
-            try:
-                self._harness_sweep()
-            except Exception as e:
-                sys.stderr.write(
-                    f"error: harness sweep failed: {type(e).__name__}: {e}\n"
-                )
-                traceback.print_exc(file=sys.stderr)
-                sys.stderr.flush()
-            self._stop.wait(HARNESS_SWEEP_SECONDS)
+        _session_background.harness_loop(self)
 
     def _harness_sweep(self) -> None:
-        now = time.time()
-        # Keep discovery fresh; sessions can appear/disappear without UI polling.
-        self._discover_existing_if_stale()
-        self._prune_dead_sessions()
-        with self._lock:
-            items: list[tuple[str, Session, dict[str, Any], float]] = []
-            for sid, s in self._sessions.items():
-                cfg0 = self._harness.get(sid)
-                cfg = dict(cfg0) if isinstance(cfg0, dict) else {}
-                last_inj = float(self._harness_last_injected.get(sid, 0.0))
-                items.append((sid, s, cfg, last_inj))
-
-        for sid, s, cfg, last_inj in items:
-            if not bool(cfg.get("enabled")):
-                continue
-            try:
-                cooldown_minutes = _clean_harness_cooldown_minutes(
-                    cfg.get("cooldown_minutes")
-                )
-                cooldown_seconds = float(cooldown_minutes * 60)
-                remaining_injections = _clean_harness_remaining_injections(
-                    cfg.get("remaining_injections"), allow_zero=True
-                )
-                if remaining_injections <= 0:
-                    with self._lock:
-                        cur0 = self._harness.get(sid)
-                        cur = dict(cur0) if isinstance(cur0, dict) else {}
-                        cur["enabled"] = False
-                        cur["remaining_injections"] = 0
-                        self._harness[sid] = cur
-                        self._harness_last_injected.pop(sid, None)
-                    self._save_harness()
-                    continue
-                request = cfg.get("request")
-                if not isinstance(request, str):
-                    request = ""
-                prompt = _render_harness_prompt(request)
-                lp = s.log_path
-                if lp is None or (not lp.exists()):
-                    continue
-                scope_key = f"thread:{s.thread_id}" if s.thread_id else f"log:{str(lp)}"
-                with self._lock:
-                    scope_last = float(
-                        self._harness_last_injected_scope.get(scope_key, 0.0)
-                    )
-                if (last_inj and (now - last_inj) < cooldown_seconds) or (
-                    scope_last and (now - scope_last) < cooldown_seconds
-                ):
-                    continue
-                st = self.get_state(sid)
-                if not isinstance(st, dict):
-                    raise ValueError("invalid broker state response")
-                if "busy" not in st or "queue_len" not in st:
-                    raise ValueError("invalid broker state response")
-                busy = _state_busy_value(st)
-                ql = _state_queue_len_value(st)
-                if busy or ql > 0 or self._queue_len(sid) > 0:
-                    continue
-                last = _last_chat_role_ts_from_tail(
-                    lp, max_scan_bytes=HARNESS_MAX_SCAN_BYTES
-                )
-                if not last:
-                    continue
-                role, ts = last
-                if role != "assistant":
-                    continue
-                if (now - float(ts)) < cooldown_seconds:
-                    continue
-                with self._lock:
-                    scope_last = float(
-                        self._harness_last_injected_scope.get(scope_key, 0.0)
-                    )
-                if scope_last and (now - scope_last) < cooldown_seconds:
-                    continue
-                self.send(sid, prompt)
-                with self._lock:
-                    self._harness_last_injected[sid] = now
-                    self._harness_last_injected_scope[scope_key] = now
-                    cur0 = self._harness.get(sid)
-                    cur = dict(cur0) if isinstance(cur0, dict) else {}
-                    next_remaining = max(0, remaining_injections - 1)
-                    cur["remaining_injections"] = next_remaining
-                    if next_remaining <= 0:
-                        cur["enabled"] = False
-                        self._harness_last_injected.pop(sid, None)
-                    self._harness[sid] = cur
-                self._save_harness()
-            except Exception as e:
-                sys.stderr.write(
-                    f"error: harness session {sid} skipped: {type(e).__name__}: {e}\n"
-                )
-                traceback.print_exc(file=sys.stderr)
-                sys.stderr.flush()
+        _session_background.harness_sweep(self)
 
     def _queue_loop(self) -> None:
-        while not self._stop.is_set():
-            try:
-                self._queue_sweep()
-            except Exception:
-                sys.stderr.write("error: queue sweep crashed; continuing\n")
-                sys.stderr.flush()
-            queue_wakeup = getattr(self, "_queue_wakeup", None)
-            if isinstance(queue_wakeup, threading.Event):
-                queue_wakeup.wait(QUEUE_SWEEP_SECONDS)
-                queue_wakeup.clear()
-            else:
-                self._stop.wait(QUEUE_SWEEP_SECONDS)
+        _session_background.queue_loop(self)
 
     def _maybe_drain_session_queue(
         self, session_id: str, *, now_ts: float | None = None
     ) -> bool:
-        if now_ts is None:
-            now_ts = time.time()
-        with self._lock:
-            s0 = self._sessions.get(session_id)
-            if not s0:
-                return False
-            q = self._queues.get(session_id)
-            if not isinstance(q, list) or not q:
-                s0.queue_idle_since = None
-                return False
-            text = q[0]
-            log_path = s0.log_path
-        try:
-            st = self.get_state(session_id)
-        except Exception:
-            with self._lock:
-                s0 = self._sessions.get(session_id)
-                if s0:
-                    s0.queue_idle_since = None
-            return False
-        if not isinstance(st, dict) or "busy" not in st or "queue_len" not in st:
-            with self._lock:
-                s0 = self._sessions.get(session_id)
-                if s0:
-                    s0.queue_idle_since = None
-            return False
-        queue_len_raw = st.get("queue_len")
-        if not isinstance(queue_len_raw, int):
-            with self._lock:
-                s0 = self._sessions.get(session_id)
-                if s0:
-                    s0.queue_idle_since = None
-            return False
-        if _state_busy_value(st) or int(queue_len_raw) > 0:
-            with self._lock:
-                s0 = self._sessions.get(session_id)
-                if s0:
-                    s0.queue_idle_since = None
-            return False
-        try:
-            if (
-                isinstance(log_path, Path)
-                and log_path.exists()
-                and (not self.idle_from_log(session_id))
-            ):
-                with self._lock:
-                    s0 = self._sessions.get(session_id)
-                    if s0:
-                        s0.queue_idle_since = None
-                return False
-        except Exception:
-            with self._lock:
-                s0 = self._sessions.get(session_id)
-                if s0:
-                    s0.queue_idle_since = None
-            return False
-        with self._lock:
-            s0 = self._sessions.get(session_id)
-            if not s0:
-                return False
-            idle_since = s0.queue_idle_since
-            if idle_since is None:
-                s0.queue_idle_since = float(now_ts)
-                return False
-            if (float(now_ts) - idle_since) < QUEUE_IDLE_GRACE_SECONDS:
-                return False
-        try:
-            self.send(session_id, text)
-        except Exception:
-            with self._lock:
-                s0 = self._sessions.get(session_id)
-                if s0:
-                    s0.queue_idle_since = None
-            return False
-        ref = self._page_state_ref_for_session_id(session_id)
-        with self._lock:
-            q = self._queues.get(session_id)
-            if not isinstance(q, list) and ref is not None:
-                q = self._queues.get(ref)
-            s0 = self._sessions.get(session_id)
-            if s0:
-                s0.queue_idle_since = None
-            if isinstance(q, list) and q and q[0] == text:
-                q.pop(0)
-                if not q:
-                    self._queues.pop(session_id, None)
-                    if ref is not None:
-                        self._queues.pop(ref, None)
-        self._save_queues()
-        return True
+        return _session_background.maybe_drain_session_queue(
+            self,
+            session_id,
+            now_ts=now_ts,
+        )
 
     def _queue_sweep(self) -> None:
-        self._discover_existing_if_stale()
-        self._prune_dead_sessions()
-        with self._lock:
-            active_runtime_ids: list[str] = []
-            active_outbound_runtime_ids: list[str] = []
-            outbound_requests = getattr(self, "_outbound_requests", None)
-            for runtime_id, session in self._sessions.items():
-                ref = self._page_state_ref_for_session(session)
-                q = self._queues.get(runtime_id)
-                if (not isinstance(q, list)) and ref is not None:
-                    q = self._queues.get(ref)
-                if isinstance(q, list) and q:
-                    active_runtime_ids.append(runtime_id)
-                outbound = outbound_requests.get(runtime_id) if isinstance(outbound_requests, dict) else None
-                if isinstance(outbound, list) and outbound:
-                    active_outbound_runtime_ids.append(runtime_id)
-        for sid in active_outbound_runtime_ids:
-            try:
-                if self._maybe_drain_outbound_request(sid):
-                    break
-            except Exception:
-                sys.stderr.write(
-                    f"error: outbound sweep failed for session {sid}; skipping\n"
-                )
-                sys.stderr.flush()
-        for sid in active_runtime_ids:
-            try:
-                if self._maybe_drain_session_queue(sid):
-                    break
-            except Exception:
-                sys.stderr.write(
-                    f"error: queue sweep failed for session {sid}; skipping\n"
-                )
-                sys.stderr.flush()
+        _session_background.queue_sweep(self)
 
     def _discover_existing(
         self, *, force: bool = False, skip_invalid_sidecars: bool = False
     ) -> None:
-        if not force:
-            now = time.time()
-            with self._lock:
-                last = float(self._last_discover_ts)
-            if (now - last) < DISCOVER_MIN_INTERVAL_SECONDS:
-                return
-        SOCK_DIR.mkdir(parents=True, exist_ok=True)
-        for sock in sorted(SOCK_DIR.glob("*.sock")):
-            if skip_invalid_sidecars and self._sidecar_is_quarantined(sock):
-                continue
-            session_id = sock.stem
-            try:
-                # Prefer metadata file written by sessiond.
-                meta_path = sock.with_suffix(".json")
-                if not meta_path.exists():
-                    # The broker creates the Unix socket before atomically
-                    # writing the JSON sidecar, so this can be a transient
-                    # startup race rather than a broken session.
-                    continue
-                meta = json.loads(meta_path.read_text(encoding="utf-8"))
-                if not isinstance(meta, dict):
-                    raise ValueError(f"invalid metadata json for socket {sock}")
-
-                thread_id = _clean_optional_text(meta.get("session_id")) or session_id
-                backend = normalize_agent_backend(
-                    meta.get("backend"),
-                    default=normalize_agent_backend(
-                        meta.get("agent_backend"), default="codex"
-                    ),
-                )
-                agent_backend = normalize_agent_backend(
-                    meta.get("agent_backend"), default=backend
-                )
-                codex_pid_raw = meta.get("codex_pid")
-                broker_pid_raw = meta.get("broker_pid")
-                if not isinstance(codex_pid_raw, int):
-                    raise ValueError(f"invalid codex_pid in metadata for socket {sock}")
-                if not isinstance(broker_pid_raw, int):
-                    raise ValueError(
-                        f"invalid broker_pid in metadata for socket {sock}"
-                    )
-                codex_pid = int(codex_pid_raw)
-                broker_pid = int(broker_pid_raw)
-                owned = (
-                    (meta.get("owner") == "web")
-                    if isinstance(meta.get("owner"), str)
-                    else False
-                )
-                transport, tmux_session, tmux_window = self._session_transport(
-                    meta=meta
-                )
-                supports_live_ui = (
-                    meta.get("supports_live_ui")
-                    if isinstance(meta.get("supports_live_ui"), bool)
-                    else None
-                )
-                ui_protocol_version_raw = meta.get("ui_protocol_version")
-                ui_protocol_version = (
-                    ui_protocol_version_raw
-                    if type(ui_protocol_version_raw) is int
-                    else None
-                )
-                # Older Pi sidecars predate explicit live-ui metadata. Infer the
-                # RPC capability only when the sidecar already claims web control.
-                if backend == "pi" and transport is None and (owned or _supports_web_control(meta)):
-                    transport = "pi-rpc"
-                if backend == "pi" and transport == "pi-rpc" and supports_live_ui is None:
-                    supports_live_ui = True
-                if (
-                    backend == "pi"
-                    and transport == "pi-rpc"
-                    and supports_live_ui is True
-                    and ui_protocol_version is None
-                ):
-                    ui_protocol_version = 1
-
-                cwd_raw = meta.get("cwd")
-                if not isinstance(cwd_raw, str) or (not cwd_raw.strip()):
-                    raise ValueError(f"invalid cwd in metadata for socket {sock}")
-                cwd = cwd_raw
-
-                start_ts_raw = meta.get("start_ts")
-                if not isinstance(start_ts_raw, (int, float)):
-                    raise ValueError(f"invalid start_ts in metadata for socket {sock}")
-                start_ts = float(start_ts_raw)
-
-                session_path_discovered = False
-                inferred_pi_session_path: Path | None = None
-                if backend == "codex" and agent_backend == "codex":
-                    for key in ("session_path", "log_path"):
-                        raw_path = meta.get(key)
-                        if not isinstance(raw_path, str) or not raw_path.strip():
-                            continue
-                        candidate = Path(raw_path)
-                        if infer_agent_backend_from_log_path(candidate) != "pi":
-                            continue
-                        inferred_pi_session_path = candidate
-                        break
-                    if inferred_pi_session_path is None and _pid_alive(codex_pid):
-                        ignored_paths = self._claimed_pi_session_paths(exclude_sid=session_id)
-                        inferred_pi_session_path = _proc_find_open_rollout_log(
-                            proc_root=PROC_ROOT,
-                            root_pid=codex_pid,
-                            agent_backend="pi",
-                            cwd=cwd,
-                            ignored_paths=ignored_paths,
-                        )
-                if inferred_pi_session_path is not None:
-                    backend = "pi"
-                    agent_backend = "pi"
-                    session_path_discovered = True
-                    if transport is None and (owned or _supports_web_control(meta)):
-                        transport = "pi-rpc"
-                    if supports_live_ui is None and transport == "pi-rpc":
-                        supports_live_ui = True
-                    if ui_protocol_version is None and supports_live_ui is True:
-                        ui_protocol_version = 1
-                    _patch_metadata_pi_binding(sock, inferred_pi_session_path)
-
-                if backend == "pi":
-                    # Only Pi RPC brokers support the live web control path.
-                    if transport != "pi-rpc":
-                        continue
-                    if supports_live_ui is not True:
-                        continue
-                    if not isinstance(ui_protocol_version, int) or ui_protocol_version < 1:
-                        continue
-                    if (not owned) and (not _supports_web_control(meta)):
-                        continue
-
-                log_path = _metadata_log_path(meta=meta, backend=backend, sock=sock)
-                session_path: Path | None
-                if inferred_pi_session_path is not None:
-                    session_path = inferred_pi_session_path
-                else:
-                    preferred_session_path: Path | None = None
-                    if backend == "pi":
-                        try:
-                            preferred_session_path = _metadata_session_path(
-                                meta=meta, backend=backend, sock=sock
-                            )
-                        except ValueError as exc:
-                            if "missing session_path" not in str(exc):
-                                raise
-                        claimed: set[Path] | None = (
-                            self._claimed_pi_session_paths(exclude_sid=session_id)
-                            if preferred_session_path is None
-                            else None
-                        )
-                        session_path, session_path_source = _resolve_pi_session_path(
-                            thread_id=thread_id,
-                            cwd=cwd,
-                            start_ts=start_ts,
-                            preferred=preferred_session_path,
-                            exclude=claimed,
-                        )
-                        if session_path is not None and session_path_source in {
-                            "exact",
-                            "discovered",
-                        }:
-                            session_path_discovered = True
-                            _patch_metadata_session_path(
-                                sock,
-                                session_path,
-                                force=(
-                                    preferred_session_path is not None
-                                    and preferred_session_path != session_path
-                                ),
-                            )
-                    else:
-                        session_path = _metadata_session_path(
-                            meta=meta, backend=backend, sock=sock
-                        )
-                if log_path is not None and log_path.exists():
-                    thread_id, log_path = _coerce_main_thread_log(
-                        thread_id=thread_id, log_path=log_path
-                    )
-                else:
-                    log_path = None
-            except Exception as exc:
-                if skip_invalid_sidecars:
-                    self._quarantine_sidecar(sock, exc)
-                    continue
-                raise
-            self._clear_sidecar_quarantine(sock)
-
-            if (
-                (log_path is None)
-                and (not _pid_alive(codex_pid))
-                and (not _pid_alive(broker_pid))
-            ):
-                self._unhide_session(session_id)
-                _unlink_quiet(sock)
-                _unlink_quiet(meta_path)
-                continue
-            resume_session_id = _clean_optional_text(meta.get("resume_session_id"))
-            if self._session_is_hidden(
-                session_id,
-                thread_id,
-                resume_session_id,
-                agent_backend,
-            ):
-                if (not _pid_alive(codex_pid)) and (not _pid_alive(broker_pid)):
-                    self._unhide_session(session_id)
-                    _unlink_quiet(sock)
-                    _unlink_quiet(meta_path)
-                continue
-
-            try:
-                model_provider, preferred_auth_method, model, reasoning_effort = (
-                    self._session_run_settings(
-                        backend=backend, meta=meta, log_path=log_path
-                    )
-                )
-                service_tier = _normalize_requested_service_tier(
-                    meta.get("service_tier")
-                )
-            except Exception as exc:
-                if skip_invalid_sidecars:
-                    self._quarantine_sidecar(sock, exc)
-                    continue
-                raise
-            # Validate socket is responsive.
-            # If the broker is still bootstrapping, keep the session visible with
-            # a degraded state so UI registration does not depend on a ready RPC socket.
-            try:
-                resp = self._sock_call(sock, {"cmd": "state"}, timeout_s=0.5)
-            except Exception as e:
-                if _probe_failure_safe_to_prune(
-                    broker_pid=broker_pid, codex_pid=codex_pid
-                ):
-                    _unlink_quiet(sock)
-                    _unlink_quiet(meta_path)
-                    continue
-                if (not _sock_error_definitely_stale(e)) and (
-                    not skip_invalid_sidecars
-                ):
-                    sys.stderr.write(
-                        f"error: discover: sock state call failed for {sock}: {type(e).__name__}: {e}\n"
-                    )
-                    sys.stderr.flush()
-                resp = {"busy": False, "queue_len": 0, "token": None}
-            queue_len_raw = resp.get("queue_len") if isinstance(resp, dict) else None
-            if (
-                not isinstance(resp, dict)
-                or not isinstance(resp.get("busy"), bool)
-                or type(queue_len_raw) is not int
-                or int(queue_len_raw) < 0
-            ):
-                state_error = ValueError(
-                    f"invalid broker state response for socket {sock}"
-                )
-                if skip_invalid_sidecars:
-                    continue
-                raise state_error
-
-            if log_path is not None:
-                meta_log_off = int(log_path.stat().st_size)
-            else:
-                meta_log_off = 0
-
-            queue_len_raw = resp.get("queue_len")
-            queue_len = int(queue_len_raw) if type(queue_len_raw) is int and int(queue_len_raw) >= 0 else 0
-            s = Session(
-                session_id=session_id,
-                thread_id=thread_id,
-                broker_pid=broker_pid,
-                codex_pid=codex_pid,
-                agent_backend=agent_backend,
-                owned=owned,
-                backend=backend,
-                transport=transport,
-                supports_live_ui=supports_live_ui,
-                ui_protocol_version=ui_protocol_version,
-                start_ts=float(start_ts),
-                cwd=str(cwd),
-                log_path=log_path,
-                sock_path=sock,
-                session_path=session_path,
-                busy=_state_busy_value(resp),
-                queue_len=queue_len,
-                token=(
-                    resp.get("token")
-                    if isinstance(resp.get("token"), (dict, type(None)))
-                    else None
-                ),
-                meta_thinking=0,
-                meta_tools=0,
-                meta_system=0,
-                meta_log_off=meta_log_off,
-                model_provider=model_provider,
-                preferred_auth_method=preferred_auth_method,
-                model=model,
-                reasoning_effort=reasoning_effort,
-                service_tier=service_tier,
-                tmux_session=tmux_session,
-                tmux_window=tmux_window,
-                resume_session_id=resume_session_id,
-                pi_session_path_discovered=session_path_discovered,
-            )
-            with self._lock:
-                prev = self._sessions.get(session_id)
-                if not prev:
-                    self._reset_log_caches(s, meta_log_off=meta_log_off)
-                    s.model_provider = model_provider
-                    s.preferred_auth_method = preferred_auth_method
-                    s.model = model
-                    s.reasoning_effort = reasoning_effort
-                    s.service_tier = service_tier
-                    self._sessions[session_id] = s
-                else:
-                    prev.sock_path = s.sock_path
-                    prev.thread_id = s.thread_id
-                    prev.backend = s.backend
-                    prev.broker_pid = s.broker_pid
-                    prev.codex_pid = s.codex_pid
-                    prev.agent_backend = s.agent_backend
-                    prev.owned = s.owned
-                    prev.transport = s.transport
-                    prev.supports_live_ui = s.supports_live_ui
-                    prev.ui_protocol_version = s.ui_protocol_version
-                    prev.start_ts = s.start_ts
-                    prev.cwd = s.cwd
-                    prev.busy = s.busy
-                    prev.queue_len = s.queue_len
-                    prev.token = s.token
-                    self._apply_session_source(
-                        prev, log_path=s.log_path, session_path=s.session_path
-                    )
-                    prev.model_provider = model_provider
-                    prev.preferred_auth_method = preferred_auth_method
-                    prev.model = model
-                    prev.reasoning_effort = reasoning_effort
-                    prev.service_tier = service_tier
-                    prev.tmux_session = tmux_session
-                    prev.tmux_window = tmux_window
-                    prev.resume_session_id = resume_session_id
-                    prev.pi_session_path_discovered = (
-                        s.pi_session_path_discovered or prev.pi_session_path_discovered
-                    )
-        with self._lock:
-            self._last_discover_ts = time.time()
+        if getattr(self, "_runtime", None) is None:
+            self._runtime = RUNTIME
+        _session_catalog.discover_existing(
+            self, force=force, skip_invalid_sidecars=skip_invalid_sidecars
+        )
 
     def _refresh_session_state(
         self, session_id: str, sock_path: Path, timeout_s: float = 0.4
     ) -> tuple[bool, BaseException | None]:
-        try:
-            resp = self._sock_call(sock_path, {"cmd": "state"}, timeout_s=timeout_s)
-            _validated_session_state(resp)
-        except Exception as e:
-            return False, e
-        publish_sessions = False
-        publish_live = False
-        publish_workspace = False
-        durable_session_id: str | None = None
-        with self._lock:
-            s2 = self._sessions.get(session_id)
-            if s2:
-                next_busy = _state_busy_value(resp)
-                next_queue_len = _state_queue_len_value(resp)
-                next_token = resp.get("token") if isinstance(resp.get("token"), dict) else s2.token
-                durable_session_id = self._durable_session_id_for_session(s2)
-                publish_sessions = s2.busy != next_busy
-                publish_live = publish_sessions or s2.queue_len != next_queue_len or next_token != s2.token
-                publish_workspace = s2.queue_len != next_queue_len
-                s2.busy = next_busy
-                s2.queue_len = next_queue_len
-                if isinstance(resp.get("token"), dict):
-                    s2.token = resp.get("token")
-        if durable_session_id is not None:
-            if publish_sessions:
-                _publish_sessions_invalidate(reason="session_state_changed")
-            if publish_live:
-                _publish_session_live_invalidate(
-                    durable_session_id,
-                    runtime_id=session_id,
-                    reason="session_state_changed",
-                )
-            if publish_workspace:
-                _publish_session_workspace_invalidate(
-                    durable_session_id,
-                    runtime_id=session_id,
-                    reason="session_state_changed",
-                )
-        return True, None
+        if getattr(self, "_runtime", None) is None:
+            self._runtime = RUNTIME
+        return _session_catalog.refresh_session_state(
+            self, session_id, sock_path, timeout_s=timeout_s
+        )
 
     def _prune_dead_sessions(self) -> None:
-        with self._lock:
-            items = list(self._sessions.items())
-        dead: list[tuple[str, Path]] = []
-        for sid, s in items:
-            if not s.sock_path.exists():
-                dead.append((sid, s.sock_path))
-                continue
-            ok, _ = self._refresh_session_state(sid, s.sock_path, timeout_s=0.4)
-            if ok:
-                continue
-            if not _probe_failure_safe_to_prune(
-                broker_pid=s.broker_pid, codex_pid=s.codex_pid
-            ):
-                continue
-            dead.append((sid, s.sock_path))
-        if not dead:
-            return
-        dead_events: list[tuple[str, str]] = []
-        with self._lock:
-            for sid, _sock in dead:
-                session = self._sessions.pop(sid, None)
-                if session is not None:
-                    dead_events.append((self._durable_session_id_for_session(session), sid))
-        for sid, sock in dead:
-            self._clear_deleted_session_state(sid)
-            _unlink_quiet(sock)
-            _unlink_quiet(sock.with_suffix(".json"))
-        _publish_sessions_invalidate(reason="session_removed")
-        for durable_session_id, runtime_id in dead_events:
-            _publish_session_live_invalidate(
-                durable_session_id,
-                runtime_id=runtime_id,
-                reason="session_removed",
-            )
-            _publish_session_workspace_invalidate(
-                durable_session_id,
-                runtime_id=runtime_id,
-                reason="session_removed",
-            )
+        if getattr(self, "_runtime", None) is None:
+            self._runtime = RUNTIME
+        _session_catalog.prune_dead_sessions(self)
 
     def _update_meta_counters(self) -> None:
-        with self._lock:
-            items = list(self._sessions.items())
-        for sid, s in items:
-            lp = s.log_path
-            if (lp is None or (not lp.exists())) and s.backend == "pi":
-                lp = s.session_path
-            if lp is None or (not lp.exists()):
-                continue
-            sz = int(lp.stat().st_size)
-            off = int(s.meta_log_off)
-            reset_last_chat = False
-            if sz < off:
-                off = 0
-                reset_last_chat = True
-
-            total_th = 0
-            total_tools = 0
-            total_sys = 0
-            latest_chat_ts: float | None = None
-            latest_token: dict[str, Any] | None = None
-            loops = 0
-            while off < sz and loops < 16:
-                objs, new_off = _read_jsonl_from_offset(lp, off, max_bytes=256 * 1024)
-                if new_off <= off:
-                    break
-                d_th, d_tools, d_sys, chunk_chat_ts, token_update, _chat_events = (
-                    _analyze_log_chunk(objs)
-                )
-                total_th += d_th
-                total_tools += d_tools
-                total_sys += d_sys
-                if chunk_chat_ts is not None:
-                    latest_chat_ts = (
-                        chunk_chat_ts
-                        if latest_chat_ts is None
-                        else max(latest_chat_ts, chunk_chat_ts)
-                    )
-                if token_update is not None:
-                    latest_token = token_update
-                off = new_off
-                loops += 1
-
-            if latest_token is None and s.token is None:
-                latest_token = _rollout_log._find_latest_token_update(lp)
-
-            with self._lock:
-                s2 = self._sessions.get(sid)
-                if not s2:
-                    continue
-                if reset_last_chat:
-                    s2.last_chat_ts = None
-                    s2.last_chat_history_scanned = False
-                if latest_chat_ts is not None:
-                    s2.last_chat_ts = (
-                        latest_chat_ts
-                        if s2.last_chat_ts is None
-                        else max(s2.last_chat_ts, latest_chat_ts)
-                    )
-                if latest_token is not None:
-                    s2.token = latest_token
-                if s2.busy:
-                    s2.meta_thinking += total_th
-                    s2.meta_tools += total_tools
-                    s2.meta_system += total_sys
-                else:
-                    s2.meta_thinking = 0
-                    s2.meta_tools = 0
-                    s2.meta_system = 0
-                s2.meta_log_off = off if off >= 0 else s2.meta_log_off
+        _session_background.update_meta_counters(self)
 
     def list_sessions(self) -> list[dict[str, Any]]:
-        recovered_catalog = {}
-        db = getattr(self, "_page_state_db", None)
-        if isinstance(db, PageStateDB):
-            recovered_catalog = db.load_sessions()
-        if float(getattr(self, "_last_discover_ts", 0.0) or 0.0) <= 0.0:
-            self._discover_existing_if_stale(force=True)
-        self._update_meta_counters()
-        files_dirty = False
-        sidebar_dirty = False
-        now_ts = time.time()
-        with self._lock:
-            items: list[dict[str, Any]] = []
-            qmap = getattr(self, "_queues", None)
-            meta_map = getattr(self, "_sidebar_meta", None)
-            hidden_sessions = set(getattr(self, "_hidden_sessions", set()))
-            active_durable_ids = {
-                (_clean_optional_text(v.thread_id) or _clean_optional_text(v.session_id) or "")
-                for v in self._sessions.values()
-            }
-            live_resume_keys: set[tuple[str, str]] = set()
-            for s in self._sessions.values():
-                thread_id = str(s.thread_id or "").strip()
-                if thread_id:
-                    live_resume_keys.add(
-                        (
-                            normalize_agent_backend(
-                                s.agent_backend, default=s.backend or "codex"
-                            ),
-                            thread_id,
-                        )
-                    )
-                cfg0 = self._harness.get(s.session_id)
-                h_enabled = (
-                    bool(cfg0.get("enabled")) if isinstance(cfg0, dict) else False
-                )
-                h_cooldown_minutes = (
-                    _clean_harness_cooldown_minutes(cfg0.get("cooldown_minutes"))
-                    if isinstance(cfg0, dict)
-                    else HARNESS_DEFAULT_IDLE_MINUTES
-                )
-                h_remaining_injections = (
-                    _clean_harness_remaining_injections(
-                        cfg0.get("remaining_injections"), allow_zero=True
-                    )
-                    if isinstance(cfg0, dict)
-                    else HARNESS_DEFAULT_MAX_INJECTIONS
-                )
-                log_exists = bool(s.log_path is not None and s.log_path.exists())
-                if (
-                    log_exists
-                    and s.log_path is not None
-                    and (
-                        s.model_provider is None
-                        or s.model is None
-                        or s.reasoning_effort is None
-                    )
-                ):
-                    try:
-                        log_provider, log_model, log_effort = (
-                            _read_run_settings_from_log(
-                                s.log_path, agent_backend=s.agent_backend
-                            )
-                        )
-                    except (FileNotFoundError, ValueError):
-                        log_provider = log_model = log_effort = None
-                    if s.model_provider is None:
-                        s.model_provider = log_provider
-                    if s.model is None:
-                        s.model = log_model
-                    if s.reasoning_effort is None:
-                        s.reasoning_effort = log_effort
-                if (
-                    s.last_chat_ts is None
-                    and log_exists
-                    and s.log_path is not None
-                    and (not s.last_chat_history_scanned)
-                ):
-                    # Discovery seeds offsets at EOF, so recover preexisting chat history once.
-                    conv_ts = _last_conversation_ts_from_tail(s.log_path)
-                    s.last_chat_history_scanned = True
-                    if isinstance(conv_ts, (int, float)):
-                        s.last_chat_ts = float(conv_ts)
-                if s.backend == "pi" and s.session_path is not None and s.session_path.exists():
-                    activity_ts = _session_file_activity_ts(s.session_path)
-                    scanned_activity_ts = s.pi_attention_scan_activity_ts
-                    should_refresh_attention = bool(
-                        activity_ts is not None
-                        and (
-                            scanned_activity_ts is None
-                            or float(activity_ts) > float(scanned_activity_ts)
-                        )
-                    )
-                    if should_refresh_attention or (
-                        s.last_chat_ts is None and (not s.last_chat_history_scanned)
-                    ):
-                        conv_ts = _last_attention_ts_from_pi_tail(s.session_path)
-                        s.last_chat_history_scanned = True
-                        s.pi_attention_scan_activity_ts = activity_ts
-                        if isinstance(conv_ts, (int, float)):
-                            s.last_chat_ts = (
-                                float(conv_ts)
-                                if s.last_chat_ts is None
-                                else max(float(s.last_chat_ts), float(conv_ts))
-                            )
-                updated_ts = _display_updated_ts(s)
-                canonical_cwd = _canonical_session_cwd(s.cwd)
-                cwd_recent = _clean_recent_cwd(canonical_cwd)
-                recent_map = getattr(self, "_recent_cwds", None)
-                if cwd_recent is not None:
-                    if not isinstance(recent_map, dict):
-                        self._recent_cwds = {}
-                        recent_map = self._recent_cwds
-                    prev_recent_ts = recent_map.get(cwd_recent)
-                    if prev_recent_ts is None or prev_recent_ts < updated_ts:
-                        recent_map[cwd_recent] = updated_ts
-                ref = self._page_state_ref_for_session(s)
-                queue_len = 0
-                if isinstance(qmap, dict):
-                    q0 = qmap.get(s.session_id)
-                    if not isinstance(q0, list) and ref is not None:
-                        q0 = qmap.get(ref)
-                    if isinstance(q0, list):
-                        queue_len = len(q0)
-                meta0 = None
-                if isinstance(meta_map, dict):
-                    meta0 = meta_map.get(s.session_id)
-                    if meta0 is None and ref is not None:
-                        meta0 = meta_map.get(ref)
-                if not isinstance(meta0, dict):
-                    meta0 = {}
-                priority_offset = _clean_priority_offset(meta0.get("priority_offset"))
-                snooze_until = _clean_snooze_until(meta0.get("snooze_until"))
-                dependency_session_id = _clean_dependency_session_id(
-                    meta0.get("dependency_session_id")
-                )
-                active_durable_ids = {
-                    (_clean_optional_text(v.thread_id) or _clean_optional_text(v.session_id) or "")
-                    for v in self._sessions.values()
-                }
-                if dependency_session_id == (_clean_optional_text(s.thread_id) or _clean_optional_text(s.session_id)) or (
-                    dependency_session_id is not None
-                    and dependency_session_id not in active_durable_ids
-                ):
-                    dependency_session_id = None
-                    if isinstance(meta_map, dict) and isinstance(meta0, dict):
-                        meta0.pop("dependency_session_id", None)
-                        sidebar_dirty = True
-                if snooze_until is not None and snooze_until <= now_ts:
-                    snooze_until = None
-                    if isinstance(meta_map, dict) and isinstance(meta0, dict):
-                        meta0.pop("snooze_until", None)
-                        sidebar_dirty = True
-                elapsed_s = max(0.0, now_ts - updated_ts)
-                time_priority = _priority_from_elapsed_seconds(elapsed_s)
-                base_priority = _clip01(time_priority + priority_offset)
-                blocked = dependency_session_id is not None
-                snoozed = snooze_until is not None and snooze_until > now_ts
-                final_priority = 0.0 if (snoozed or blocked) else base_priority
-                cwd_path = _safe_expanduser(Path(canonical_cwd or s.cwd))
-                if not cwd_path.is_absolute():
-                    cwd_path = cwd_path.resolve()
-                git_branch = _current_git_branch(cwd_path)
-                if s.title is None:
-                    try:
-                        if (
-                            s.backend == "pi"
-                            and s.session_path is not None
-                            and s.session_path.exists()
-                        ):
-                            title = _pi_session_name_from_session_file(s.session_path)
-                            if title:
-                                s.title = title
-                    except Exception:
-                        pass
-                if s.first_user_message is None:
-                    try:
-                        preview = ""
-                        if (
-                            s.backend == "pi"
-                            and s.session_path is not None
-                            and s.session_path.exists()
-                        ):
-                            preview = _first_user_message_preview_from_pi_session(
-                                s.session_path
-                            )
-                        elif log_exists and s.log_path is not None:
-                            preview = _first_user_message_preview_from_log(s.log_path)
-                        if preview:
-                            s.first_user_message = preview
-                    except Exception:
-                        pass
-                durable_session_id = ref[1] if ref is not None else self._durable_session_id_for_session(s)
-                items.append(
-                    {
-                        "session_id": durable_session_id,
-                        "runtime_id": s.session_id,
-                        "thread_id": s.thread_id,
-                        "backend": s.backend,
-                        "pid": s.codex_pid,
-                        "broker_pid": s.broker_pid,
-                        "agent_backend": s.agent_backend,
-                        "owned": s.owned,
-                        "transport": s.transport,
-                        "cwd": canonical_cwd,
-                        "start_ts": s.start_ts,
-                        "updated_ts": updated_ts,
-                        "log_path": (
-                            str(s.log_path) if s.log_path is not None else None
-                        ),
-                        "log_exists": log_exists,
-                        "state_busy": bool(s.busy),
-                        "queue_len": int(queue_len),
-                        "token": s.token,
-                        "thinking": int(s.meta_thinking),
-                        "tools": int(s.meta_tools),
-                        "system": int(s.meta_system),
-                        "harness_enabled": h_enabled,
-                        "harness_cooldown_minutes": h_cooldown_minutes,
-                        "harness_remaining_injections": h_remaining_injections,
-                        "alias": (self._aliases.get(s.session_id) if self._aliases.get(s.session_id) is not None else (self._aliases.get(ref) if ref is not None else None)),
-                        "title": s.title or "",
-                        "first_user_message": s.first_user_message or "",
-                        "files": list(self._files.get(s.session_id, self._files.get(ref, []))) if ref is not None else list(self._files.get(s.session_id, [])),
-                        "git_branch": git_branch,
-                        "model_provider": s.model_provider,
-                        "preferred_auth_method": s.preferred_auth_method,
-                        "provider_choice": _provider_choice_for_backend(
-                            backend=s.backend,
-                            model_provider=s.model_provider,
-                            preferred_auth_method=s.preferred_auth_method,
-                        ),
-                        "model": s.model,
-                        "reasoning_effort": s.reasoning_effort,
-                        "service_tier": s.service_tier,
-                        "tmux_session": s.tmux_session,
-                        "tmux_window": s.tmux_window,
-                        "priority_offset": priority_offset,
-                        "snooze_until": snooze_until,
-                        "dependency_session_id": dependency_session_id,
-                        "time_priority": time_priority,
-                        "base_priority": base_priority,
-                        "final_priority": final_priority,
-                        "blocked": blocked,
-                        "snoozed": snoozed,
-                        "focused": bool(meta0.get("focused")),
-                    }
-                )
-
-            for ref, record in recovered_catalog.items():
-                backend, durable_session_id = ref
-                if backend != "pi":
-                    continue
-                if (backend, durable_session_id) in live_resume_keys:
-                    continue
-                session_row_id = durable_session_id if record.pending_startup else _historical_session_id(backend, durable_session_id)
-                if hidden_sessions.intersection(
-                    self._hidden_session_keys(
-                        session_row_id,
-                        durable_session_id,
-                        durable_session_id,
-                        backend,
-                    )
-                ):
-                    continue
-                meta0 = meta_map.get(ref) if isinstance(meta_map, dict) else None
-                if not isinstance(meta0, dict):
-                    meta0 = {}
-                priority_offset = _clean_priority_offset(meta0.get("priority_offset"))
-                snooze_until = _clean_snooze_until(meta0.get("snooze_until"))
-                dependency_session_id = _clean_dependency_session_id(
-                    meta0.get("dependency_session_id")
-                )
-                if dependency_session_id is not None and dependency_session_id not in active_durable_ids:
-                    dependency_session_id = None
-                    if isinstance(meta_map, dict):
-                        meta0.pop("dependency_session_id", None)
-                        sidebar_dirty = True
-                if snooze_until is not None and snooze_until <= now_ts:
-                    snooze_until = None
-                    if isinstance(meta_map, dict):
-                        meta0.pop("snooze_until", None)
-                        sidebar_dirty = True
-                updated_ts = float(record.updated_at or record.created_at or now_ts)
-                elapsed_s = max(0.0, now_ts - updated_ts)
-                time_priority = _priority_from_elapsed_seconds(elapsed_s)
-                base_priority = _clip01(time_priority + priority_offset)
-                blocked = dependency_session_id is not None
-                snoozed = snooze_until is not None and snooze_until > now_ts
-                final_priority = 0.0 if (snoozed or blocked) else base_priority
-                alias = None
-                if isinstance(self._aliases, dict):
-                    alias = self._aliases.get(ref)
-                queue_rows = self._queues.get(ref, []) if isinstance(self._queues, dict) else []
-                file_rows = self._files.get(ref, []) if isinstance(self._files, dict) else []
-                cwd = record.cwd or ""
-                history_cwd_path: Path | None = _safe_expanduser(Path(cwd)).resolve() if cwd else None
-                git_branch = _current_git_branch(history_cwd_path) if history_cwd_path is not None else None
-                items.append(
-                    {
-                        "session_id": session_row_id,
-                        "runtime_id": None,
-                        "thread_id": durable_session_id,
-                        "resume_session_id": durable_session_id,
-                        "backend": backend,
-                        "pid": None,
-                        "broker_pid": None,
-                        "agent_backend": backend,
-                        "owned": False,
-                        "transport": None,
-                        "cwd": cwd,
-                        "start_ts": float(record.created_at or updated_ts),
-                        "updated_ts": updated_ts,
-                        "busy": False,
-                        "queue_len": len(queue_rows) if isinstance(queue_rows, list) else 0,
-                        "token": None,
-                        "thinking": 0,
-                        "tools": 0,
-                        "system": 0,
-                        "harness_enabled": False,
-                        "harness_cooldown_minutes": HARNESS_DEFAULT_IDLE_MINUTES,
-                        "harness_remaining_injections": HARNESS_DEFAULT_MAX_INJECTIONS,
-                        "alias": alias,
-                        "title": record.title or "",
-                        "first_user_message": record.first_user_message or "",
-                        "focused": bool(meta0.get("focused")),
-                        "files": list(file_rows) if isinstance(file_rows, list) else [],
-                        "git_branch": git_branch,
-                        "model_provider": None,
-                        "preferred_auth_method": None,
-                        "provider_choice": None,
-                        "model": None,
-                        "reasoning_effort": None,
-                        "service_tier": None,
-                        "tmux_session": None,
-                        "tmux_window": None,
-                        "priority_offset": priority_offset,
-                        "snooze_until": snooze_until,
-                        "dependency_session_id": dependency_session_id,
-                        "time_priority": time_priority,
-                        "base_priority": base_priority,
-                        "final_priority": final_priority,
-                        "blocked": blocked,
-                        "snoozed": snoozed,
-                        "historical": not record.pending_startup,
-                        "pending_startup": bool(record.pending_startup),
-                        "source_path": record.source_path,
-                        "session_path": record.source_path,
-                    }
-                )
-
-            if bool(getattr(self, "_include_historical_sessions", False)):
-                for hist in _historical_sidebar_items(
-                    live_resume_keys=live_resume_keys,
-                    now_ts=now_ts,
-                ):
-                    if hidden_sessions.intersection(
-                        self._hidden_session_keys(
-                            hist.get("session_id"),
-                            hist.get("thread_id"),
-                            hist.get("resume_session_id"),
-                            hist.get("agent_backend"),
-                        )
-                    ):
-                        continue
-                    items.append(hist)
-
-        out: list[dict[str, Any]] = []
-        for it in items:
-            sid = str(it["session_id"])
-            agent_backend = normalize_agent_backend(
-                it.get("agent_backend"), default="codex"
-            )
-            if it.get("historical"):
-                out.append(_normalize_session_cwd_row(dict(it)))
-                continue
-            log_exists = bool(it.get("log_exists"))
-            state_busy = bool(it.get("state_busy"))
-            if not log_exists and it.get("backend") == "pi":
-                s_obj = self._sessions.get(sid)
-                busy_out = (
-                    _display_pi_busy(s_obj, broker_busy=state_busy)
-                    if s_obj is not None
-                    else state_busy
-                )
-            elif not log_exists:
-                busy_out = False
-            else:
-                idle_val = bool(self.idle_from_log(sid))
-                if agent_backend == "pi":
-                    busy_out = not idle_val
-                else:
-                    # When a log exists, unify semantics with /messages:
-                    # busy if broker says busy OR log-derived idle is false.
-                    busy_out = state_busy or (not idle_val)
-            it2 = dict(it)
-            it2.pop("log_exists", None)
-            it2.pop("state_busy", None)
-            it2["busy"] = bool(busy_out)
-            out.append(_normalize_session_cwd_row(it2))
-        for item in out:
-            if item.get("busy") or int(item.get("queue_len", 0)) <= 0:
-                continue
-            self._maybe_drain_session_queue(str(item["session_id"]))
-        if files_dirty:
-            self._save_files()
-        if sidebar_dirty:
-            self._save_sidebar_meta()
-        out.sort(
-            key=lambda item: (
-                -float(item.get("final_priority", 0.0)),
-                -float(item.get("updated_ts", item.get("start_ts", 0.0))),
-                -float(item.get("start_ts", 0.0)),
-                0 if normalize_agent_backend(item.get("agent_backend"), default="codex") == "pi" else 1,
-                str(item.get("session_id", "")),
-            )
-        )
-        deduped: list[dict[str, Any]] = []
-        seen_row_keys: set[str] = set()
-        for item in out:
-            row_key = _session_row_dedupe_key(item)
-            if row_key in seen_row_keys:
-                continue
-            seen_row_keys.add(row_key)
-            deduped.append(item)
-        return deduped
+        if getattr(self, "_runtime", None) is None:
+            self._runtime = RUNTIME
+        return _session_catalog.list_sessions(self)
 
     def get_session(self, session_id: str) -> Session | None:
-        runtime_id = self._runtime_session_id_for_identifier(session_id)
-        if runtime_id is None:
-            return None
-        with self._lock:
-            return self._sessions.get(runtime_id)
+        return _session_catalog.get_session(self, session_id)
 
     def refresh_session_meta(self, session_id: str, *, strict: bool = True) -> None:
-        # The broker may rewrite the sock .json when Codex switches threads (/new, /resume).
-        # Refresh the log path and thread id without requiring the UI to poll /api/sessions.
-        runtime_id = self._runtime_session_id_for_identifier(session_id)
-        if runtime_id is None:
-            return
-        with self._lock:
-            s = self._sessions.get(runtime_id)
-            if not s:
-                return
-            sock = s.sock_path
-        try:
-            meta_path = sock.with_suffix(".json")
-            if not meta_path.exists():
-                raise RuntimeError(f"missing metadata sidecar for socket {sock}")
-            meta = json.loads(meta_path.read_text(encoding="utf-8"))
-            if not isinstance(meta, dict):
-                raise ValueError(f"invalid metadata json for socket {sock}")
-
-            thread_id = _clean_optional_text(meta.get("session_id")) or s.thread_id
-            backend = normalize_agent_backend(
-                meta.get("backend"),
-                default=normalize_agent_backend(
-                    meta.get("agent_backend"), default=s.backend
-                ),
-            )
-            agent_backend = normalize_agent_backend(
-                meta.get("agent_backend"), default=backend
-            )
-            owned = (
-                (meta.get("owner") == "web")
-                if isinstance(meta.get("owner"), str)
-                else s.owned
-            )
-            transport, tmux_session, tmux_window = self._session_transport(meta=meta)
-            supports_live_ui = (
-                meta.get("supports_live_ui")
-                if isinstance(meta.get("supports_live_ui"), bool)
-                else None
-            )
-            ui_protocol_version_raw = meta.get("ui_protocol_version")
-            ui_protocol_version = (
-                ui_protocol_version_raw
-                if type(ui_protocol_version_raw) is int
-                else None
-            )
-            log_path = _metadata_log_path(meta=meta, backend=backend, sock=sock)
-            session_path_discovered = False
-            if backend == "pi":
-                preferred_session_path: Path | None = s.session_path
-                if strict or ("session_path" in meta):
-                    preferred_session_path = _metadata_session_path(
-                        meta=meta, backend=backend, sock=sock
-                    )
-                claimed: set[Path] | None = (
-                    self._claimed_pi_session_paths(exclude_sid=session_id)
-                    if preferred_session_path is None
-                    else None
-                )
-                session_path, session_path_source = _resolve_pi_session_path(
-                    thread_id=thread_id,
-                    cwd=str(meta.get("cwd") or s.cwd),
-                    start_ts=float(meta.get("start_ts") or s.start_ts),
-                    preferred=preferred_session_path,
-                    exclude=claimed,
-                )
-                if session_path is not None and session_path_source in {
-                    "exact",
-                    "discovered",
-                }:
-                    session_path_discovered = True
-                    _patch_metadata_session_path(
-                        sock,
-                        session_path,
-                        force=(
-                            preferred_session_path is not None
-                            and preferred_session_path != session_path
-                        ),
-                    )
-            else:
-                session_path = _metadata_session_path(
-                    meta=meta, backend=backend, sock=sock
-                )
-            if log_path is not None and log_path.exists():
-                thread_id, log_path = _coerce_main_thread_log(
-                    thread_id=thread_id, log_path=log_path
-                )
-
-            cwd_raw = meta.get("cwd")
-            if not isinstance(cwd_raw, str) or (not cwd_raw.strip()):
-                raise ValueError(f"invalid cwd in metadata for socket {sock}")
-            cwd = cwd_raw
-
-            start_ts_raw = meta.get("start_ts")
-            start_ts = (
-                float(start_ts_raw)
-                if isinstance(start_ts_raw, (int, float))
-                else s.start_ts
-            )
-            resume_session_id = _clean_optional_text(meta.get("resume_session_id"))
-            model_provider, preferred_auth_method, model, reasoning_effort = (
-                self._session_run_settings(
-                    backend=backend, meta=meta, log_path=log_path
-                )
-            )
-            service_tier = _normalize_requested_service_tier(meta.get("service_tier"))
-        except Exception as exc:
-            if strict:
-                raise
-            self._quarantine_sidecar(sock, exc)
-            return
-        self._clear_sidecar_quarantine(sock)
-
-        # Detect pi session switch: if thread_id changed, the underlying
-        # session file has switched and we must re-discover session_path.
-        pi_session_switched = False
-        old_session_path: Path | None = None
-        with self._lock:
-            s2 = self._sessions.get(session_id)
-            if (
-                s2
-                and backend == "pi"
-                and s2.thread_id
-                and thread_id
-                and s2.thread_id != thread_id
-                and s2.session_path is not None
-            ):
-                pi_session_switched = True
-                old_session_path = s2.session_path
-
-        if pi_session_switched and old_session_path is not None:
-            claimed = self._claimed_pi_session_paths(exclude_sid=session_id)
-            claimed.add(old_session_path)
-            new_sp, new_sp_source = _resolve_pi_session_path(
-                thread_id=thread_id,
-                cwd=cwd,
-                start_ts=start_ts,
-                preferred=None,
-                exclude=claimed,
-            )
-            if new_sp is not None and new_sp != old_session_path:
-                session_path = new_sp
-                if new_sp_source in {"exact", "discovered"}:
-                    session_path_discovered = True
-                _patch_metadata_session_path(sock, new_sp, force=True)
-
-        with self._lock:
-            s2 = self._sessions.get(session_id)
-            if not s2:
-                return
-            if pi_session_switched:
-                s2.session_path = None
-                s2.pi_attention_scan_activity_ts = None
-                self._reset_log_caches(s2, meta_log_off=0)
-            s2.thread_id = str(thread_id)
-            s2.agent_backend = agent_backend
-            s2.backend = backend
-            s2.cwd = str(cwd)
-            s2.owned = bool(owned)
-            s2.transport = transport
-            s2.supports_live_ui = supports_live_ui
-            s2.ui_protocol_version = ui_protocol_version
-            self._apply_session_source(s2, log_path=log_path, session_path=session_path)
-            s2.model_provider = model_provider
-            s2.preferred_auth_method = preferred_auth_method
-            s2.model = model
-            s2.reasoning_effort = reasoning_effort
-            s2.service_tier = service_tier
-            s2.tmux_session = tmux_session
-            s2.tmux_window = tmux_window
-            s2.resume_session_id = resume_session_id
-            s2.pi_session_path_discovered = bool(
-                s2.pi_session_path_discovered or session_path_discovered
-            )
-        if self._queue_len(session_id) > 0:
-            self._maybe_drain_session_queue(session_id)
+        if getattr(self, "_runtime", None) is None:
+            self._runtime = RUNTIME
+        _session_catalog.refresh_session_meta(self, session_id, strict=strict)
 
     def _set_chat_index_snapshot(
         self,
@@ -7815,54 +3925,15 @@ class SessionManager:
         scan_complete: bool,
         log_off: int,
     ) -> None:
-        def event_key(ev: dict[str, Any]) -> tuple[str, int, str] | None:
-            role = ev.get("role")
-            if role not in ("user", "assistant"):
-                return None
-            text = ev.get("text")
-            if not isinstance(text, str):
-                return None
-            ts = ev.get("ts")
-            if not isinstance(ts, (int, float)):
-                return None
-            return role, int(round(float(ts) * 1000.0)), text
-
-        with self._lock:
-            s = self._sessions.get(session_id)
-            if not s:
-                return
-            # Deduplicate to avoid re-appending overlapping tail events across incremental scans.
-            # Also guard against runtimes emitting the same assistant message twice with slightly
-            # different timestamps by deduping assistant text within the current assistant stretch
-            # (resetting when we see a user message).
-            tail = list(events[-CHAT_INDEX_MAX_EVENTS:])
-            uniq_rev: list[dict[str, Any]] = []
-            seen_exact: set[tuple[str, int, str]] = set()
-            seen_assistant_stretch: set[str] = set()
-            for ev in reversed(tail):
-                k = event_key(ev)
-                if k is not None and k in seen_exact:
-                    continue
-                if k is not None:
-                    seen_exact.add(k)
-                role = ev.get("role")
-                if role == "user":
-                    seen_assistant_stretch.clear()
-                elif role == "assistant":
-                    text = ev.get("text")
-                    if isinstance(text, str):
-                        if text in seen_assistant_stretch:
-                            continue
-                        seen_assistant_stretch.add(text)
-                uniq_rev.append(ev)
-            s.chat_index_events = list(reversed(uniq_rev))
-            s.chat_index_scan_bytes = int(scan_bytes)
-            s.chat_index_scan_complete = bool(scan_complete) and (
-                len(events) <= CHAT_INDEX_MAX_EVENTS
-            )
-            s.chat_index_log_off = int(log_off)
-            if token_update is not None:
-                s.token = token_update
+        _message_history.set_chat_index_snapshot(
+            self,
+            session_id=session_id,
+            events=events,
+            token_update=token_update,
+            scan_bytes=scan_bytes,
+            scan_complete=scan_complete,
+            log_off=log_off,
+        )
 
     def _append_chat_events(
         self,
@@ -7872,103 +3943,18 @@ class SessionManager:
         new_off: int,
         latest_token: dict[str, Any] | None,
     ) -> None:
-        def event_key(ev: dict[str, Any]) -> tuple[str, int, str] | None:
-            role = ev.get("role")
-            if role not in ("user", "assistant"):
-                return None
-            text = ev.get("text")
-            if not isinstance(text, str):
-                return None
-            ts = ev.get("ts")
-            if not isinstance(ts, (int, float)):
-                return None
-            return role, int(round(float(ts) * 1000.0)), text
-
-        if not new_events and latest_token is None:
-            with self._lock:
-                s = self._sessions.get(session_id)
-                if s:
-                    s.chat_index_log_off = int(new_off)
-            return
-        with self._lock:
-            s = self._sessions.get(session_id)
-            if not s:
-                return
-            if new_events:
-                merged = list(s.chat_index_events)
-                recent = merged[-256:] if len(merged) > 256 else merged
-                seen_exact: set[tuple[str, int, str]] = set()
-                for ev in recent:
-                    k = event_key(ev)
-                    if k is not None:
-                        seen_exact.add(k)
-                # Build assistant stretch state from the end of the merged list.
-                # If the current tail already has assistant messages (after the last user),
-                # avoid appending the same assistant text again.
-                assistant_stretch: set[str] = set()
-                for ev in reversed(merged):
-                    role = ev.get("role")
-                    if role == "user":
-                        break
-                    if role == "assistant":
-                        text = ev.get("text")
-                        if isinstance(text, str):
-                            assistant_stretch.add(text)
-                appended: list[dict[str, Any]] = []
-                for ev in new_events:
-                    k = event_key(ev)
-                    if k is not None and k in seen_exact:
-                        continue
-                    if k is not None:
-                        seen_exact.add(k)
-                    role = ev.get("role")
-                    if role == "user":
-                        assistant_stretch.clear()
-                    elif role == "assistant":
-                        text = ev.get("text")
-                        if isinstance(text, str):
-                            if text in assistant_stretch:
-                                continue
-                            assistant_stretch.add(text)
-                    merged.append(ev)
-                    appended.append(ev)
-                if len(merged) > CHAT_INDEX_MAX_EVENTS:
-                    merged = merged[-CHAT_INDEX_MAX_EVENTS:]
-                    s.chat_index_scan_complete = False
-                s.chat_index_events = merged
-            s.chat_index_log_off = int(new_off)
-            if latest_token is not None:
-                s.token = latest_token
+        _message_history.append_chat_events(
+            self,
+            session_id,
+            new_events,
+            new_off=new_off,
+            latest_token=latest_token,
+        )
 
     def _attach_notification_texts(
         self, events: list[dict[str, Any]]
     ) -> list[dict[str, Any]]:
-        voice_push = getattr(self, "_voice_push", None)
-        if voice_push is None:
-            return list(events)
-        out: list[dict[str, Any]] = []
-        for ev in events:
-            if not isinstance(ev, dict):
-                out.append(ev)
-                continue
-            if (
-                ev.get("role") != "assistant"
-                or ev.get("message_class") != "final_response"
-            ):
-                out.append(ev)
-                continue
-            message_id = ev.get("message_id")
-            if not isinstance(message_id, str) or not message_id:
-                out.append(ev)
-                continue
-            notification_text = voice_push.notification_text_for_message(message_id)
-            if not notification_text:
-                out.append(ev)
-                continue
-            ev2 = dict(ev)
-            ev2["notification_text"] = notification_text
-            out.append(ev2)
-        return out
+        return _message_history.attach_notification_texts(self, events)
 
     def _update_pi_last_chat_ts(
         self,
@@ -7977,312 +3963,45 @@ class SessionManager:
         *,
         session_path: Path | None,
     ) -> None:
-        if not events:
-            return
-        if not any(_is_attention_worthy_session_event(event) for event in events):
-            return
-        latest_chat_ts = _session_file_activity_ts(session_path)
-        if latest_chat_ts is None:
-            latest_chat_ts = _attention_updated_ts_from_events(events)
-        if latest_chat_ts is None:
-            return
-        with self._lock:
-            s = self._sessions.get(session_id)
-            if not s:
-                return
-            s.last_chat_ts = (
-                latest_chat_ts
-                if s.last_chat_ts is None
-                else max(s.last_chat_ts, latest_chat_ts)
-            )
+        _message_history.update_pi_last_chat_ts(
+            self,
+            session_id,
+            events,
+            session_path=session_path,
+        )
 
     def _ensure_pi_chat_index(
         self, session_id: str, *, min_events: int, before: int
     ) -> tuple[list[dict[str, Any]], int, bool, int, dict[str, Any]]:
-        with self._lock:
-            s = self._sessions.get(session_id)
-            if not s:
-                return [], 0, False, 0, {"tool_names": [], "last_tool": None}
-            session_path = s.session_path
-            scan_bytes = int(s.chat_index_scan_bytes) if s.chat_index_scan_bytes > 0 else (256 * 1024)
-            idx_off = int(s.chat_index_log_off)
-        if session_path is None or (not session_path.exists()):
-            return [], 0, False, 0, {"tool_names": [], "last_tool": None}
-
-        size = int(session_path.stat().st_size)
-        if size < idx_off:
-            self._set_chat_index_snapshot(
-                session_id=session_id,
-                events=[],
-                token_update=None,
-                scan_bytes=256 * 1024,
-                scan_complete=False,
-                log_off=0,
-            )
-            idx_off = 0
-
-        with self._lock:
-            s2 = self._sessions.get(session_id)
-            ready = bool(s2 and (s2.chat_index_events is not None))
-            cached_count = len(s2.chat_index_events) if s2 else 0
-            scan_complete = bool(s2.chat_index_scan_complete) if s2 else False
-        target_events = max(0, int(min_events) + max(0, int(before)))
-        seed_diag: dict[str, Any] = {"tool_names": [], "last_tool": None}
-        if (not ready) or ((target_events > cached_count) and (not scan_complete)):
-            events, token_update, new_off, used_scan, complete, diag = _pi_messages.read_pi_message_tail_snapshot(
-                session_path,
-                min_events=max(20, target_events),
-                initial_scan_bytes=max(256 * 1024, scan_bytes),
-                max_scan_bytes=64 * 1024 * 1024,
-            )
-            seed_diag = diag
-            self._set_chat_index_snapshot(
-                session_id=session_id,
-                events=events,
-                token_update=token_update,
-                scan_bytes=used_scan,
-                scan_complete=complete,
-                log_off=new_off,
-            )
-        with self._lock:
-            s3 = self._sessions.get(session_id)
-            if not s3:
-                return [], 0, False, 0, {"tool_names": [], "last_tool": None}
-            session_path2 = s3.session_path
-            off3 = int(s3.chat_index_log_off)
-            prev_events = list(s3.chat_index_events)
-        if session_path2 is None or (not session_path2.exists()):
-            return prev_events, off3, False, 0, {"tool_names": [], "last_tool": None}
-        size2 = int(session_path2.stat().st_size)
-        latest_diag = seed_diag
-        if size2 > off3:
-            events_delta, new_off, _meta_delta, _flags, latest_diag = _pi_messages.read_pi_message_delta(
-                session_path2,
-                offset=off3,
-            )
-            if events_delta:
-                self._append_chat_events(
-                    session_id,
-                    events_delta,
-                    new_off=new_off,
-                    latest_token=None,
-                )
-            elif new_off > off3:
-                self._append_chat_events(session_id, [], new_off=new_off, latest_token=None)
-        with self._lock:
-            s4 = self._sessions.get(session_id)
-            if not s4:
-                return prev_events, off3, False, 0, latest_diag
-            events2 = list(s4.chat_index_events)
-            off4 = int(s4.chat_index_log_off)
-            scan_complete3 = bool(s4.chat_index_scan_complete)
-        n = len(events2)
-        b = max(0, int(before))
-        end = max(0, n - b)
-        start = max(0, end - max(20, int(min_events)))
-        page = self._attach_notification_texts(events2[start:end])
-        has_older = start > 0 or ((not scan_complete3) and bool(page))
-        next_before = b + len(page) if has_older else 0
-        return page, off4, has_older, next_before, latest_diag
+        return _message_history.ensure_pi_chat_index(
+            self,
+            session_id,
+            min_events=min_events,
+            before=before,
+        )
 
     def _ensure_chat_index(
         self, session_id: str, *, min_events: int, before: int
     ) -> tuple[list[dict[str, Any]], int, bool, int, dict[str, Any] | None]:
-        with self._lock:
-            s = self._sessions.get(session_id)
-            if not s:
-                return [], 0, False, 0, None
-            lp = s.log_path
-            scan_bytes = (
-                int(s.chat_index_scan_bytes)
-                if s.chat_index_scan_bytes > 0
-                else CHAT_INIT_SEED_SCAN_BYTES
-            )
-            idx_off = int(s.chat_index_log_off)
-        if lp is None or (not lp.exists()):
-            return [], 0, False, 0, None
-
-        sz = int(lp.stat().st_size)
-
-        if sz < idx_off:
-            idx_off = 0
-            self._set_chat_index_snapshot(
-                session_id=session_id,
-                events=[],
-                token_update=None,
-                scan_bytes=CHAT_INIT_SEED_SCAN_BYTES,
-                scan_complete=False,
-                log_off=0,
-            )
-
-        with self._lock:
-            s2 = self._sessions.get(session_id)
-            ready = bool(s2 and (s2.chat_index_events is not None))
-            cached_count = len(s2.chat_index_events) if s2 else 0
-            scan_complete = bool(s2.chat_index_scan_complete) if s2 else False
-
-        target_events = max(0, int(min_events) + max(0, int(before)))
-        if (not ready) or ((target_events > cached_count) and (not scan_complete)):
-            events, token_update, used_scan, complete, log_size = (
-                _read_chat_tail_snapshot(
-                    lp,
-                    min_events=max(20, target_events),
-                    initial_scan_bytes=max(CHAT_INIT_SEED_SCAN_BYTES, scan_bytes),
-                    max_scan_bytes=CHAT_INIT_MAX_SCAN_BYTES,
-                )
-            )
-            self._set_chat_index_snapshot(
-                session_id=session_id,
-                events=events,
-                token_update=token_update,
-                scan_bytes=used_scan,
-                scan_complete=complete,
-                log_off=log_size,
-            )
-
-        with self._lock:
-            s3 = self._sessions.get(session_id)
-            if not s3:
-                return [], 0, False, 0, None
-            lp3 = s3.log_path
-            off3 = int(s3.chat_index_log_off)
-            prev_events = list(s3.chat_index_events)
-        if lp3 is None or (not lp3.exists()):
-            return [], off3, False, 0, None
-
-        sz2 = int(lp3.stat().st_size)
-
-        if sz2 > off3:
-            delta = sz2 - off3
-            if delta >= CHAT_INDEX_RESEED_THRESHOLD_BYTES:
-                events, token_update, used_scan, complete, log_size = (
-                    _read_chat_tail_snapshot(
-                        lp3,
-                        min_events=max(20, target_events),
-                        initial_scan_bytes=max(CHAT_INIT_SEED_SCAN_BYTES, scan_bytes),
-                        max_scan_bytes=CHAT_INIT_MAX_SCAN_BYTES,
-                    )
-                )
-                self._set_chat_index_snapshot(
-                    session_id=session_id,
-                    events=events,
-                    token_update=token_update,
-                    scan_bytes=used_scan,
-                    scan_complete=complete,
-                    log_off=log_size,
-                )
-            else:
-                cur = off3
-                loops = 0
-                latest_token: dict[str, Any] | None = None
-                aggregated_events: list[dict[str, Any]] = []
-                while cur < sz2 and loops < 16:
-                    objs, new_off = _read_jsonl_from_offset(
-                        lp3, cur, max_bytes=CHAT_INDEX_INCREMENT_BYTES
-                    )
-                    if new_off <= cur:
-                        break
-                    _th, _tools, _sys, _last_ts, token_update, new_events = (
-                        _analyze_log_chunk(objs)
-                    )
-                    if token_update is not None:
-                        latest_token = token_update
-                    if new_events:
-                        aggregated_events.extend(new_events)
-                    cur = new_off
-                    loops += 1
-                self._append_chat_events(
-                    session_id,
-                    aggregated_events,
-                    new_off=cur,
-                    latest_token=latest_token,
-                )
-
-        with self._lock:
-            s4 = self._sessions.get(session_id)
-            if not s4:
-                return prev_events, off3, False, 0, None
-            events2 = list(s4.chat_index_events)
-            log_off2 = int(s4.chat_index_log_off)
-            scan_complete2 = bool(s4.chat_index_scan_complete)
-            token2 = (
-                s4.token if isinstance(s4.token, dict) or s4.token is None else None
-            )
-
-        n = len(events2)
-        b = max(0, int(before))
-        end = max(0, n - b)
-        start = max(0, end - max(20, int(min_events)))
-        page = self._attach_notification_texts(events2[start:end])
-        has_older = (start > 0) or ((not scan_complete2) and bool(page))
-        next_before = b + len(page) if has_older else 0
-        return page, log_off2, has_older, next_before, token2
+        return _message_history.ensure_chat_index(
+            self,
+            session_id,
+            min_events=min_events,
+            before=before,
+        )
 
     def mark_log_delta(
         self, session_id: str, *, objs: list[dict[str, Any]], new_off: int
     ) -> None:
-        _th, _tools, _sys, last_ts, token_update, new_events = _analyze_log_chunk(objs)
-        model = None
-        reasoning_effort = None
-        for obj in reversed(objs):
-            if not isinstance(obj, dict) or obj.get("type") != "turn_context":
-                continue
-            model, reasoning_effort = _turn_context_run_settings(obj.get("payload"))
-            break
-        self._append_chat_events(
-            session_id, new_events, new_off=new_off, latest_token=token_update
+        _message_history.mark_log_delta(
+            self,
+            session_id,
+            objs=objs,
+            new_off=new_off,
         )
-        durable_session_id: str | None = None
-        with self._lock:
-            s = self._sessions.get(session_id)
-            if s:
-                durable_session_id = self._durable_session_id_for_session(s)
-                if isinstance(last_ts, (int, float)):
-                    tsf = float(last_ts)
-                    s.last_chat_ts = (
-                        tsf if s.last_chat_ts is None else max(s.last_chat_ts, tsf)
-                    )
-                if model is not None:
-                    s.model = model
-                if reasoning_effort is not None:
-                    s.reasoning_effort = reasoning_effort
-                s.idle_cache_log_off = -1
-        if durable_session_id is not None and (new_events or token_update is not None or model is not None or reasoning_effort is not None):
-            _publish_session_live_invalidate(
-                durable_session_id,
-                runtime_id=session_id,
-                reason="log_delta",
-            )
-            _publish_session_workspace_invalidate(
-                durable_session_id,
-                runtime_id=session_id,
-                reason="log_delta",
-            )
-            if any(_is_attention_worthy_session_event(event) for event in new_events):
-                _publish_sessions_invalidate(reason="conversation_changed")
 
     def idle_from_log(self, session_id: str) -> bool:
-        with self._lock:
-            s = self._sessions.get(session_id)
-            if not s:
-                raise KeyError("unknown session")
-            lp = s.log_path
-            cached_off = int(s.idle_cache_log_off)
-            cached_idle = s.idle_cache_value
-        if lp is None or (not lp.exists()):
-            raise FileNotFoundError(f"missing rollout log for session {session_id}")
-        sz = int(lp.stat().st_size)
-        if (sz >= 0) and (cached_off == sz) and isinstance(cached_idle, bool):
-            return bool(cached_idle)
-        idle = _compute_idle_from_log(lp)
-        with self._lock:
-            s2 = self._sessions.get(session_id)
-            if s2:
-                s2.idle_cache_log_off = sz
-                s2.idle_cache_value = idle
-        if idle is None:
-            raise RuntimeError("unable to compute idle state from log")
-        return bool(idle)
+        return _message_history.idle_from_log(self, session_id)
 
     def get_messages_page(
         self,
@@ -8294,336 +4013,26 @@ class SessionManager:
         before: int,
         view: str = "conversation",
     ) -> dict[str, Any]:
-        historical_row = _historical_session_row(session_id)
-        if historical_row is not None:
-            historical_backend = normalize_agent_backend(
-                historical_row.get("agent_backend", historical_row.get("backend")),
-                default="codex",
-            )
-            if historical_backend != "pi":
-                raise KeyError("unknown session")
-            session_path_raw = historical_row.get("session_path")
-            session_path = (
-                Path(session_path_raw)
-                if isinstance(session_path_raw, str) and session_path_raw
-                else None
-            )
-            if session_path is None or (not session_path.exists()):
-                return {
-                    "thread_id": historical_row.get("resume_session_id"),
-                    "log_path": str(session_path) if session_path is not None else None,
-                    "offset": 0,
-                    "events": [],
-                    "meta_delta": {"thinking": 0, "tool": 0, "system": 0},
-                    "turn_start": False,
-                    "turn_end": False,
-                    "turn_aborted": False,
-                    "diag": {"pending_log": True},
-                    "busy": False,
-                    "queue_len": 0,
-                    "token": None,
-                    "has_older": False,
-                    "next_before": 0,
-                }
-            if init and offset == 0:
-                historical_events, new_off, has_older, next_before, diag = (
-                    _pi_messages.read_pi_message_page(
-                        session_path,
-                        limit=limit,
-                        before=before,
-                    )
-                )
-                meta_delta = {"thinking": 0, "tool": 0, "system": 0}
-                flags = {"turn_start": False, "turn_end": False, "turn_aborted": False}
-            else:
-                historical_events, new_off, meta_delta, flags, diag = (
-                    _pi_messages.read_pi_message_delta(
-                        session_path,
-                        offset=offset,
-                    )
-                )
-                has_older = False
-                next_before = 0
-            return {
-                "thread_id": historical_row.get("resume_session_id"),
-                "log_path": str(session_path),
-                "offset": int(new_off),
-                "events": historical_events,
-                "meta_delta": meta_delta,
-                "turn_start": bool(flags.get("turn_start")),
-                "turn_end": bool(flags.get("turn_end")),
-                "turn_aborted": bool(flags.get("turn_aborted")),
-                "diag": diag,
-                "busy": False,
-                "queue_len": 0,
-                "token": None,
-                "has_older": bool(has_older),
-                "next_before": int(next_before),
-            }
-
-        runtime_session_id = self._runtime_session_id_for_identifier(session_id)
-        if runtime_session_id is None:
-            raise KeyError("unknown session")
-        session_id = runtime_session_id
-        self.refresh_session_meta(session_id, strict=False)
-        s = self.get_session(session_id)
-        if not s:
-            raise KeyError("unknown session")
-
-        state = self.get_state(session_id)
-        if not isinstance(state, dict):
-            raise ValueError("invalid broker state response")
-        if "busy" not in state:
-            raise ValueError("missing busy from broker state response")
-        if "queue_len" not in state:
-            raise ValueError("missing queue_len from broker state response")
-        state_token = state.get("token")
-        if not (isinstance(state_token, dict) or (state_token is None)):
-            raise ValueError("invalid token from broker state response")
-
-        if s.backend == "pi":
-            diag = {"tool_names": [], "last_tool": None}
-            flags = {"turn_start": False, "turn_end": False, "turn_aborted": False}
-            meta_delta = {"thinking": 0, "tool": 0, "system": 0}
-            new_off = 0
-            has_older = False
-            next_before = 0
-            # Lazy discover session_path for PTY-wrapped pi (piox).
-            # Only discover when session_path is truly unknown (None).
-            # When session_path is set but the file doesn't exist yet
-            # (Pi hasn't written to it), we must NOT fall back to discovery
-            # because _discover_pi_session_for_cwd picks the most-recently-
-            # modified file and would grab another session's file when two
-            # piox sessions share the same CWD.
-            if s.session_path is None and s.cwd:
-                claimed = self._claimed_pi_session_paths(exclude_sid=session_id)
-                discovered, discovered_source = _resolve_pi_session_path(
-                    thread_id=s.thread_id,
-                    cwd=s.cwd,
-                    start_ts=s.start_ts,
-                    preferred=None,
-                    exclude=claimed,
-                )
-                if discovered is not None:
-                    s.session_path = discovered
-                    if discovered_source in {"exact", "discovered"}:
-                        s.pi_session_path_discovered = True
-                    _patch_metadata_session_path(s.sock_path, discovered)
-            if s.session_path is not None and s.session_path.exists():
-                if init and offset == 0:
-                    events, new_off, has_older, next_before, diag = self._ensure_pi_chat_index(
-                        session_id,
-                        min_events=limit,
-                        before=before,
-                    )
-                else:
-                    events, new_off, meta_delta, flags, diag = (
-                        _pi_messages.read_pi_message_delta(
-                            s.session_path,
-                            offset=offset,
-                        )
-                    )
-                    if new_off > offset:
-                        self._append_chat_events(
-                            session_id,
-                            events,
-                            new_off=new_off,
-                            latest_token=None,
-                        )
-                self._update_pi_last_chat_ts(
-                    session_id, events, session_path=s.session_path
-                )
-            # Detect session switch via /resume: when the current session file
-            # has gone stale (no writes) but a different, more recently modified
-            # file exists in the same session directory, the pi CLI likely
-            # switched sessions.  Re-discover and swap.
-            if (
-                s.pi_session_path_discovered
-                and s.session_path is not None
-                and s.cwd
-                and not events
-            ):
-                sp_mtime = _safe_path_mtime(s.session_path)
-                if sp_mtime is not None and (time.time() - sp_mtime) > 2.0:
-                    old_sp = s.session_path
-                    claimed = self._claimed_pi_session_paths(exclude_sid=session_id)
-                    claimed.add(old_sp)
-                    newer_sp, newer_sp_source = _resolve_pi_session_path(
-                        thread_id=s.thread_id,
-                        cwd=s.cwd,
-                        start_ts=s.start_ts,
-                        preferred=None,
-                        exclude=claimed,
-                    )
-                    newer_sp_mtime = (
-                        _safe_path_mtime(newer_sp) if newer_sp is not None else None
-                    )
-                    if (
-                        newer_sp is not None
-                        and newer_sp != old_sp
-                        and (
-                            newer_sp_source == "exact"
-                            or (
-                                newer_sp_mtime is not None and newer_sp_mtime > sp_mtime
-                            )
-                        )
-                    ):
-                        s.session_path = newer_sp
-                        _patch_metadata_session_path(s.sock_path, newer_sp, force=True)
-                        self._reset_log_caches(s, meta_log_off=0)
-                        # Re-read from the newly discovered session file.
-                        events, new_off, has_older, next_before, diag = self._ensure_pi_chat_index(
-                            session_id,
-                            min_events=limit,
-                            before=0,
-                        )
-                        self._update_pi_last_chat_ts(
-                            session_id, events, session_path=s.session_path
-                        )
-            pi_busy = _display_pi_busy(s, broker_busy=_state_busy_value(state))
-            return {
-                "thread_id": s.thread_id,
-                "log_path": str(s.session_path) if s.session_path is not None else None,
-                "offset": int(new_off),
-                "events": events,
-                "meta_delta": meta_delta,
-                "turn_start": bool(flags.get("turn_start")),
-                "turn_end": bool(flags.get("turn_end")),
-                "turn_aborted": bool(flags.get("turn_aborted")),
-                "diag": diag,
-                "busy": pi_busy,
-                "queue_len": int(self._queue_len(session_id)),
-                "token": state_token,
-                "has_older": bool(has_older),
-                "next_before": int(next_before),
-            }
-
-        if s.log_path is None or (not s.log_path.exists()):
-            return {
-                "thread_id": s.thread_id,
-                "log_path": None,
-                "offset": 0,
-                "events": [],
-                "meta_delta": {"thinking": 0, "tool": 0, "system": 0},
-                "turn_start": False,
-                "turn_end": False,
-                "turn_aborted": False,
-                "diag": {"pending_log": True},
-                "busy": False,
-                "queue_len": int(self._queue_len(session_id)),
-                "token": state_token,
-                "has_older": False,
-                "next_before": 0,
-            }
-
-        if init and offset == 0:
-            events, new_off, has_older, next_before, token_update = (
-                self._ensure_chat_index(
-                    session_id,
-                    min_events=limit,
-                    before=before,
-                )
-            )
-            meta_delta = {"thinking": 0, "tool": 0, "system": 0}
-            flags = {"turn_start": False, "turn_end": False, "turn_aborted": False}
-            diag = {"tool_names": [], "last_tool": None}
-        else:
-            has_older = False
-            next_before = 0
-            objs, new_off = _read_jsonl_from_offset(s.log_path, offset)
-            events, meta_delta, flags, diag = _extract_chat_events(objs)
-            token_update = _extract_token_update(objs)
-            self.mark_log_delta(session_id, objs=objs, new_off=new_off)
-
-        s2 = self.get_session(session_id)
-        if token_update is not None and s2 is not None:
-            s2.token = token_update
-        idle_val = self.idle_from_log(session_id)
-        busy_val = _state_busy_value(state) or (not bool(idle_val))
-        token_val = (
-            state_token
-            if state_token is not None
-            else token_update
-            if isinstance(token_update, dict)
-            else None
+        return _message_history.get_messages_page(
+            self,
+            session_id,
+            offset=offset,
+            init=init,
+            limit=limit,
+            before=before,
+            view=view,
         )
-        return {
-            "thread_id": s.thread_id,
-            "log_path": str(s.log_path),
-            "offset": int(new_off),
-            "events": events,
-            "meta_delta": meta_delta,
-            "turn_start": bool(flags.get("turn_start")),
-            "turn_end": bool(flags.get("turn_end")),
-            "turn_aborted": bool(flags.get("turn_aborted")),
-            "diag": diag,
-            "busy": bool(busy_val),
-            "queue_len": int(self._queue_len(session_id)),
-            "token": token_val,
-            "has_older": bool(has_older),
-            "next_before": int(next_before),
-        }
 
     def _sock_call(
         self, sock_path: Path, req: dict[str, Any], timeout_s: float = 2.0
     ) -> dict[str, Any]:
-        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        s.settimeout(timeout_s)
-        try:
-            s.connect(str(sock_path))
-            s.sendall((json.dumps(req) + "\n").encode("utf-8"))
-            buf = b""
-            while b"\n" not in buf:
-                chunk = s.recv(65536)
-                if not chunk:
-                    break
-                buf += chunk
-            line = buf.split(b"\n", 1)[0]
-            if not line:
-                return {"error": "empty response"}
-            payload = json.loads(line.decode("utf-8"))
-            return payload if isinstance(payload, dict) else {"error": "invalid response"}
-        finally:
-            s.close()
+        return _session_transport.sock_call(self, sock_path, req, timeout_s=timeout_s)
 
     def _kill_session_via_pids(self, s: Session) -> bool:
-        group_alive = _process_group_alive(int(s.codex_pid))
-        broker_alive = _pid_alive(int(s.broker_pid))
-        if not group_alive and not broker_alive:
-            _unlink_quiet(s.sock_path)
-            _unlink_quiet(s.sock_path.with_suffix(".json"))
-            return True
-        if group_alive and (
-            not _terminate_process_group(int(s.codex_pid), wait_seconds=1.0)
-        ):
-            return False
-        if _pid_alive(int(s.broker_pid)) and (
-            not _terminate_process(int(s.broker_pid), wait_seconds=1.0)
-        ):
-            return False
-        group_dead = not _process_group_alive(int(s.codex_pid))
-        broker_dead = not _pid_alive(int(s.broker_pid))
-        if group_dead and broker_dead:
-            _unlink_quiet(s.sock_path)
-            _unlink_quiet(s.sock_path.with_suffix(".json"))
-            return True
-        return False
+        return _session_transport.kill_session_via_pids(self, s)
 
     def kill_session(self, session_id: str) -> bool:
-        runtime_id = self._runtime_session_id_for_identifier(session_id)
-        if runtime_id is None:
-            return False
-        with self._lock:
-            s = self._sessions.get(runtime_id)
-        if not s:
-            return False
-        try:
-            resp = self._sock_call(s.sock_path, {"cmd": "shutdown"}, timeout_s=1.0)
-        except Exception:
-            return self._kill_session_via_pids(s)
-        if resp.get("ok") is True:
-            return True
-        return self._kill_session_via_pids(s)
+        return _session_transport.kill_session(self, session_id)
 
     def spawn_web_session(
         self,
@@ -8641,497 +4050,21 @@ class SessionManager:
         create_in_tmux: bool = False,
         backend: str | None = None,
     ) -> dict[str, Any]:
-        backend_name = normalize_agent_backend(
-            backend, default=normalize_agent_backend(agent_backend, default="codex")
+        return _session_control.spawn_web_session(
+            self,
+            cwd=cwd,
+            args=args,
+            agent_backend=agent_backend,
+            resume_session_id=resume_session_id,
+            worktree_branch=worktree_branch,
+            model_provider=model_provider,
+            preferred_auth_method=preferred_auth_method,
+            model=model,
+            reasoning_effort=reasoning_effort,
+            service_tier=service_tier,
+            create_in_tmux=create_in_tmux,
+            backend=backend,
         )
-        cwd_path = _resolve_dir_target(cwd, field_name="cwd")
-        if not cwd_path.exists():
-            try:
-                cwd_path.mkdir(parents=True, exist_ok=True)
-            except OSError as e:
-                detail = e.strerror or str(e)
-                raise ValueError(
-                    f"cwd could not be created: {cwd_path}: {detail}"
-                ) from e
-        if not cwd_path.is_dir():
-            raise ValueError(f"cwd is not a directory: {cwd_path}")
-        cwd3 = str(cwd_path)
-        if backend_name == "pi":
-            spawn_nonce = secrets.token_hex(8)
-            pending_session_id: str | None = None
-            pending_delete_on_failure = True
-            pending_restore_record: DurableSessionRecord | None = None
-            if resume_session_id is not None:
-                resume_id = _clean_optional_resume_session_id(resume_session_id)
-                if not resume_id:
-                    raise ValueError("resume_session_id must be a non-empty string")
-                session_path: Path | None = None
-                for row in _list_resume_candidates_for_cwd(
-                    cwd3, limit=1000, backend="pi"
-                ):
-                    if row.get("session_id") != resume_id:
-                        continue
-                    raw_session_path = row.get("session_path")
-                    if isinstance(raw_session_path, str) and raw_session_path:
-                        session_path = Path(raw_session_path)
-                        break
-                if session_path is None:
-                    raise ValueError(f"resume session not found for cwd: {resume_id}")
-                if create_in_tmux:
-                    pending_session_id = resume_id
-                    pending_delete_on_failure = False
-                    db = getattr(self, "_page_state_db", None)
-                    pending_restore_record = (
-                        db.load_sessions().get(("pi", resume_id))
-                        if isinstance(db, PageStateDB)
-                        else None
-                    )
-                    current = pending_restore_record
-                    self._persist_durable_session_record(
-                        DurableSessionRecord(
-                            backend="pi",
-                            session_id=resume_id,
-                            cwd=(current.cwd if current is not None else cwd3),
-                            source_path=(current.source_path if current is not None else str(session_path)),
-                            title=current.title if current is not None else None,
-                            first_user_message=current.first_user_message if current is not None else None,
-                            created_at=(current.created_at if current is not None else _safe_path_mtime(session_path)),
-                            updated_at=(current.updated_at if current is not None else _safe_path_mtime(session_path)),
-                            pending_startup=True,
-                        )
-                    )
-            else:
-                pending_session_id = str(uuid.uuid4())
-                session_path = _pi_new_session_file_for_cwd(cwd_path)
-                _write_pi_session_header(
-                    session_path,
-                    session_id=pending_session_id,
-                    cwd=cwd3,
-                    provider=model_provider,
-                    model_id=model,
-                    thinking_level=reasoning_effort,
-                )
-                self._persist_durable_session_record(
-                    DurableSessionRecord(
-                        backend="pi",
-                        session_id=pending_session_id,
-                        cwd=cwd3,
-                        source_path=str(session_path),
-                        created_at=_safe_path_mtime(session_path),
-                        updated_at=_safe_path_mtime(session_path),
-                        pending_startup=True,
-                    )
-                )
-            session_path.parent.mkdir(parents=True, exist_ok=True)
-            argv = [
-                sys.executable,
-                "-m",
-                "codoxear.pi_broker",
-                "--cwd",
-                str(cwd_path),
-                "--session-file",
-                str(session_path),
-                "--",
-                "-e",
-                str(
-                    Path(__file__).resolve().parent
-                    / "pi_extensions"
-                    / "ask_user_bridge.ts"
-                ),
-            ]
-            env = dict(os.environ)
-            if _DOTENV.exists():
-                for k, v in _load_env_file(_DOTENV).items():
-                    env.setdefault(k, v)
-            env["CODEX_WEB_OWNER"] = "web"
-            env["CODEX_WEB_SPAWN_NONCE"] = spawn_nonce
-            env.setdefault("PI_HOME", str(PI_HOME))
-            if create_in_tmux:
-                tmux_bin = shutil.which("tmux")
-                if tmux_bin is None:
-                    if pending_session_id is not None and pending_delete_on_failure:
-                        self._delete_durable_session_record(("pi", pending_session_id))
-                    elif pending_restore_record is not None:
-                        self._persist_durable_session_record(pending_restore_record)
-                    raise ValueError("tmux is unavailable on this host")
-                tmux_window = _safe_filename(
-                    f"{Path(cwd3).name or 'session'}-{spawn_nonce[:6]}",
-                    default="session",
-                )
-                env["CODEX_WEB_TRANSPORT"] = "tmux"
-                env["CODEX_WEB_TMUX_SESSION"] = TMUX_SESSION_NAME
-                env["CODEX_WEB_TMUX_WINDOW"] = tmux_window
-                short_app_dir = _ensure_tmux_short_app_dir()
-                inline_env = {
-                    "CODEX_WEB_OWNER": "web",
-                    "CODEX_WEB_AGENT_BACKEND": "pi",
-                    "CODEX_WEB_TRANSPORT": "tmux",
-                    "CODEX_WEB_TMUX_SESSION": TMUX_SESSION_NAME,
-                    "CODEX_WEB_TMUX_WINDOW": tmux_window,
-                    "CODEX_WEB_SPAWN_NONCE": spawn_nonce,
-                    "CODOXEAR_APP_DIR": short_app_dir,
-                    "PI_HOME": str(env["PI_HOME"]),
-                }
-                repo_root = Path(__file__).resolve().parent.parent
-                inline_argv = [
-                    "env",
-                    *[f"{key}={value}" for key, value in inline_env.items()],
-                    *argv,
-                ]
-                shell_cmd = f"cd {shlex.quote(str(repo_root))} && exec {shlex.join(inline_argv)}"
-                has_session = subprocess.run(
-                    [tmux_bin, "has-session", "-t", TMUX_SESSION_NAME],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    text=True,
-                    check=False,
-                )
-                if has_session.returncode == 0:
-                    tmux_argv = [
-                        tmux_bin,
-                        "new-window",
-                        "-d",
-                        "-P",
-                        "-F",
-                        "#{pane_id}",
-                        "-t",
-                        f"{TMUX_SESSION_NAME}:",
-                        "-n",
-                        tmux_window,
-                        shell_cmd,
-                    ]
-                else:
-                    tmux_argv = [
-                        tmux_bin,
-                        "new-session",
-                        "-d",
-                        "-P",
-                        "-F",
-                        "#{pane_id}",
-                        "-s",
-                        TMUX_SESSION_NAME,
-                        "-n",
-                        tmux_window,
-                        shell_cmd,
-                    ]
-                tmux_proc = subprocess.run(
-                    tmux_argv, capture_output=True, text=True, env=env, check=False
-                )
-                if tmux_proc.returncode != 0:
-                    if pending_session_id is not None and pending_delete_on_failure:
-                        self._delete_durable_session_record(("pi", pending_session_id))
-                    elif pending_restore_record is not None:
-                        self._persist_durable_session_record(pending_restore_record)
-                    detail = (
-                        tmux_proc.stderr
-                        or tmux_proc.stdout
-                        or f"exit status {tmux_proc.returncode}"
-                    ).strip()
-                    raise RuntimeError(f"tmux launch failed: {detail}")
-                if pending_session_id is not None:
-                    threading.Thread(
-                        target=self._finalize_pending_pi_spawn,
-                        kwargs={
-                            "spawn_nonce": spawn_nonce,
-                            "durable_session_id": pending_session_id,
-                            "cwd": cwd3,
-                            "session_path": session_path,
-                            "proc": None,
-                            "delete_on_failure": pending_delete_on_failure,
-                            "restore_record_on_failure": pending_restore_record,
-                        },
-                        daemon=True,
-                    ).start()
-                    return {
-                        "session_id": pending_session_id,
-                        "runtime_id": None,
-                        "backend": "pi",
-                        "pending_startup": True,
-                        "tmux_session": TMUX_SESSION_NAME,
-                        "tmux_window": tmux_window,
-                    }
-                meta = _wait_for_spawned_broker_meta(spawn_nonce)
-                payload = _spawn_result_from_meta(meta)
-                return {
-                    **payload,
-                    "tmux_session": TMUX_SESSION_NAME,
-                    "tmux_window": tmux_window,
-                }
-            try:
-                proc = subprocess.Popen(
-                    argv,
-                    stdin=subprocess.DEVNULL,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.PIPE,
-                    env=env,
-                    start_new_session=True,
-                )
-            except Exception as e:
-                if pending_session_id is not None and pending_delete_on_failure:
-                    self._delete_durable_session_record(("pi", pending_session_id))
-                elif pending_restore_record is not None:
-                    self._persist_durable_session_record(pending_restore_record)
-                raise RuntimeError(f"spawn failed: {e}") from e
-            threading.Thread(target=proc.wait, daemon=True).start()
-            if pending_session_id is not None:
-                threading.Thread(
-                    target=self._finalize_pending_pi_spawn,
-                    kwargs={
-                        "spawn_nonce": spawn_nonce,
-                        "durable_session_id": pending_session_id,
-                        "cwd": cwd3,
-                        "session_path": session_path,
-                        "proc": proc,
-                        "delete_on_failure": pending_delete_on_failure,
-                        "restore_record_on_failure": pending_restore_record,
-                    },
-                    daemon=True,
-                ).start()
-                payload = {
-                    "session_id": pending_session_id,
-                    "runtime_id": None,
-                    "backend": "pi",
-                    "pending_startup": True,
-                }
-                _publish_sessions_invalidate(reason="session_created")
-                return payload
-            _wait_or_raise(proc, label="pi broker", timeout_s=1.5)
-            _start_proc_stderr_drain(proc)
-            meta = _wait_for_spawned_broker_meta(spawn_nonce)
-            payload = _spawn_result_from_meta(meta)
-            _publish_sessions_invalidate(reason="session_created")
-            return payload
-        if resume_session_id is not None and worktree_branch is not None:
-            raise ValueError("worktree_branch cannot be used when resuming a session")
-        spawn_cwd = cwd_path
-        if worktree_branch is not None:
-            spawn_cwd = _create_git_worktree(cwd_path, worktree_branch)
-
-        argv = [sys.executable, "-m", "codoxear.broker", "--cwd", str(spawn_cwd), "--"]
-        codex_args: list[str] = []
-        resume_row: dict[str, Any] | None = None
-        if backend_name == "codex":
-            # Web-owned Codex sessions need a remote-safe mode that does not block on TUI confirmations.
-            codex_args = [
-                "-c",
-                _codex_trust_override_for_path(spawn_cwd),
-                "--dangerously-bypass-approvals-and-sandbox",
-            ]
-            if model is not None:
-                codex_args.extend(["--model", model])
-            if reasoning_effort is not None:
-                codex_args.extend(
-                    ["-c", f'model_reasoning_effort="{reasoning_effort}"']
-                )
-            if model_provider is not None:
-                codex_args.extend(["-c", f'model_provider="{model_provider}"'])
-            if preferred_auth_method is not None:
-                codex_args.extend(
-                    ["-c", f'preferred_auth_method="{preferred_auth_method}"']
-                )
-            if service_tier is not None:
-                codex_args.extend(["-c", f'service_tier="{service_tier}"'])
-        else:
-            if preferred_auth_method is not None:
-                raise ValueError("preferred_auth_method is not supported for pi")
-            if service_tier is not None:
-                raise ValueError("service_tier is not supported for pi")
-            if model_provider is not None:
-                codex_args.extend(["--provider", model_provider])
-            if model is not None:
-                codex_args.extend(["--model", model])
-            if reasoning_effort is not None:
-                codex_args.extend(["--thinking", reasoning_effort])
-        if resume_session_id is not None:
-            resume_id = _clean_optional_resume_session_id(resume_session_id)
-            if not resume_id:
-                raise ValueError("resume_session_id must be a non-empty string")
-            found = False
-            for row in _list_resume_candidates_for_cwd(
-                cwd3, agent_backend=backend_name, limit=1000
-            ):
-                if row.get("session_id") == resume_id:
-                    found = True
-                    resume_row = row
-                    break
-            if not found:
-                raise ValueError(f"resume session not found for cwd: {resume_id}")
-            if backend_name == "codex":
-                codex_args.extend(["resume", resume_id])
-            else:
-                resume_target = (
-                    str(resume_row.get("log_path") or "").strip()
-                    if isinstance(resume_row, dict)
-                    else ""
-                )
-                codex_args.extend(["--session", resume_target or resume_id])
-        codex_args.extend(args or [])
-        argv.extend(codex_args)
-
-        env = dict(os.environ)
-        if _DOTENV.exists():
-            for k, v in _load_env_file(_DOTENV).items():
-                env.setdefault(k, v)
-        env["CODEX_WEB_OWNER"] = "web"
-        env["CODEX_WEB_AGENT_BACKEND"] = backend_name
-        if backend_name == "codex":
-            env.setdefault("CODEX_HOME", str(CODEX_HOME))
-            env.pop("PI_HOME", None)
-        else:
-            env.setdefault("PI_HOME", str(PI_HOME))
-            env.pop("CODEX_HOME", None)
-        env.pop("CODEX_WEB_MODEL_PROVIDER", None)
-        env.pop("CODEX_WEB_PREFERRED_AUTH_METHOD", None)
-        env.pop("CODEX_WEB_MODEL", None)
-        env.pop("CODEX_WEB_REASONING_EFFORT", None)
-        env.pop("CODEX_WEB_SERVICE_TIER", None)
-        env.pop("CODEX_WEB_TRANSPORT", None)
-        env.pop("CODEX_WEB_TMUX_SESSION", None)
-        env.pop("CODEX_WEB_TMUX_WINDOW", None)
-        env.pop("CODEX_WEB_SPAWN_NONCE", None)
-        env.pop("CODEX_WEB_RESUME_SESSION_ID", None)
-        env.pop("CODEX_WEB_RESUME_LOG_PATH", None)
-        spawn_nonce = secrets.token_hex(8)
-        env["CODEX_WEB_SPAWN_NONCE"] = spawn_nonce
-        if model_provider is not None:
-            env["CODEX_WEB_MODEL_PROVIDER"] = model_provider
-        if preferred_auth_method is not None:
-            env["CODEX_WEB_PREFERRED_AUTH_METHOD"] = preferred_auth_method
-        if model is not None:
-            env["CODEX_WEB_MODEL"] = model
-        if reasoning_effort is not None:
-            env["CODEX_WEB_REASONING_EFFORT"] = reasoning_effort
-        if service_tier is not None:
-            env["CODEX_WEB_SERVICE_TIER"] = service_tier
-        if resume_session_id is not None:
-            env["CODEX_WEB_RESUME_SESSION_ID"] = resume_session_id
-        if create_in_tmux:
-            tmux_bin = shutil.which("tmux")
-            if tmux_bin is None:
-                raise ValueError("tmux is unavailable on this host")
-            tmux_window = _safe_filename(
-                f"{Path(spawn_cwd).name or 'session'}-{spawn_nonce[:6]}",
-                default="session",
-            )
-            env["CODEX_WEB_TRANSPORT"] = "tmux"
-            env["CODEX_WEB_TMUX_SESSION"] = TMUX_SESSION_NAME
-            env["CODEX_WEB_TMUX_WINDOW"] = tmux_window
-            env["CODEX_WEB_SPAWN_NONCE"] = spawn_nonce
-            short_app_dir = _ensure_tmux_short_app_dir()
-            inline_env = {
-                "CODEX_WEB_OWNER": "web",
-                "CODEX_WEB_AGENT_BACKEND": backend_name,
-                "CODEX_WEB_TRANSPORT": "tmux",
-                "CODEX_WEB_TMUX_SESSION": TMUX_SESSION_NAME,
-                "CODEX_WEB_TMUX_WINDOW": tmux_window,
-                "CODEX_WEB_SPAWN_NONCE": spawn_nonce,
-                "CODOXEAR_APP_DIR": short_app_dir,
-            }
-            if backend_name == "codex":
-                inline_env["CODEX_HOME"] = str(env["CODEX_HOME"])
-            else:
-                inline_env["PI_HOME"] = str(env["PI_HOME"])
-            if resume_session_id is not None:
-                inline_env["CODEX_WEB_RESUME_SESSION_ID"] = resume_session_id
-            if model_provider is not None:
-                inline_env["CODEX_WEB_MODEL_PROVIDER"] = model_provider
-            if preferred_auth_method is not None:
-                inline_env["CODEX_WEB_PREFERRED_AUTH_METHOD"] = preferred_auth_method
-            if model is not None:
-                inline_env["CODEX_WEB_MODEL"] = model
-            if reasoning_effort is not None:
-                inline_env["CODEX_WEB_REASONING_EFFORT"] = reasoning_effort
-            if service_tier is not None:
-                inline_env["CODEX_WEB_SERVICE_TIER"] = service_tier
-            codex_bin = _clean_optional_text(os.environ.get("CODEX_BIN"))
-            if codex_bin is not None:
-                inline_env["CODEX_BIN"] = codex_bin
-            repo_root = Path(__file__).resolve().parent.parent
-            inline_argv = [
-                "env",
-                *[f"{key}={value}" for key, value in inline_env.items()],
-                *argv,
-            ]
-            shell_cmd = (
-                f"cd {shlex.quote(str(repo_root))} && exec {shlex.join(inline_argv)}"
-            )
-            has_session = subprocess.run(
-                [tmux_bin, "has-session", "-t", TMUX_SESSION_NAME],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                text=True,
-                check=False,
-            )
-            if has_session.returncode == 0:
-                tmux_argv = [
-                    tmux_bin,
-                    "new-window",
-                    "-d",
-                    "-P",
-                    "-F",
-                    "#{pane_id}",
-                    "-t",
-                    f"{TMUX_SESSION_NAME}:",
-                    "-n",
-                    tmux_window,
-                    shell_cmd,
-                ]
-            else:
-                tmux_argv = [
-                    tmux_bin,
-                    "new-session",
-                    "-d",
-                    "-P",
-                    "-F",
-                    "#{pane_id}",
-                    "-s",
-                    TMUX_SESSION_NAME,
-                    "-n",
-                    tmux_window,
-                    shell_cmd,
-                ]
-            tmux_proc = subprocess.run(
-                tmux_argv, capture_output=True, text=True, env=env, check=False
-            )
-            if tmux_proc.returncode != 0:
-                detail = (
-                    tmux_proc.stderr
-                    or tmux_proc.stdout
-                    or f"exit status {tmux_proc.returncode}"
-                ).strip()
-                raise RuntimeError(f"tmux launch failed: {detail}")
-            meta = _wait_for_spawned_broker_meta(spawn_nonce)
-            payload = _spawn_result_from_meta(meta)
-            return {
-                **payload,
-                "tmux_session": TMUX_SESSION_NAME,
-                "tmux_window": tmux_window,
-            }
-
-        try:
-            proc = subprocess.Popen(
-                argv,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
-                env=env,
-                start_new_session=True,
-            )
-        except Exception as e:
-            raise RuntimeError(f"spawn failed: {e}") from e
-
-        _wait_or_raise(proc, label="broker", timeout_s=1.5)
-        if proc.stderr is not None:
-            threading.Thread(
-                target=_drain_stream, args=(proc.stderr,), daemon=True
-            ).start()
-
-        # Prevent zombies when the broker exits.
-        threading.Thread(target=proc.wait, daemon=True).start()
-        meta = _wait_for_spawned_broker_meta(spawn_nonce)
-        payload = _spawn_result_from_meta(meta)
-        _publish_sessions_invalidate(reason="session_created")
-        return payload
 
     def delete_session(self, session_id: str) -> bool:
         runtime_id = self._runtime_session_id_for_identifier(session_id)
@@ -9165,231 +4098,46 @@ class SessionManager:
         return ok
 
     def send(self, session_id: str, text: str) -> dict[str, Any]:
-        historical_row = _historical_session_row(session_id)
-        if historical_row is None and self._runtime_session_id_for_identifier(session_id) is None:
-            listed_row = _listed_session_row(self, session_id)
-            if isinstance(listed_row, dict) and listed_row.get("historical"):
-                historical_row = listed_row
-        if historical_row is not None:
-            backend = normalize_agent_backend(
-                historical_row.get("agent_backend", historical_row.get("backend")),
-                default="codex",
-            )
-            if backend != "pi":
-                raise KeyError("unknown session")
-            cwd = _clean_optional_text(historical_row.get("cwd"))
-            resume_session_id = _clean_optional_text(
-                historical_row.get("resume_session_id")
-            )
-            if cwd is None or resume_session_id is None:
-                raise ValueError("historical session is missing resume metadata")
-            spawn_res = self.spawn_web_session(
-                cwd=cwd,
-                backend="pi",
-                resume_session_id=resume_session_id,
-            )
-            self._discover_existing(force=True, skip_invalid_sidecars=True)
-            live_runtime_id = _clean_optional_text(spawn_res.get("runtime_id"))
-            live_session_id = _clean_optional_text(spawn_res.get("session_id"))
-            if live_runtime_id is None or live_session_id is None:
-                raise RuntimeError("spawned session did not return session identities")
-            if self._runtime_session_id_for_identifier(live_runtime_id) is None:
-                raise RuntimeError("spawned session is not yet discoverable")
-            resp = self.send(live_runtime_id, text)
-            out = dict(resp)
-            out["session_id"] = live_session_id
-            out["runtime_id"] = live_runtime_id
-            out["backend"] = "pi"
-            return out
-
-        runtime_id = self._runtime_session_id_for_identifier(session_id)
-        if runtime_id is None:
-            raise KeyError("unknown session")
-        with self._lock:
-            s = self._sessions.get(runtime_id)
-            if not s:
-                raise KeyError("unknown session")
-            durable_session_id = self._durable_session_id_for_session(s)
-        transport_state, transport_error = self._probe_bridge_transport(runtime_id)
-        if transport_state == "dead":
-            with self._lock:
-                self._sessions.pop(runtime_id, None)
-            self._clear_deleted_session_state(runtime_id)
-            _unlink_quiet(s.sock_path)
-            _unlink_quiet(s.sock_path.with_suffix(".json"))
-            raise KeyError("unknown session")
-        request = self._enqueue_outbound_request(runtime_id, text)
-        return {
-            "ok": True,
-            "accepted": True,
-            "request_id": request.request_id,
-            "delivery_state": request.state,
-            "session_id": durable_session_id,
-            "runtime_id": runtime_id,
-            "backend": s.backend,
-            "transport_state": transport_state,
-            "transport_error": transport_error,
-        }
+        return _session_control.send(self, session_id, text)
 
     def enqueue(self, session_id: str, text: str) -> dict[str, Any]:
-        historical_row = _historical_session_row(session_id)
-        if historical_row is None and self._runtime_session_id_for_identifier(session_id) is None:
-            listed_row = _listed_session_row(self, session_id)
-            if isinstance(listed_row, dict) and listed_row.get("historical"):
-                historical_row = listed_row
-        if historical_row is not None:
-            backend = normalize_agent_backend(
-                historical_row.get("agent_backend", historical_row.get("backend")),
-                default="codex",
-            )
-            if backend != "pi":
-                raise KeyError("unknown session")
-            cwd = _clean_optional_text(historical_row.get("cwd"))
-            resume_session_id = _clean_optional_text(
-                historical_row.get("resume_session_id")
-            )
-            if cwd is None or resume_session_id is None:
-                raise ValueError("historical session is missing resume metadata")
-            spawn_res = self.spawn_web_session(
-                cwd=cwd,
-                backend="pi",
-                resume_session_id=resume_session_id,
-            )
-            self._discover_existing(force=True, skip_invalid_sidecars=True)
-            live_runtime_id = _clean_optional_text(spawn_res.get("runtime_id"))
-            live_session_id = _clean_optional_text(spawn_res.get("session_id"))
-            if live_runtime_id is None or live_session_id is None:
-                raise RuntimeError("spawned session did not return session identities")
-            if self._runtime_session_id_for_identifier(live_runtime_id) is None:
-                raise RuntimeError("spawned session is not yet discoverable")
-            resp = self.enqueue(live_runtime_id, text)
-            out = dict(resp)
-            out["session_id"] = live_session_id
-            out["runtime_id"] = live_runtime_id
-            out["backend"] = "pi"
-            return out
-
-        # Persist queued messages on the server so they survive broker restarts.
-        return self._queue_enqueue_local(session_id, text)
+        return _session_control.enqueue(self, session_id, text)
 
     def queue_list(self, session_id: str) -> list[str]:
-        runtime_id = self._runtime_session_id_for_identifier(session_id)
-        if runtime_id is None:
-            raise KeyError("unknown session")
-        return self._queue_list_local(runtime_id)
+        return _session_control.queue_list(self, session_id)
 
     def queue_delete(self, session_id: str, index: int) -> dict[str, Any]:
-        return self._queue_delete_local(session_id, int(index))
+        return _session_control.queue_delete(self, session_id, int(index))
 
     def queue_update(self, session_id: str, index: int, text: str) -> dict[str, Any]:
-        return self._queue_update_local(session_id, int(index), text)
+        return _session_control.queue_update(self, session_id, int(index), text)
 
     def get_state(self, session_id: str) -> dict[str, Any]:
-        runtime_id = self._runtime_session_id_for_identifier(session_id)
-        if runtime_id is None:
-            raise KeyError("unknown session")
-        with self._lock:
-            s = self._sessions.get(runtime_id)
-            if not s:
-                raise KeyError("unknown session")
-            sock = s.sock_path
-        cached_state = {
-            "busy": bool(s.busy),
-            "queue_len": int(s.queue_len),
-            "token": s.token,
-        }
-        try:
-            resp = self._sock_call(sock, {"cmd": "state"}, timeout_s=1.5)
-            _validated_session_state(resp)
-        except Exception:
-            if not _pid_alive(s.broker_pid) and not _pid_alive(s.codex_pid):
-                with self._lock:
-                    self._sessions.pop(runtime_id, None)
-                self._clear_deleted_session_state(runtime_id)
-                _unlink_quiet(sock)
-                _unlink_quiet(sock.with_suffix(".json"))
-                raise KeyError("unknown session")
-            # Broker is alive but socket temporarily unavailable (e.g. during
-            # session switch).  Return a degraded state instead of crashing.
-            return cached_state
-        with self._lock:
-            s2 = self._sessions.get(runtime_id)
-            if s2:
-                s2.busy = _state_busy_value(resp)
-                s2.queue_len = _state_queue_len_value(resp)
-                if "token" in resp:
-                    tok = resp.get("token")
-                    if isinstance(tok, dict):
-                        s2.token = tok
-                return resp
-        return cached_state
+        return _session_transport.get_state(self, session_id)
 
     def get_ui_state(self, session_id: str) -> dict[str, Any]:
-        return _pi_ui_bridge.get_ui_state(self, session_id)
+        return _pi_ui_bridge.get_ui_state(RUNTIME, self, session_id)
 
     def get_session_commands(self, session_id: str) -> dict[str, Any]:
-        return _pi_ui_bridge.get_session_commands(self, session_id)
+        return _pi_ui_bridge.get_session_commands(RUNTIME, self, session_id)
 
     def submit_ui_response(
         self, session_id: str, payload: dict[str, Any]
     ) -> dict[str, Any]:
-        return _pi_ui_bridge.submit_ui_response(self, session_id, payload)
+        return _pi_ui_bridge.submit_ui_response(RUNTIME, self, session_id, payload)
 
     def get_tail(self, session_id: str) -> str:
-        runtime_id = self._runtime_session_id_for_identifier(session_id)
-        if runtime_id is None:
-            raise KeyError("unknown session")
-        with self._lock:
-            s = self._sessions.get(runtime_id)
-            if not s:
-                raise KeyError("unknown session")
-            sock = s.sock_path
-        try:
-            resp = self._sock_call(sock, {"cmd": "tail"}, timeout_s=1.5)
-        except Exception:
-            if not _pid_alive(s.broker_pid) and not _pid_alive(s.codex_pid):
-                with self._lock:
-                    self._sessions.pop(runtime_id, None)
-                _unlink_quiet(sock)
-                _unlink_quiet(sock.with_suffix(".json"))
-                raise KeyError("unknown session")
-            raise
-        if "tail" not in resp:
-            raise ValueError("invalid broker tail response")
-        tail = resp.get("tail")
-        if not isinstance(tail, str):
-            raise ValueError("invalid broker tail response")
-        return tail
+        return _session_transport.get_tail(self, session_id)
 
     def inject_keys(self, session_id: str, seq: str) -> dict[str, Any]:
-        runtime_id = self._runtime_session_id_for_identifier(session_id)
-        if runtime_id is None:
-            raise KeyError("unknown session")
-        with self._lock:
-            s = self._sessions.get(runtime_id)
-            if not s:
-                raise KeyError("unknown session")
-            sock = s.sock_path
-        try:
-            resp = self._sock_call(sock, {"cmd": "keys", "seq": seq}, timeout_s=2.0)
-        except Exception:
-            if not _pid_alive(s.broker_pid) and not _pid_alive(s.codex_pid):
-                with self._lock:
-                    self._sessions.pop(runtime_id, None)
-                _unlink_quiet(sock)
-                _unlink_quiet(sock.with_suffix(".json"))
-                raise KeyError("unknown session")
-            raise
-        err = resp.get("error")
-        if isinstance(err, str) and err:
-            raise ValueError(err)
-        return resp
+        return _session_transport.inject_keys(self, session_id, seq)
 
     def mark_turn_complete(self, session_id: str, payload: dict[str, Any]) -> None:
         return
 
 
 MANAGER = SessionManager()
+RUNTIME = MANAGER._runtime
 
 
 def _static_asset_version(static_dir: Path = STATIC_DIR) -> str:
@@ -9653,7 +4401,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 _http_session_read_routes,
                 _http_file_routes,
             ):
-                if route_module.handle_get(self, path, u):
+                if route_module.handle_get(RUNTIME, self, path, u):
                     return
             self.send_error(404)
         except Exception as e:
@@ -9686,7 +4434,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 _http_session_write_routes,
                 _http_file_routes,
             ):
-                if route_module.handle_post(self, path, u):
+                if route_module.handle_post(RUNTIME, self, path, u):
                     return
             self.send_error(404)
         except KeyError:

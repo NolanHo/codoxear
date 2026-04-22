@@ -3,25 +3,11 @@ from __future__ import annotations
 import time
 from pathlib import Path
 from typing import Any
-
-_SERVER = None
-
-
-def bind_server_runtime(runtime: Any) -> None:
-    global _SERVER
-    _SERVER = runtime
+from ..runtime import ServerRuntime
 
 
-
-def _sv() -> Any:
-    if _SERVER is None:
-        raise RuntimeError("server runtime not bound")
-    return _SERVER
-
-
-
-def get_ui_state(manager: Any, session_id: str) -> dict[str, Any]:
-    sv = _sv()
+def get_ui_state(runtime: ServerRuntime, manager: Any, session_id: str) -> dict[str, Any]:
+    sv = runtime
     runtime_id = manager._runtime_session_id_for_identifier(session_id)
     if runtime_id is None:
         raise KeyError("unknown session")
@@ -55,8 +41,8 @@ def get_ui_state(manager: Any, session_id: str) -> dict[str, Any]:
 
 
 
-def get_session_commands(manager: Any, session_id: str) -> dict[str, Any]:
-    sv = _sv()
+def get_session_commands(runtime: ServerRuntime, manager: Any, session_id: str) -> dict[str, Any]:
+    sv = runtime
     runtime_id = manager._runtime_session_id_for_identifier(session_id)
     if runtime_id is None:
         raise KeyError("unknown session")
@@ -110,8 +96,8 @@ def get_session_commands(manager: Any, session_id: str) -> dict[str, Any]:
 
 
 
-def submit_ui_response(manager: Any, session_id: str, payload: dict[str, Any]) -> dict[str, Any]:
-    sv = _sv()
+def submit_ui_response(runtime: ServerRuntime, manager: Any, session_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    sv = runtime
     runtime_id = manager._runtime_session_id_for_identifier(session_id)
     if runtime_id is None:
         raise KeyError("unknown session")
