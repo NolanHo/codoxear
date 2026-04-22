@@ -44,7 +44,11 @@ class TestPiHandoffMessage(unittest.TestCase):
             text,
         )
         self.assertIn(
-            "Use the archived history file only when you need details that were intentionally dropped from the extracted handoff JSONL.",
+            "Do not start with the archived history file: it is large, and the extracted handoff JSONL already contains the effective handoff signal.",
+            text,
+        )
+        self.assertIn(
+            "Open the archived history file only when you explicitly need raw-data operations that require original records.",
             text,
         )
         self.assertIn(
@@ -52,7 +56,15 @@ class TestPiHandoffMessage(unittest.TestCase):
             text,
         )
         self.assertIn(
+            "Start by reading the beginning and the end of the extracted handoff JSONL to establish current state, then scan the middle only if needed.",
+            text,
+        )
+        self.assertIn(
             "Use that archived context to prepare to take over the work without asking the user to restate the whole session.",
+            text,
+        )
+        self.assertIn(
+            "Reply in the language used by the user's next message in this session.",
             text,
         )
         self.assertIn(

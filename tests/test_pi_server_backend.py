@@ -400,6 +400,18 @@ class TestPiBackendRouting(unittest.TestCase):
                 new_text,
             )
             self.assertIn(
+                "Do not start with the archived history file: it is large, and the extracted handoff JSONL already contains the effective handoff signal.",
+                new_text,
+            )
+            self.assertIn(
+                "Start by reading the beginning and the end of the extracted handoff JSONL to establish current state, then scan the middle only if needed.",
+                new_text,
+            )
+            self.assertIn(
+                "Reply in the language used by the user's next message in this session.",
+                new_text,
+            )
+            self.assertIn(
                 "Use that archived context to prepare to take over the work without asking the user to restate the whole session.",
                 new_text,
             )

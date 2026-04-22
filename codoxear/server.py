@@ -3472,7 +3472,8 @@ def _pi_handoff_message_text(
             [
                 f"- Extracted handoff JSONL: {signal_path}",
                 "- Read the extracted handoff JSONL carefully before you respond or take action.",
-                "- Use the archived history file only when you need details that were intentionally dropped from the extracted handoff JSONL.",
+                "- Do not start with the archived history file: it is large, and the extracted handoff JSONL already contains the effective handoff signal.",
+                "- Open the archived history file only when you explicitly need raw-data operations that require original records.",
             ]
         )
     else:
@@ -3482,7 +3483,9 @@ def _pi_handoff_message_text(
     lines.extend(
         [
             "- Extract the current goal, constraints, prior decisions, files changed, validation already run, and any remaining open work.",
+            "- Start by reading the beginning and the end of the extracted handoff JSONL to establish current state, then scan the middle only if needed.",
             "- Use that archived context to prepare to take over the work without asking the user to restate the whole session.",
+            "- Reply in the language used by the user's next message in this session.",
             "- After reviewing the history, continue from the latest confirmed state and be ready to proceed.",
         ]
     )
