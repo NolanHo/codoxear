@@ -37,6 +37,7 @@ const MAIN_TIMELINE_KINDS = new Set([
 const MACHINE_TRACE_KINDS = new Set(["reasoning", "tool", "tool_result", "todo_snapshot"]);
 const PI_EVENT_COMPACT_VARIANTS = {
   empty_output: "empty_output",
+  retry_error: "retry_error",
   compaction: "compaction",
 } as const;
 const CHAT_GROUPABLE_KINDS = new Set(["user", "assistant", "ask_user"]);
@@ -553,6 +554,9 @@ function piEventCompactVariant(event: MessageEvent): (typeof PI_EVENT_COMPACT_VA
   }
   if (summary.includes("without assistant output") || summary.includes("assistant returned empty message")) {
     return PI_EVENT_COMPACT_VARIANTS.empty_output;
+  }
+  if (summary.includes("retry") || summary.includes("rate limit") || summary.includes("429")) {
+    return PI_EVENT_COMPACT_VARIANTS.retry_error;
   }
   if (summary.includes("compaction") || summary.includes("compacting")) {
     return PI_EVENT_COMPACT_VARIANTS.compaction;
@@ -1180,7 +1184,7 @@ function CompactMachineTrace({ events, options, isBusy }: { events: MessageEvent
                 isSelected && "isSelected",
                 isRunning && "isRunning",
                 event.is_error && "isError",
-                piEventVariant === PI_EVENT_COMPACT_VARIANTS.empty_output && "isAlert",
+                (piEventVariant === PI_EVENT_COMPACT_VARIANTS.empty_output || piEventVariant === PI_EVENT_COMPACT_VARIANTS.retry_error) && "isAlert",
                 piEventVariant === PI_EVENT_COMPACT_VARIANTS.compaction && "isCompaction",
               )}
               aria-expanded={isSelected ? "true" : "false"}
@@ -1213,7 +1217,7 @@ function CompactMachineTrace({ events, options, isBusy }: { events: MessageEvent
             "machineTraceDetail",
             selectedKind,
             selectedEvent.is_error && "isError",
-            selectedVariant === PI_EVENT_COMPACT_VARIANTS.empty_output && "isAlert",
+            (selectedVariant === PI_EVENT_COMPACT_VARIANTS.empty_output || selectedVariant === PI_EVENT_COMPACT_VARIANTS.retry_error) && "isAlert",
             selectedVariant === PI_EVENT_COMPACT_VARIANTS.compaction && "isCompaction",
           )}
           data-testid="machine-trace-detail"

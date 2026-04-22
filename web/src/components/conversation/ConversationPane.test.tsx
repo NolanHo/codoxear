@@ -300,6 +300,58 @@ describe("ConversationPane", () => {
     expect(root.textContent).toContain("upstream returned zero visible tokens");
   });
 
+  it("renders retry pi events as highlighted alert trace icons with expandable detail", () => {
+    const sessionsStore = createStaticStore(
+      { items: [], activeSessionId: "sess-retry", loading: false, newSessionDefaults: null },
+      { refresh: () => Promise.resolve(), select: () => undefined },
+    );
+    const messagesStore = createStaticStore(
+      {
+        bySessionId: {
+          "sess-retry": [
+            { role: "assistant", text: "before", ts: 100 },
+            {
+              type: "pi_event",
+              summary: "Retrying request (1/3)",
+              text: '429 "Rate limit exceeded"',
+              details: {
+                errorMessage: '429 "Rate limit exceeded"',
+                attempt: 1,
+                maxAttempts: 3,
+              },
+              is_error: true,
+              ts: 110,
+            },
+            { role: "assistant", text: "after", ts: 120 },
+          ],
+        },
+        offsetsBySessionId: { "sess-retry": 3 },
+        loading: false,
+      },
+      { loadInitial: () => Promise.resolve(), poll: () => Promise.resolve() },
+    );
+
+    root = document.createElement("div");
+    document.body.appendChild(root);
+    render(
+      <AppProviders sessionsStore={sessionsStore as any} messagesStore={messagesStore as any}>
+        <ConversationPane />
+      </AppProviders>,
+      root,
+    );
+
+    const token = root.querySelector(".machineTraceToken.pi_event.isAlert[data-variant='retry_error']") as HTMLButtonElement | null;
+    expect(token).not.toBeNull();
+
+    act(() => {
+      token?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+
+    expect(root.textContent).toContain("Retrying request (1/3)");
+    expect(root.textContent).toContain('429 "Rate limit exceeded"');
+    expect(root.textContent).toContain("maxAttempts");
+  });
+
   it("renders compaction pi events as highlighted trace icons with expandable detail", () => {
     const sessionsStore = createStaticStore(
       { items: [], activeSessionId: "sess-compaction", loading: false, newSessionDefaults: null },
