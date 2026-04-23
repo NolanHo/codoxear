@@ -12,7 +12,6 @@ import io
 import json
 import logging
 import math
-import mimetypes
 import os
 import re
 import secrets
@@ -43,6 +42,7 @@ from .agent_backend import (
     normalize_agent_backend,
 )
 from .events.hub import EventHub
+from .http import static_assets as _http_static_assets
 from .http.routes import assets as _http_assets_routes
 from .http.routes import auth as _http_auth_routes
 from .http.routes import events as _http_events_routes
@@ -73,6 +73,7 @@ from .sessions import pi_session_files as _pi_session_files
 from .sessions import resume_candidates as _resume_candidates
 from .sessions import session_catalog as _session_catalog
 from .sessions import session_control as _session_control
+from .sessions import session_display as _session_display
 from .sessions import sidebar_state as _sidebar_state_module
 from .sessions import transport as _session_transport
 from .sessions.sidebar_state import SidebarStateFacade
@@ -2325,222 +2326,84 @@ class BridgeOutboundRequest:
 
 
 def _session_supports_live_pi_ui(session: Session) -> bool:
-    if session.backend != "pi":
-        return False
-    transport = (session.transport or "").strip().lower()
-    if transport != "pi-rpc":
-        return False
-    if session.supports_live_ui is not True:
-        return False
-    if (
-        not isinstance(session.ui_protocol_version, int)
-        or session.ui_protocol_version < 1
-    ):
-        return False
-    return True
+    return _session_display.session_supports_live_pi_ui(session)
 
 
 def _is_attention_worthy_session_event(event: dict[str, Any]) -> bool:
-    if not isinstance(event, dict) or event.get("display") is False:
-        return False
-    event_type = str(event.get("type") or "").strip()
-    return bool(
-        event.get("role") in {"user", "assistant"}
-        or bool(event.get("is_error"))
-        or event_type == "ask_user"
-    )
+    return _session_display.is_attention_worthy_session_event(event)
 
 
 
 def _attention_updated_ts_from_events(events: list[dict[str, Any]]) -> float | None:
-    latest_ts: float | None = None
-    for event in events:
-        if not _is_attention_worthy_session_event(event):
-            continue
-        ts = event.get("ts")
-        if not isinstance(ts, (int, float)) or not math.isfinite(float(ts)):
-            continue
-        latest_ts = float(ts) if latest_ts is None else max(latest_ts, float(ts))
-    return latest_ts
+    return _session_display.attention_updated_ts_from_events(events)
 
 
 
 def _last_attention_ts_from_pi_tail(
     session_path: Path | None, *, max_scan_bytes: int = 8 * 1024 * 1024
 ) -> float | None:
-    if session_path is None or not session_path.exists():
-        return None
-    try:
-        events, _token_update, _off, _scan_bytes, _complete, _diag = (
-            _pi_messages.read_pi_message_tail_snapshot(
-                session_path,
-                min_events=80,
-                initial_scan_bytes=256 * 1024,
-                max_scan_bytes=max_scan_bytes,
-            )
-        )
-    except Exception:
-        return None
-    if any(_is_attention_worthy_session_event(event) for event in events):
-        activity_ts = _session_file_activity_ts(session_path)
-        if activity_ts is not None:
-            return activity_ts
-    return _attention_updated_ts_from_events(events)
+    return _session_display.last_attention_ts_from_pi_tail(
+        RUNTIME,
+        session_path,
+        max_scan_bytes=max_scan_bytes,
+    )
 
 
 
 def _display_updated_ts(s: Session) -> float:
-    return (
-        float(s.last_chat_ts)
-        if isinstance(s.last_chat_ts, (int, float))
-        else float(s.start_ts)
-    )
+    return _session_display.display_updated_ts(s)
 
 
 def _session_row_dedupe_key(row: dict[str, Any]) -> str:
-    if row.get("historical"):
-        backend = normalize_agent_backend(
-            row.get("agent_backend"), default=str(row.get("backend", "codex"))
-        )
-        return f"historical:{backend}:{str(row.get('session_id', '')).strip()}"
-    thread_id = str(row.get("thread_id", "")).strip()
-    if thread_id:
-        backend = normalize_agent_backend(
-            row.get("agent_backend"), default=str(row.get("backend", "codex"))
-        )
-        return f"thread:{backend}:{thread_id}"
-    return f"session:{str(row.get('session_id', '')).strip()}"
+    return _session_display.session_row_dedupe_key(RUNTIME, row)
 
 
 def _display_source_path(s: Session) -> str | None:
-    if s.backend == "pi":
-        return str(s.session_path) if s.session_path is not None else None
-    return str(s.log_path) if s.log_path is not None else None
+    return _session_display.display_source_path(s)
 
 
 def _durable_session_id_for_live_session(s: Session) -> str:
-    return _clean_optional_text(s.thread_id) or _clean_optional_text(s.session_id) or ""
+    return _session_display.durable_session_id_for_live_session(RUNTIME, s)
 
 
 def _display_pi_busy(s: Session, *, broker_busy: bool) -> bool:
-    if not broker_busy:
-        activity_ts = _session_file_activity_ts(s.session_path)
-        if activity_ts is not None:
-            s.pi_idle_activity_ts = activity_ts
-        s.pi_busy_activity_floor = None
-        return False
-    session_path = s.session_path
-    if session_path is None or (not session_path.exists()):
-        return True
-    activity_ts = _session_file_activity_ts(session_path)
-    if activity_ts is None:
-        return True
-    floor = s.pi_busy_activity_floor
-    if isinstance(floor, (int, float)) and activity_ts <= float(floor):
-        return True
-    idle_marker = s.pi_idle_activity_ts
-    if isinstance(idle_marker, (int, float)) and activity_ts <= float(idle_marker):
-        return False
-    idle = _pi_messages.is_pi_session_idle(session_path)
-    if idle is True:
-        s.pi_idle_activity_ts = activity_ts
-        s.pi_busy_activity_floor = None
-        return False
-    if idle is False:
-        s.pi_idle_activity_ts = None
-    return True
+    return _session_display.display_pi_busy(RUNTIME, s, broker_busy=broker_busy)
 
 
 def _validated_session_state(state: dict[str, Any] | Any) -> dict[str, Any]:
-    if not isinstance(state, dict):
-        raise ValueError("invalid broker state response")
-    _state_busy_value(state)
-    _state_queue_len_value(state)
-    return state
+    return _session_display.validated_session_state(state)
 
 
 def _state_busy_value(state: dict[str, Any]) -> bool:
-    busy_raw = state.get("busy")
-    if not isinstance(busy_raw, bool):
-        raise ValueError("invalid busy from broker state response")
-    return busy_raw
+    return _session_display.state_busy_value(state)
 
 
 def _state_queue_len_value(state: dict[str, Any]) -> int:
-    queue_len_raw = state.get("queue_len")
-    if type(queue_len_raw) is not int or int(queue_len_raw) < 0:
-        raise ValueError("invalid queue_len from broker state response")
-    return int(queue_len_raw)
+    return _session_display.state_queue_len_value(state)
 
 
 def _display_session_busy(
     manager: "SessionManager", session_id: str, s: Session, state: dict[str, Any]
 ) -> tuple[bool, bool]:
-    broker_busy = _state_busy_value(state)
-    busy = (
-        _display_pi_busy(s, broker_busy=broker_busy)
-        if s.backend == "pi"
-        else broker_busy
+    return _session_display.display_session_busy(
+        RUNTIME,
+        manager,
+        session_id,
+        s,
+        state,
     )
-    if s.backend != "pi" and s.log_path is not None and s.log_path.exists():
-        idle_val = manager.idle_from_log(session_id)
-        busy = broker_busy or (not bool(idle_val))
-    return bool(busy), broker_busy
 
 
 def _resolved_session_run_settings(
     s: Session,
 ) -> tuple[str | None, str | None, str | None, str | None]:
-    model_provider = s.model_provider
-    preferred_auth_method = s.preferred_auth_method
-    model = s.model
-    reasoning_effort = s.reasoning_effort
-    if (
-        (model_provider is None or model is None or reasoning_effort is None)
-        and s.backend == "pi"
-        and s.session_path is not None
-        and s.session_path.exists()
-    ):
-        pi_provider, pi_model, pi_effort = _read_pi_run_settings(s.session_path)
-        if model_provider is None:
-            model_provider = pi_provider
-        if model is None:
-            model = pi_model
-        if reasoning_effort is None:
-            reasoning_effort = pi_effort
-    if (
-        (model_provider is None or model is None or reasoning_effort is None)
-        and s.log_path is not None
-        and s.log_path.exists()
-    ):
-        log_provider, log_model, log_effort = _read_run_settings_from_log(
-            s.log_path, agent_backend=s.agent_backend
-        )
-        if model_provider is None:
-            model_provider = log_provider
-        if model is None:
-            model = log_model
-        if reasoning_effort is None:
-            reasoning_effort = log_effort
-    return model_provider, preferred_auth_method, model, reasoning_effort
+    return _session_display.resolved_session_run_settings(RUNTIME, s)
 
 
 def _resolved_session_token(
     s: Session, token: dict[str, Any] | None = None
 ) -> dict[str, Any] | None:
-    if isinstance(token, dict):
-        return token
-    if isinstance(s.token, dict):
-        return s.token
-    source_path: Path | None = None
-    if s.backend == "pi" and s.session_path is not None and s.session_path.exists():
-        source_path = s.session_path
-    elif s.log_path is not None and s.log_path.exists():
-        source_path = s.log_path
-    if source_path is None:
-        return None
-    token_update = _rollout_log._find_latest_token_update(source_path)
-    return token_update if isinstance(token_update, dict) else None
+    return _session_display.resolved_session_token(RUNTIME, s, token=token)
 
 
 def _session_context_usage_payload(
@@ -3585,120 +3448,27 @@ RUNTIME = MANAGER._runtime
 
 
 def _static_asset_version(static_dir: Path = STATIC_DIR) -> str:
-    base = static_dir.resolve()
-    digest = hashlib.sha256()
-    for rel in STATIC_ASSET_VERSION_FILES:
-        path = (base / rel).resolve()
-        if not str(path).startswith(str(base)):
-            raise ValueError(f"static asset escaped static dir: {path}")
-        if not path.is_file():
-            continue
-        digest.update(rel.encode("utf-8"))
-        digest.update(b"\0")
-        digest.update(path.read_bytes())
-        digest.update(b"\0")
-    return digest.hexdigest()[:12]
+    return _http_static_assets.static_asset_version(RUNTIME, static_dir=static_dir)
 
 
 def _read_static_bytes(path: Path) -> bytes:
-    data = path.read_bytes()
-    if path.suffix != ".html":
-        return data
-    replacements = {
-        STATIC_ASSET_VERSION_PLACEHOLDER.encode("ascii"): _static_asset_version(
-            path.parent
-        ).encode("ascii"),
-        STATIC_ATTACH_MAX_BYTES_PLACEHOLDER.encode("ascii"): str(
-            ATTACH_UPLOAD_MAX_BYTES
-        ).encode("ascii"),
-    }
-    for placeholder, value in replacements.items():
-        if placeholder in data:
-            data = data.replace(placeholder, value)
-    return data
+    return _http_static_assets.read_static_bytes(RUNTIME, path)
 
 
 def _is_path_within(root: Path, candidate: Path) -> bool:
-    try:
-        candidate.relative_to(root)
-        return True
-    except ValueError:
-        return False
+    return _http_static_assets.is_path_within(root, candidate)
 
 
 def _candidate_web_dist_dirs() -> list[Path]:
-    out: list[Path] = []
-    for candidate in (WEB_DIST_DIR, PACKAGED_WEB_DIST_DIR):
-        if candidate not in out:
-            out.append(candidate)
-    return out
+    return _http_static_assets.candidate_web_dist_dirs(RUNTIME)
 
 
 def _served_web_dist_dir() -> Path | None:
-    for candidate in _candidate_web_dist_dirs():
-        if (candidate / "index.html").is_file():
-            return candidate
-    return None
-
-
-def _vite_manifest_path(dist_dir: Path | None = None) -> Path:
-    if dist_dir is None:
-        for candidate_dir in _candidate_web_dist_dirs():
-            vite_manifest = candidate_dir / ".vite" / "manifest.json"
-            if vite_manifest.is_file():
-                return vite_manifest
-            manifest = candidate_dir / "manifest.json"
-            if manifest.is_file():
-                return manifest
-        dist_dir = WEB_DIST_DIR
-    vite_manifest = dist_dir / ".vite" / "manifest.json"
-    if vite_manifest.is_file():
-        return vite_manifest
-    return dist_dir / "manifest.json"
-
-
-def _hashed_asset_suffix(asset_path: str) -> str | None:
-    stem = Path(asset_path).stem
-    if "-" not in stem:
-        return None
-    suffix = stem.rsplit("-", 1)[-1].strip()
-    return suffix or None
-
-
-def _manifest_asset_token(asset_path: str) -> str | None:
-    asset_path = asset_path.strip()
-    if not asset_path:
-        return None
-    hashed = _hashed_asset_suffix(asset_path)
-    if hashed:
-        return hashed
-    return hashlib.sha256(asset_path.encode("utf-8")).hexdigest()[:12]
+    return _http_static_assets.served_web_dist_dir(RUNTIME)
 
 
 def _asset_version_from_manifest(manifest: dict[str, object]) -> str:
-    if not isinstance(manifest, dict):
-        return "dev"
-    entry = manifest.get("src/main.tsx")
-    if not isinstance(entry, dict):
-        entry = manifest.get("index.html")
-    if not isinstance(entry, dict):
-        for value in manifest.values():
-            if isinstance(value, dict) and value.get("file"):
-                entry = value
-                break
-    if not isinstance(entry, dict):
-        return "dev"
-    parts: list[str] = []
-    js_token = _manifest_asset_token(str(entry.get("file") or ""))
-    if js_token:
-        parts.append(js_token)
-    css_files = entry.get("css")
-    if isinstance(css_files, list):
-        for css_path in css_files:
-            css_token = _manifest_asset_token(str(css_path or ""))
-            if css_token:
-                parts.append(css_token)
-    return "-".join(parts) or "dev"
+    return _http_static_assets.asset_version_from_manifest(manifest)
 
 
 def _pi_model_context_window(provider: str | None, model: str | None) -> int | None:
@@ -3706,62 +3476,23 @@ def _pi_model_context_window(provider: str | None, model: str | None) -> int | N
 
 
 def _rewrite_web_index_html(data: str) -> str:
-    if not URL_PREFIX:
-        return data
-    prefix_body = re.escape(URL_PREFIX.lstrip("/"))
-    pattern = rf'((?:href|src|content)=["\'])/(?!/|{prefix_body}/)'
-    return re.sub(pattern, rf"\1{URL_PREFIX}/", data)
+    return _http_static_assets.rewrite_web_index_html(RUNTIME, data)
 
 
 def _read_web_index() -> tuple[str, str]:
-    dist_dir = _served_web_dist_dir()
-    if dist_dir is not None:
-        dist_index = dist_dir / "index.html"
-        return _rewrite_web_index_html(
-            dist_index.read_text(encoding="utf-8")
-        ), "text/html; charset=utf-8"
-    legacy_index = LEGACY_STATIC_DIR / "index.html"
-    return _read_static_bytes(legacy_index).decode("utf-8"), "text/html; charset=utf-8"
+    return _http_static_assets.read_web_index(RUNTIME)
 
 
 def _resolve_public_web_asset(rel: str) -> Path | None:
-    rel_path = Path(rel.lstrip("/"))
-    served_dist_dir = _served_web_dist_dir()
-    if served_dist_dir is not None:
-        dist_candidate = (served_dist_dir / rel_path).resolve()
-        if (
-            _is_path_within(served_dist_dir.resolve(), dist_candidate)
-            and dist_candidate.is_file()
-        ):
-            return dist_candidate
-    legacy_candidate = (LEGACY_STATIC_DIR / rel_path).resolve()
-    if (
-        _is_path_within(LEGACY_STATIC_DIR.resolve(), legacy_candidate)
-        and legacy_candidate.is_file()
-    ):
-        return legacy_candidate
-    return None
+    return _http_static_assets.resolve_public_web_asset(RUNTIME, rel)
 
 
 def _content_type_for_path(path: Path) -> str:
-    if path.suffix == ".html":
-        return "text/html; charset=utf-8"
-    if path.suffix == ".js":
-        return "text/javascript; charset=utf-8"
-    if path.suffix == ".css":
-        return "text/css; charset=utf-8"
-    if path.suffix == ".webmanifest":
-        return "application/manifest+json; charset=utf-8"
-    if path.suffix == ".svg":
-        return "image/svg+xml; charset=utf-8"
-    guessed, _ = mimetypes.guess_type(path.name)
-    return guessed or "application/octet-stream"
+    return _http_static_assets.content_type_for_path(path)
 
 
 def _cache_control_for_path(path: Path) -> str:
-    if "/assets/" in path.as_posix():
-        return "public, max-age=31536000, immutable"
-    return "no-store"
+    return _http_static_assets.cache_control_for_path(path)
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
