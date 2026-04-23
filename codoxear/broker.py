@@ -1043,11 +1043,11 @@ class Broker:
             self._clear_resume_delivery_mute_if_idle()
             self._drain_key_queue_if_idle()
 
-    def _write_meta(self) -> None:
-        st = self.state
-        if not st or not st.sock_path:
-            return
-        meta = {
+    def _meta_env_value(self, key: str) -> str | None:
+        return (os.environ.get(key) or "").strip() or None
+
+    def _meta_payload(self, st: State) -> dict[str, Any]:
+        return {
             "session_id": st.session_id,
             "backend": AGENT_BACKEND,
             "owner": OWNER_TAG if OWNER_TAG else None,
@@ -1066,31 +1066,47 @@ class Broker:
             "model": MODEL_OVERRIDE or None,
             "reasoning_effort": REASONING_EFFORT_OVERRIDE or None,
             "service_tier": SERVICE_TIER_OVERRIDE or None,
-            "transport": (os.environ.get("CODEX_WEB_TRANSPORT") or "").strip() or None,
-            "tmux_session": (os.environ.get("CODEX_WEB_TMUX_SESSION") or "").strip()
-            or None,
-            "tmux_window": (os.environ.get("CODEX_WEB_TMUX_WINDOW") or "").strip()
-            or None,
-            "spawn_nonce": (os.environ.get("CODEX_WEB_SPAWN_NONCE") or "").strip()
-            or None,
+            "transport": self._meta_env_value("CODEX_WEB_TRANSPORT"),
+            "tmux_session": self._meta_env_value("CODEX_WEB_TMUX_SESSION"),
+            "tmux_window": self._meta_env_value("CODEX_WEB_TMUX_WINDOW"),
+            "spawn_nonce": self._meta_env_value("CODEX_WEB_SPAWN_NONCE"),
         }
+
+    def _write_meta(self) -> None:
+        st = self.state
+        if not st or not st.sock_path:
+            return
+        meta = self._meta_payload(st)
         meta_path = st.sock_path.with_suffix(".json")
         SOCK_DIR.mkdir(parents=True, exist_ok=True)
         meta_path.write_text(json.dumps(meta), encoding="utf-8")
         os.chmod(meta_path, 0o600)
 
+    def _open_socket_server(self, sock_path: Path) -> socket.socket:
+        SOCK_DIR.mkdir(parents=True, exist_ok=True)
+        if sock_path.exists():
+            sock_path.unlink()
+        srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        srv.bind(str(sock_path))
+        os.chmod(sock_path, 0o600)
+        srv.listen(20)
+        srv.settimeout(0.5)
+        return srv
+
+    def _handle_socket_server_crash(self) -> None:
+        sys.stderr.write(
+            f"error: broker socket server crashed: {traceback.format_exc()}\n"
+        )
+        try:
+            self._teardown_managed_process_group()
+        except Exception:
+            traceback.print_exc()
+
     def _sock_server(self) -> None:
         st = self.state
         if not st or not st.sock_path:
             return
-        SOCK_DIR.mkdir(parents=True, exist_ok=True)
-        if st.sock_path.exists():
-            st.sock_path.unlink()
-        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        s.bind(str(st.sock_path))
-        os.chmod(st.sock_path, 0o600)
-        s.listen(20)
-        s.settimeout(0.5)
+        s = self._open_socket_server(st.sock_path)
 
         while not self._stop.is_set():
             try:
@@ -1098,17 +1114,9 @@ class Broker:
             except socket.timeout:
                 continue
             except Exception:
-                sys.stderr.write(
-                    f"error: broker socket server crashed: {traceback.format_exc()}\n"
-                )
-                try:
-                    self._teardown_managed_process_group()
-                except Exception:
-                    traceback.print_exc()
+                self._handle_socket_server_crash()
                 break
-            threading.Thread(
-                target=self._handle_conn, args=(conn,), daemon=True
-            ).start()
+            threading.Thread(target=self._handle_conn, args=(conn,), daemon=True).start()
 
         s.close()
 
