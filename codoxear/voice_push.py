@@ -1043,6 +1043,113 @@ class VoicePushCoordinator:
         self._save_subscriptions()
         return self.subscriptions_snapshot()
 
+    def _register_observed_message(
+        self,
+        *,
+        msg: ClassifiedAssistantMessage,
+        session_id: str,
+        session_display_name: str,
+        narration_enabled: bool,
+        now_ts: float,
+    ) -> tuple[tuple[str, str], int, int, int] | None:
+        slot_key = (session_id, msg.message_class)
+        with self._lock:
+            if msg.message_id in self._delivery_ledger:
+                return None
+            self._observed_serial += 1
+            observed_serial = self._observed_serial
+            self._latest_observed_serial_by_slot[slot_key] = observed_serial
+            listener_epoch = self._listener_epoch
+            listener_count = self._active_listener_count_locked(now_ts=now_ts)
+            self._delivery_ledger[msg.message_id] = {
+                "message_id": msg.message_id,
+                "session_id": session_id,
+                "session_display_name": session_display_name,
+                "message_class": msg.message_class,
+                "preview_text": _clip_text(msg.text, limit=160),
+                "notification_text": "",
+                "summary_text": "",
+                "summary_status": "pending"
+                if (msg.message_class == "final_response" or narration_enabled)
+                else "skipped",
+                "narrated_status": "pending"
+                if (msg.message_class == "final_response" or narration_enabled)
+                else "skipped",
+                "push_status": "pending"
+                if msg.message_class == "final_response"
+                else "skipped",
+                "voice": "",
+                "created_ts": now_ts,
+                "updated_ts": now_ts,
+                "last_error": "",
+            }
+            self._trim_locked()
+        return slot_key, observed_serial, listener_epoch, listener_count
+
+    def _build_observed_task(
+        self,
+        *,
+        msg: ClassifiedAssistantMessage,
+        session_id: str,
+        session_display_name: str,
+        narration_enabled: bool,
+        listener_epoch: int,
+    ) -> AnnouncementTask | None:
+        if msg.message_class == "final_response":
+            return self._prepare_final_response(
+                message=msg,
+                session_id=session_id,
+                session_display_name=session_display_name,
+                listener_epoch=listener_epoch,
+            )
+        if not narration_enabled:
+            return None
+        return AnnouncementTask(
+            message_id=msg.message_id,
+            source_message_ids=(msg.message_id,),
+            session_id=session_id,
+            session_display_name=session_display_name,
+            message_class=msg.message_class,
+            source_text=_compact_text(msg.text),
+            spoken_text="",
+            notification_text="",
+            voice=self._voice_for_session(session_id, session_display_name),
+            ts=msg.ts,
+            summary_word_target=15,
+            listener_epoch=listener_epoch,
+        )
+
+    def _queue_observed_task(
+        self,
+        *,
+        msg: ClassifiedAssistantMessage,
+        task: AnnouncementTask,
+        slot_key: tuple[str, str],
+        observed_serial: int,
+    ) -> bool:
+        with self._lock:
+            current_listener_count = self._active_listener_count_locked(now_ts=time.time())
+            if (
+                current_listener_count <= 0
+                or task.listener_epoch != self._listener_epoch
+            ):
+                drop_for_listener = True
+            else:
+                drop_for_listener = False
+            if drop_for_listener:
+                pass
+            elif (
+                msg.message_class == "final_response"
+                and self._latest_observed_serial_by_slot.get(slot_key)
+                != observed_serial
+            ):
+                self._mark_task_replaced_locked(task)
+            else:
+                self._enqueue_task_locked(task)
+            self._trim_locked()
+            self._queue_ready.notify_all()
+        return drop_for_listener
+
     def observe_messages(
         self,
         *,
@@ -1051,97 +1158,37 @@ class VoicePushCoordinator:
         messages: list[ClassifiedAssistantMessage],
     ) -> None:
         for msg in messages:
-            task: AnnouncementTask | None = None
             now_ts = float(time.time())
-            observed_serial = 0
-            slot_key = (session_id, msg.message_class)
-            narration_enabled = bool(
-                self._voice_settings.get("tts_enabled_for_narration")
+            narration_enabled = bool(self._voice_settings.get("tts_enabled_for_narration"))
+            observed = self._register_observed_message(
+                msg=msg,
+                session_id=session_id,
+                session_display_name=session_display_name,
+                narration_enabled=narration_enabled,
+                now_ts=now_ts,
             )
-            listener_epoch = 0
-            listener_count = 0
-            with self._lock:
-                if msg.message_id in self._delivery_ledger:
-                    continue
-                self._observed_serial += 1
-                observed_serial = self._observed_serial
-                self._latest_observed_serial_by_slot[slot_key] = observed_serial
-                listener_epoch = self._listener_epoch
-                listener_count = self._active_listener_count_locked(now_ts=now_ts)
-                self._delivery_ledger[msg.message_id] = {
-                    "message_id": msg.message_id,
-                    "session_id": session_id,
-                    "session_display_name": session_display_name,
-                    "message_class": msg.message_class,
-                    "preview_text": _clip_text(msg.text, limit=160),
-                    "notification_text": "",
-                    "summary_text": "",
-                    "summary_status": "pending"
-                    if (msg.message_class == "final_response" or narration_enabled)
-                    else "skipped",
-                    "narrated_status": "pending"
-                    if (msg.message_class == "final_response" or narration_enabled)
-                    else "skipped",
-                    "push_status": "pending"
-                    if msg.message_class == "final_response"
-                    else "skipped",
-                    "voice": "",
-                    "created_ts": now_ts,
-                    "updated_ts": now_ts,
-                    "last_error": "",
-                }
-                self._trim_locked()
+            if observed is None:
+                continue
+            slot_key, observed_serial, listener_epoch, listener_count = observed
             self._save_delivery_ledger()
-            if msg.message_class == "final_response":
-                task = self._prepare_final_response(
-                    message=msg,
-                    session_id=session_id,
-                    session_display_name=session_display_name,
-                    listener_epoch=listener_epoch,
-                )
-            elif narration_enabled:
-                task = AnnouncementTask(
-                    message_id=msg.message_id,
-                    source_message_ids=(msg.message_id,),
-                    session_id=session_id,
-                    session_display_name=session_display_name,
-                    message_class=msg.message_class,
-                    source_text=_compact_text(msg.text),
-                    spoken_text="",
-                    notification_text="",
-                    voice=self._voice_for_session(session_id, session_display_name),
-                    ts=msg.ts,
-                    summary_word_target=15,
-                    listener_epoch=listener_epoch,
-                )
+            task = self._build_observed_task(
+                msg=msg,
+                session_id=session_id,
+                session_display_name=session_display_name,
+                narration_enabled=narration_enabled,
+                listener_epoch=listener_epoch,
+            )
             if task is None:
                 continue
             if listener_count <= 0:
                 self._mark_tasks_skipped_no_listener([task])
                 continue
-            with self._lock:
-                current_listener_count = self._active_listener_count_locked(
-                    now_ts=time.time()
-                )
-                if (
-                    current_listener_count <= 0
-                    or task.listener_epoch != self._listener_epoch
-                ):
-                    drop_for_listener = True
-                else:
-                    drop_for_listener = False
-                if drop_for_listener:
-                    pass
-                elif (
-                    msg.message_class == "final_response"
-                    and self._latest_observed_serial_by_slot.get(slot_key)
-                    != observed_serial
-                ):
-                    self._mark_task_replaced_locked(task)
-                else:
-                    self._enqueue_task_locked(task)
-                self._trim_locked()
-                self._queue_ready.notify_all()
+            drop_for_listener = self._queue_observed_task(
+                msg=msg,
+                task=task,
+                slot_key=slot_key,
+                observed_serial=observed_serial,
+            )
             if drop_for_listener:
                 self._mark_tasks_skipped_no_listener([task])
             self._save_delivery_ledger()
@@ -1194,60 +1241,77 @@ class VoicePushCoordinator:
             return
         self._hls.append_silence(force=False)
 
+    def _worker_select_action(
+        self,
+    ) -> tuple[str, AnnouncementTask | None, GeneratedAnnouncement | None, AnnouncementTask | None]:
+        action = ""
+        task: AnnouncementTask | None = None
+        prepared: GeneratedAnnouncement | None = None
+        stale_task: AnnouncementTask | None = None
+        with self._lock:
+            while not self._stop.is_set():
+                now_wall = time.time()
+                now_mono = time.monotonic()
+                listener_count = self._active_listener_count_locked(now_ts=now_wall)
+                if (
+                    self._playing_task is not None
+                    and now_mono >= self._playing_until_monotonic
+                ):
+                    self._playing_task = None
+                    self._playing_until_monotonic = 0.0
+                if (
+                    listener_count > 0
+                    and self._prepared is not None
+                    and self._prepared.task.listener_epoch == self._listener_epoch
+                    and self._playing_task is None
+                ):
+                    prepared = self._prepared
+                    self._prepared = None
+                    action = "append"
+                    break
+                if (
+                    listener_count > 0
+                    and self._prepared is not None
+                    and self._prepared.task.listener_epoch != self._listener_epoch
+                ):
+                    stale_task = self._prepared.task
+                    self._prepared = None
+                    self._queue_ready.notify_all()
+                    continue
+                if (
+                    listener_count > 0
+                    and self._generating_task is None
+                    and self._prepared is None
+                    and self._queue
+                ):
+                    task = self._queue.pop(0)
+                    self._generating_task = task
+                    action = "generate"
+                    break
+                timeout = 0.25
+                if self._playing_task is not None:
+                    timeout = min(
+                        timeout, max(0.0, self._playing_until_monotonic - now_mono)
+                    )
+                self._queue_ready.wait(timeout=timeout)
+            if self._stop.is_set():
+                return "stop", None, None, None
+        return action, task, prepared, stale_task
+
+    def _worker_finalize_generation(self, task: AnnouncementTask) -> None:
+        with self._lock:
+            if (
+                self._generating_task is not None
+                and self._generating_task.message_id == task.message_id
+            ):
+                self._generating_task = None
+            self._queue_ready.notify_all()
+
     def _worker_loop(self) -> None:
         while not self._stop.is_set():
-            action = ""
-            task: AnnouncementTask | None = None
-            prepared: GeneratedAnnouncement | None = None
-            stale_task: AnnouncementTask | None = None
-            with self._lock:
-                while not self._stop.is_set():
-                    now_wall = time.time()
-                    now_mono = time.monotonic()
-                    listener_count = self._active_listener_count_locked(now_ts=now_wall)
-                    if (
-                        self._playing_task is not None
-                        and now_mono >= self._playing_until_monotonic
-                    ):
-                        self._playing_task = None
-                        self._playing_until_monotonic = 0.0
-                    if (
-                        listener_count > 0
-                        and self._prepared is not None
-                        and self._prepared.task.listener_epoch == self._listener_epoch
-                        and self._playing_task is None
-                    ):
-                        prepared = self._prepared
-                        self._prepared = None
-                        action = "append"
-                        break
-                    if (
-                        listener_count > 0
-                        and self._prepared is not None
-                        and self._prepared.task.listener_epoch != self._listener_epoch
-                    ):
-                        stale_task = self._prepared.task
-                        self._prepared = None
-                        self._queue_ready.notify_all()
-                        continue
-                    if (
-                        listener_count > 0
-                        and self._generating_task is None
-                        and self._prepared is None
-                        and self._queue
-                    ):
-                        task = self._queue.pop(0)
-                        self._generating_task = task
-                        action = "generate"
-                        break
-                    timeout = 0.25
-                    if self._playing_task is not None:
-                        timeout = min(
-                            timeout, max(0.0, self._playing_until_monotonic - now_mono)
-                        )
-                    self._queue_ready.wait(timeout=timeout)
-                if self._stop.is_set():
-                    return
+            action, task, prepared, stale_task = self._worker_select_action()
+            if action == "stop":
+                return
             if action == "append" and prepared is not None:
                 self._append_prepared(prepared)
                 continue
@@ -1262,13 +1326,7 @@ class VoicePushCoordinator:
                 self._set_task_error(task, str(e))
                 self._hls.set_last_error(str(e))
             finally:
-                with self._lock:
-                    if (
-                        self._generating_task is not None
-                        and self._generating_task.message_id == task.message_id
-                    ):
-                        self._generating_task = None
-                    self._queue_ready.notify_all()
+                self._worker_finalize_generation(task)
 
     def _process_task(self, task: AnnouncementTask) -> None:
         settings = self.settings_snapshot()
