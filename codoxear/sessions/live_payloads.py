@@ -58,7 +58,7 @@ def session_live_payload(
             offset=bridge_offset,
         )
         base_events = page.get("events") if isinstance(page.get("events"), list) else []
-        merged_events = [*base_events, *bridge_events]
+        merged_events = merge_events_by_ts(base_events, bridge_events)
         return {
             "ok": True,
             "session_id": durable_session_id,
@@ -113,7 +113,7 @@ def session_live_payload(
         offset=bridge_offset,
     )
     if bridge_events:
-        merged_events = [*merged_events, *bridge_events]
+        merged_events = merge_events_by_ts(merged_events, bridge_events)
     payload: dict[str, Any] = {
         "ok": True,
         "session_id": sv._durable_session_id_for_live_session(s),
@@ -181,6 +181,15 @@ def _insert_event_by_ts(
         insert_at -= 1
     merged.insert(insert_at, event)
 
+
+
+def merge_events_by_ts(
+    durable_events: list[dict[str, Any]], events: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    merged = list(durable_events)
+    for event in events:
+        _insert_event_by_ts(merged, event)
+    return merged
 
 
 def merge_pi_live_message_events(

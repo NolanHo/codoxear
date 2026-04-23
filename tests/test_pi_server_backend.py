@@ -2628,6 +2628,45 @@ class TestPiBackendRouting(unittest.TestCase):
         self.assertEqual(payload["requests"], [])
         self.assertFalse(payload["busy"])
 
+    def test_session_live_payload_inserts_historical_bridge_events_by_timestamp(self) -> None:
+        mgr = _make_manager()
+        mgr.get_session = lambda _sid: None  # type: ignore[method-assign]
+        mgr.get_messages_page = lambda _sid, **_kwargs: {
+            "events": [
+                {"role": "assistant", "text": "historical-before", "ts": 1.0},
+                {"role": "assistant", "text": "historical-after", "ts": 5.0},
+            ],
+            "offset": 2,
+            "has_older": False,
+            "next_before": 0,
+        }  # type: ignore[method-assign]
+        mgr._append_bridge_event(
+            "resume-1",
+            {
+                "type": "pi_event",
+                "summary": "Bridge buffered prompt during compaction",
+                "ts": 3.0,
+            },
+        )
+
+        with patch(
+            "codoxear.server._historical_session_row",
+            return_value={
+                "session_id": "history:pi:resume-1",
+                "resume_session_id": "resume-1",
+                "agent_backend": "pi",
+                "backend": "pi",
+                "cwd": "/tmp/hist",
+                "historical": True,
+            },
+        ):
+            payload = _session_live_payload(mgr, "history:pi:resume-1", offset=2)
+
+        self.assertEqual(
+            [event.get("summary") or event.get("text") for event in payload["events"]],
+            ["historical-before", "Bridge buffered prompt during compaction", "historical-after"],
+        )
+
     def test_session_live_payload_falls_back_to_listed_stale_session_row(self) -> None:
         mgr = _make_manager()
         mgr.get_session = lambda _sid: None  # type: ignore[method-assign]
@@ -2840,6 +2879,63 @@ class TestPiBackendRouting(unittest.TestCase):
         self.assertEqual(
             [event.get("summary") or event.get("text") for event in payload["events"]],
             ["before", "Auto-compacting context", "Compaction finished", "after"],
+        )
+
+    def test_session_live_payload_inserts_bridge_events_by_timestamp(self) -> None:
+        mgr = _make_manager()
+        with tempfile.TemporaryDirectory() as td:
+            sock = Path(td) / "pi.sock"
+            sock.touch()
+            session_path = Path(td) / "pi-session.jsonl"
+            mgr._sessions["pi-session"] = Session(
+                session_id="pi-session",
+                thread_id="pi-thread-001",
+                agent_backend="pi",
+                backend="pi",
+                broker_pid=3333,
+                codex_pid=4444,
+                owned=True,
+                start_ts=123.0,
+                cwd=td,
+                log_path=None,
+                sock_path=sock,
+                session_path=session_path,
+                transport="pi-rpc",
+                supports_live_ui=False,
+            )
+            mgr.refresh_session_meta = lambda *_args, **_kwargs: None  # type: ignore[method-assign]
+            mgr.get_state = lambda *_args, **_kwargs: {"busy": True, "queue_len": 0, "token": None}  # type: ignore[method-assign]
+            mgr.get_ui_state = lambda *_args, **_kwargs: {"requests": []}  # type: ignore[method-assign]
+            mgr.get_messages_page = lambda *_args, **_kwargs: {
+                "thread_id": "pi-thread-001",
+                "log_path": str(session_path),
+                "offset": 2,
+                "events": [
+                    {"role": "user", "text": "before", "ts": 1.0},
+                    {"role": "assistant", "text": "after", "ts": 5.0},
+                ],
+                "busy": True,
+                "queue_len": 0,
+                "token": None,
+            }  # type: ignore[method-assign]
+            mgr._append_bridge_event(
+                "pi-thread-001",
+                {
+                    "type": "pi_event",
+                    "summary": "Bridge send failed",
+                    "event_id": "bridge:test-ts",
+                    "request_state": "failed",
+                    "ts": 3.0,
+                },
+            )
+
+            payload = _session_live_payload(
+                mgr, "pi-session", offset=0, bridge_offset=0
+            )
+
+        self.assertEqual(
+            [event.get("summary") or event.get("text") for event in payload["events"]],
+            ["before", "Bridge send failed", "after"],
         )
 
     def test_session_live_payload_appends_streaming_pi_rpc_assistant_event(
