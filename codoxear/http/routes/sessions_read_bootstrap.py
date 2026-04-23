@@ -6,25 +6,28 @@ from pathlib import Path
 from typing import Any
 
 from ...runtime import ServerRuntime
+from ...runtime_facade import build_runtime_facade
 from ...sessions import creation as _session_creation
 
 
 def handle_get(runtime: ServerRuntime, handler: Any, path: str, u: Any) -> bool:
+    facade = build_runtime_facade(runtime)
+
     if path == "/api/sessions/bootstrap":
-        if not runtime.api.require_auth(handler):
+        if not facade.require_auth(handler):
             handler._unauthorized()
             return True
         qs = urllib.parse.parse_qs(u.query)
         refresh_pi_models = (qs.get("refresh_pi_models") or ["0"])[0] == "1"
-        runtime.api.json_response(
+        facade.json_response(
             handler,
             200,
             {
-                "recent_cwds": runtime.manager.recent_cwds(),
-                "cwd_groups": runtime.manager.cwd_groups_get(),
+                "recent_cwds": facade.manager.recent_cwds(),
+                "cwd_groups": facade.manager.cwd_groups_get(),
                 "new_session_defaults": _session_creation.read_new_session_defaults(
                     runtime,
-                    page_state_db=getattr(runtime.manager, "_page_state_db", None),
+                    page_state_db=getattr(facade.manager, "_page_state_db", None),
                     refresh_pi_models=refresh_pi_models,
                 ),
                 "tmux_available": runtime.api.tmux_available(),
@@ -33,7 +36,7 @@ def handle_get(runtime: ServerRuntime, handler: Any, path: str, u: Any) -> bool:
         return True
 
     if path == "/api/sessions":
-        if not runtime.api.require_auth(handler):
+        if not facade.require_auth(handler):
             handler._unauthorized()
             return True
         t0 = time.perf_counter()
@@ -60,7 +63,7 @@ def handle_get(runtime: ServerRuntime, handler: Any, path: str, u: Any) -> bool:
             ),
         )
         payload = runtime.api.session_list_payload(
-            runtime.manager.list_sessions(),
+            facade.manager.list_sessions(),
             group_key=group_key,
             offset=offset,
             limit=limit,
@@ -69,11 +72,11 @@ def handle_get(runtime: ServerRuntime, handler: Any, path: str, u: Any) -> bool:
         )
         dt_ms = (time.perf_counter() - t0) * 1000.0
         runtime.api.record_metric("api_sessions_ms", dt_ms)
-        runtime.api.json_response(handler, 200, payload)
+        facade.json_response(handler, 200, payload)
         return True
 
     if path == "/api/session_resume_candidates":
-        if not runtime.api.require_auth(handler):
+        if not facade.require_auth(handler):
             handler._unauthorized()
             return True
         qs = urllib.parse.parse_qs(u.query)
@@ -87,22 +90,22 @@ def handle_get(runtime: ServerRuntime, handler: Any, path: str, u: Any) -> bool:
                 default=runtime.api.DEFAULT_AGENT_BACKEND,
             )
         except ValueError as exc:
-            runtime.api.json_response(handler, 400, {"error": str(exc)})
+            facade.json_response(handler, 400, {"error": str(exc)})
             return True
         try:
             cwd_path = runtime.api.resolve_dir_target(str(cwd_raw), field_name="cwd")
         except ValueError as exc:
-            runtime.api.json_response(handler, 400, {"error": str(exc), "field": "cwd"})
+            facade.json_response(handler, 400, {"error": str(exc), "field": "cwd"})
             return True
         try:
             backend = runtime.api.normalize_requested_backend(backend_raw)
         except ValueError as exc:
-            runtime.api.json_response(handler, 400, {"error": str(exc), "field": "backend"})
+            facade.json_response(handler, 400, {"error": str(exc), "field": "backend"})
             return True
         try:
             offset = max(0, int(offset_raw))
         except ValueError:
-            runtime.api.json_response(
+            facade.json_response(
                 handler,
                 400,
                 {"error": "offset must be an integer", "field": "offset"},
@@ -111,7 +114,7 @@ def handle_get(runtime: ServerRuntime, handler: Any, path: str, u: Any) -> bool:
         try:
             limit = max(1, min(100, int(limit_raw)))
         except ValueError:
-            runtime.api.json_response(
+            facade.json_response(
                 handler,
                 400,
                 {"error": "limit must be an integer", "field": "limit"},
@@ -127,7 +130,7 @@ def handle_get(runtime: ServerRuntime, handler: Any, path: str, u: Any) -> bool:
         remaining = max(0, len(all_rows) - (offset + len(rows)))
         for row in rows:
             sid = row.get("session_id")
-            alias = runtime.manager.alias_get(sid) if isinstance(sid, str) and sid else ""
+            alias = facade.manager.alias_get(sid) if isinstance(sid, str) and sid else ""
             preview = ""
             log_path_raw = row.get("log_path")
             session_path_raw = row.get("session_path")
@@ -137,7 +140,7 @@ def handle_get(runtime: ServerRuntime, handler: Any, path: str, u: Any) -> bool:
                 preview = runtime.api.first_user_message_preview_from_pi_session(Path(session_path_raw))
             row["alias"] = alias
             row["first_user_message"] = preview
-        runtime.api.json_response(
+        facade.json_response(
             handler,
             200,
             {
@@ -153,10 +156,10 @@ def handle_get(runtime: ServerRuntime, handler: Any, path: str, u: Any) -> bool:
         return True
 
     if path == "/api/metrics":
-        if not runtime.api.require_auth(handler):
+        if not facade.require_auth(handler):
             handler._unauthorized()
             return True
-        runtime.api.json_response(handler, 200, {"metrics": runtime.api.metrics_snapshot()})
+        facade.json_response(handler, 200, facade.metrics_payload())
         return True
 
     return False

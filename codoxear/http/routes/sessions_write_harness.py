@@ -3,12 +3,15 @@ from __future__ import annotations
 from typing import Any
 
 from ...runtime import ServerRuntime
+from ...runtime_facade import build_runtime_facade
 from . import sessions_write_common as _common
 
 
 def handle_post(runtime: ServerRuntime, handler: Any, path: str) -> bool:
+    facade = build_runtime_facade(runtime)
+
     if path.startswith("/api/sessions/") and path.endswith("/harness"):
-        if not runtime.api.require_auth(handler):
+        if not facade.require_auth(handler):
             handler._unauthorized()
             return True
         session_id = _common.session_id_from_path(path)
@@ -18,18 +21,18 @@ def handle_post(runtime: ServerRuntime, handler: Any, path: str) -> bool:
         cooldown_minutes_raw = obj.get("cooldown_minutes", None)
         remaining_injections_raw = obj.get("remaining_injections", None)
         if "text" in obj:
-            runtime.api.json_response(handler, 400, {"error": "unknown field: text (use request)"})
+            facade.json_response(handler, 400, {"error": "unknown field: text (use request)"})
             return True
         enabled = None if enabled_raw is None else bool(enabled_raw)
         if request_raw is not None and not isinstance(request_raw, str):
-            runtime.api.json_response(handler, 400, {"error": "request must be a string"})
+            facade.json_response(handler, 400, {"error": "request must be a string"})
             return True
         request = request_raw if request_raw is not None else None
         if cooldown_minutes_raw is not None:
             try:
                 cooldown_minutes = runtime.api.clean_harness_cooldown_minutes(cooldown_minutes_raw)
             except ValueError as exc:
-                runtime.api.json_response(handler, 400, {"error": str(exc)})
+                facade.json_response(handler, 400, {"error": str(exc)})
                 return True
         else:
             cooldown_minutes = None
@@ -40,42 +43,39 @@ def handle_post(runtime: ServerRuntime, handler: Any, path: str) -> bool:
                     allow_zero=True,
                 )
             except ValueError as exc:
-                runtime.api.json_response(handler, 400, {"error": str(exc)})
+                facade.json_response(handler, 400, {"error": str(exc)})
                 return True
         else:
             remaining_injections = None
-        cfg = runtime.manager.harness_set(
-            session_id,
-            enabled=enabled,
-            request=request,
-            cooldown_minutes=cooldown_minutes,
-            remaining_injections=remaining_injections,
-        )
-        runtime.api.json_response(handler, 200, {"ok": True, **cfg})
+        try:
+            payload = facade.session_harness_set(
+                session_id,
+                enabled=enabled,
+                request=request,
+                cooldown_minutes=cooldown_minutes,
+                remaining_injections=remaining_injections,
+            )
+        except KeyError:
+            facade.json_response(handler, 404, {"error": "unknown session"})
+            return True
+        facade.json_response(handler, 200, payload)
         return True
 
     if path.startswith("/api/sessions/") and path.endswith("/interrupt"):
-        if not runtime.api.require_auth(handler):
+        if not facade.require_auth(handler):
             handler._unauthorized()
             return True
         session_id = _common.session_id_from_path(path)
         runtime.api.read_body(handler)
         try:
-            resp = runtime.manager.inject_keys(session_id, "\\x1b")
+            payload = facade.session_interrupt(session_id)
         except KeyError:
-            runtime.api.json_response(handler, 404, {"error": "unknown session"})
+            facade.json_response(handler, 404, {"error": "unknown session"})
             return True
         except ValueError as exc:
-            runtime.api.json_response(handler, 502, {"error": str(exc)})
+            facade.json_response(handler, 502, {"error": str(exc)})
             return True
-        durable_session_id = runtime.manager._durable_session_id_for_identifier(session_id) or session_id
-        runtime_id = runtime.manager._runtime_session_id_for_identifier(session_id)
-        runtime.api.publish_session_live_invalidate(
-            durable_session_id,
-            runtime_id=runtime_id,
-            reason="interrupt",
-        )
-        runtime.api.json_response(handler, 200, {"ok": True, "broker": resp})
+        facade.json_response(handler, 200, payload)
         return True
 
     return False

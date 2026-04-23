@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import json
-import socket
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from ..agents import get_agent_adapter
 from .runtime_access import manager_runtime
 
 
@@ -45,24 +44,11 @@ def service(manager: Any) -> SessionTransportService:
 def sock_call(
     manager: Any, sock_path: Path, req: dict[str, Any], timeout_s: float = 2.0
 ) -> dict[str, Any]:
-    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    s.settimeout(timeout_s)
-    try:
-        s.connect(str(sock_path))
-        s.sendall((json.dumps(req) + "\n").encode("utf-8"))
-        buf = b""
-        while b"\n" not in buf:
-            chunk = s.recv(65536)
-            if not chunk:
-                break
-            buf += chunk
-        line = buf.split(b"\n", 1)[0]
-        if not line:
-            return {"error": "empty response"}
-        payload = json.loads(line.decode("utf-8"))
-        return payload if isinstance(payload, dict) else {"error": "invalid response"}
-    finally:
-        s.close()
+    manager_sock_call = getattr(manager, "_sock_call", None)
+    if callable(manager_sock_call):
+        return manager_sock_call(sock_path, req, timeout_s=timeout_s)
+    adapter = get_agent_adapter(None)
+    return adapter.sock_call(sock_path, req, timeout_s=timeout_s)
 
 
 def kill_session_via_pids(manager: Any, session: Any) -> bool:
@@ -99,7 +85,7 @@ def kill_session(manager: Any, session_id: str) -> bool:
     if not session:
         return False
     try:
-        resp = manager._sock_call(session.sock_path, {"cmd": "shutdown"}, timeout_s=1.0)
+        resp = sock_call(manager, session.sock_path, {"cmd": "shutdown"}, timeout_s=1.0)
     except Exception:
         return manager._kill_session_via_pids(session)
     if resp.get("ok") is True:
@@ -123,7 +109,7 @@ def get_state(manager: Any, session_id: str) -> dict[str, Any]:
         "token": session.token,
     }
     try:
-        resp = manager._sock_call(sock, {"cmd": "state"}, timeout_s=1.5)
+        resp = sock_call(manager, sock, {"cmd": "state"}, timeout_s=1.5)
         sv.api.validated_session_state(resp)
     except Exception:
         if not sv.api.pid_alive(session.broker_pid) and not sv.api.pid_alive(session.codex_pid):
@@ -158,7 +144,7 @@ def get_tail(manager: Any, session_id: str) -> str:
             raise KeyError("unknown session")
         sock = session.sock_path
     try:
-        resp = manager._sock_call(sock, {"cmd": "tail"}, timeout_s=1.5)
+        resp = sock_call(manager, sock, {"cmd": "tail"}, timeout_s=1.5)
     except Exception:
         if not sv.api.pid_alive(session.broker_pid) and not sv.api.pid_alive(session.codex_pid):
             with manager._lock:
@@ -186,7 +172,7 @@ def inject_keys(manager: Any, session_id: str, seq: str) -> dict[str, Any]:
             raise KeyError("unknown session")
         sock = session.sock_path
     try:
-        resp = manager._sock_call(sock, {"cmd": "keys", "seq": seq}, timeout_s=2.0)
+        resp = sock_call(manager, sock, {"cmd": "keys", "seq": seq}, timeout_s=2.0)
     except Exception:
         if not sv.api.pid_alive(session.broker_pid) and not sv.api.pid_alive(session.codex_pid):
             with manager._lock:

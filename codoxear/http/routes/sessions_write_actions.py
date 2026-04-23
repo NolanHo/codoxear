@@ -37,19 +37,14 @@ def _handle_edit(
     name = _require_name(obj, responder)
     if name is None:
         return True
+    assert ctx.facade is not None
     try:
-        alias, sidebar_meta = ctx.runtime.manager.edit_session(
-            session_id,
-            name=name,
-            priority_offset=obj.get("priority_offset"),
-            snooze_until=obj.get("snooze_until"),
-            dependency_session_id=obj.get("dependency_session_id"),
-        )
+        payload = ctx.facade.session_edit(session_id, obj)
     except KeyError:
         return responder.not_found()
     except ValueError as exc:
         return responder.bad_request(str(exc))
-    return responder.ok({"ok": True, "alias": alias, **sidebar_meta})
+    return responder.ok(payload)
 
 
 def _handle_rename(
@@ -68,11 +63,12 @@ def _handle_rename(
     name = _require_name(obj, responder)
     if name is None:
         return True
+    assert ctx.facade is not None
     try:
-        alias = ctx.runtime.manager.alias_set(session_id, name)
+        payload = ctx.facade.session_rename(session_id, name=name)
     except KeyError:
         return responder.not_found()
-    return responder.ok({"ok": True, "alias": alias})
+    return responder.ok(payload)
 
 
 def _handle_focus(
@@ -88,13 +84,14 @@ def _handle_focus(
     if not guard.require_auth():
         return True
     obj = _common.read_json_object(ctx.runtime, ctx.handler)
+    assert ctx.facade is not None
     try:
-        focused = ctx.runtime.manager.focus_set(session_id, obj.get("focused"))
+        payload = ctx.facade.session_focus(session_id, focused=obj.get("focused"))
     except KeyError:
         return responder.not_found()
     except ValueError as exc:
         return responder.bad_request(str(exc))
-    return responder.ok({"ok": True, "focused": focused})
+    return responder.ok(payload)
 
 
 def _handle_send(
@@ -113,8 +110,9 @@ def _handle_send(
     text = _require_text(obj, responder)
     if text is None:
         return True
+    assert ctx.facade is not None
     try:
-        payload = ctx.runtime.manager.send(session_id, text)
+        payload = ctx.facade.session_send(session_id, text=text)
     except KeyError:
         return responder.not_found()
     except ValueError as exc:
@@ -135,20 +133,14 @@ def _handle_ui_response(
     if not guard.require_auth():
         return True
     obj = _common.read_json_object(ctx.runtime, ctx.handler)
+    assert ctx.facade is not None
     try:
-        ctx.runtime.manager.submit_ui_response(session_id, obj)
+        payload = ctx.facade.session_submit_ui_response(session_id, obj)
     except KeyError:
         return responder.not_found()
     except ValueError as exc:
         return responder.upstream_error(str(exc))
-    durable_session_id = ctx.runtime.manager._durable_session_id_for_identifier(session_id) or session_id
-    runtime_id = ctx.runtime.manager._runtime_session_id_for_identifier(session_id)
-    ctx.runtime.api.publish_session_workspace_invalidate(
-        durable_session_id,
-        runtime_id=runtime_id,
-        reason="ui_response",
-    )
-    return responder.ok({"ok": True})
+    return responder.ok(payload)
 
 
 def _handle_enqueue(
@@ -167,8 +159,9 @@ def _handle_enqueue(
     text = _require_text(obj, responder)
     if text is None:
         return True
+    assert ctx.facade is not None
     try:
-        payload = ctx.runtime.manager.enqueue(session_id, text)
+        payload = ctx.facade.session_enqueue(session_id, text=text)
     except KeyError:
         return responder.not_found()
     except ValueError as exc:
@@ -190,8 +183,9 @@ def _handle_queue_delete(
     idx = obj.get("index")
     if not isinstance(idx, int):
         return responder.bad_request("index required")
+    assert ctx.facade is not None
     try:
-        payload = ctx.runtime.manager.queue_delete(session_id, idx)
+        payload = ctx.facade.session_queue_delete(session_id, index=idx)
     except KeyError:
         return responder.not_found()
     except ValueError as exc:
@@ -216,8 +210,9 @@ def _handle_queue_update(
     text = _require_text(obj, responder)
     if text is None:
         return True
+    assert ctx.facade is not None
     try:
-        payload = ctx.runtime.manager.queue_update(session_id, idx, text)
+        payload = ctx.facade.session_queue_update(session_id, index=idx, text=text)
     except KeyError:
         return responder.not_found()
     except ValueError as exc:

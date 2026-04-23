@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import time
 import urllib.parse
-from pathlib import Path
 from typing import Any
 
 from ...runtime import ServerRuntime
@@ -54,9 +53,9 @@ def _handle_live(
     requests_version = (
         str(requests_version_q[0] or "").strip() or None if requests_version_q else None
     )
+    assert ctx.facade is not None
     try:
-        payload = ctx.runtime.api.session_live_payload(
-            ctx.runtime.manager,
+        payload = ctx.facade.session_live_payload(
             session_id,
             offset=offset,
             live_offset=live_offset,
@@ -83,8 +82,9 @@ def _handle_workspace(
     session_id = _require_prefixed_session_id(ctx.path, ctx.handler)
     if session_id is None:
         return True
+    assert ctx.facade is not None
     try:
-        payload = ctx.runtime.api.session_workspace_payload(ctx.runtime.manager, session_id)
+        payload = ctx.facade.session_workspace_payload(session_id)
     except KeyError:
         return responder.not_found()
     except ValueError as exc:
@@ -105,8 +105,9 @@ def _handle_details(
     session_id = _require_prefixed_session_id(ctx.path, ctx.handler)
     if session_id is None:
         return True
+    assert ctx.facade is not None
     try:
-        payload = ctx.runtime.api.session_details_payload(ctx.runtime.manager, session_id)
+        payload = ctx.facade.session_details_payload(session_id)
     except KeyError:
         return responder.not_found()
     return responder.ok(payload)
@@ -126,17 +127,13 @@ def _handle_diagnostics(
     if session_id is None:
         return True
 
-    runtime = ctx.runtime
-    runtime.manager.refresh_session_meta(session_id, strict=False)
-    s = runtime.manager.get_session(session_id)
-    if not s:
-        return responder.not_found()
+    assert ctx.facade is not None
     try:
-        state = runtime.api.validated_session_state(runtime.manager.get_state(session_id))
+        payload = ctx.facade.session_diagnostics_payload(session_id)
+    except KeyError:
+        return responder.not_found()
     except ValueError as exc:
         return responder.upstream_error(str(exc))
-
-    payload = runtime.api.session_diagnostics_payload(runtime.manager, session_id, s, state)
     return responder.ok(payload)
 
 
@@ -153,13 +150,14 @@ def _handle_queue(
     session_id = _require_prefixed_session_id(ctx.path, ctx.handler)
     if session_id is None:
         return True
+    assert ctx.facade is not None
     try:
-        q = ctx.runtime.manager.queue_list(session_id)
+        payload = ctx.facade.session_queue_payload(session_id)
     except KeyError:
         return responder.not_found()
     except ValueError as exc:
         return responder.upstream_error(str(exc))
-    return responder.ok({"ok": True, "queue": q})
+    return responder.ok(payload)
 
 
 def _handle_ui_state(
@@ -175,8 +173,9 @@ def _handle_ui_state(
     session_id = _require_prefixed_session_id(ctx.path, ctx.handler)
     if session_id is None:
         return True
+    assert ctx.facade is not None
     try:
-        payload = ctx.runtime.manager.get_ui_state(session_id)
+        payload = ctx.facade.session_ui_state_payload(session_id)
     except KeyError:
         return responder.not_found()
     except ValueError as exc:
@@ -195,8 +194,9 @@ def _handle_commands(
         return False
     if not guard.require_auth():
         return True
+    assert ctx.facade is not None
     try:
-        payload = ctx.runtime.manager.get_session_commands(session_id)
+        payload = ctx.facade.session_commands_payload(session_id)
     except KeyError:
         return responder.not_found()
     except ValueError as exc:
@@ -220,14 +220,7 @@ def _handle_messages(
     if session_id is None:
         return True
 
-    runtime = ctx.runtime
-    t0_meta = time.perf_counter()
-    runtime.manager.refresh_session_meta(session_id, strict=False)
-    dt_meta_ms = (time.perf_counter() - t0_meta) * 1000.0
-    s = runtime.manager.get_session(session_id)
-    historical_row = runtime.api.historical_session_row(session_id)
-    if (not s) and historical_row is None:
-        return responder.not_found()
+    assert ctx.facade is not None
 
     qs = urllib.parse.parse_qs(u.query)
     offset_q = qs.get("offset")
@@ -240,22 +233,26 @@ def _handle_messages(
     before = 0 if before_q is None else int(before_q[0])
     before = max(0, before)
     limit_q = qs.get("limit")
-    limit = runtime.api.SESSION_HISTORY_PAGE_SIZE if limit_q is None else int(limit_q[0])
-    limit = max(20, min(runtime.api.SESSION_HISTORY_PAGE_SIZE, limit))
+    limit = ctx.runtime.api.SESSION_HISTORY_PAGE_SIZE if limit_q is None else int(limit_q[0])
+    limit = max(20, min(ctx.runtime.api.SESSION_HISTORY_PAGE_SIZE, limit))
 
-    payload = runtime.manager.get_messages_page(
-        session_id,
-        offset=offset,
-        init=init,
-        limit=limit,
-        before=before,
-    )
-    if isinstance(payload.get("diag"), dict) and s is not None and s.backend != "pi":
-        payload["diag"]["meta_refresh_ms"] = round(dt_meta_ms, 3)
+    try:
+        payload = ctx.facade.session_messages_payload(
+            session_id,
+            offset=offset,
+            init=init,
+            limit=limit,
+            before=before,
+        )
+    except KeyError:
+        return responder.not_found()
 
     responder.ok(payload)
     dt_total_ms = (time.perf_counter() - t0_total) * 1000.0
-    runtime.api.record_metric("api_messages_init_ms" if init else "api_messages_poll_ms", dt_total_ms)
+    ctx.runtime.api.record_metric(
+        "api_messages_init_ms" if init else "api_messages_poll_ms",
+        dt_total_ms,
+    )
     return True
 
 
@@ -270,11 +267,12 @@ def _handle_tail(
     if not guard.require_auth():
         return True
     session_id = _common.session_id_from_path(ctx.path)
+    assert ctx.facade is not None
     try:
-        tail = ctx.runtime.manager.get_tail(session_id)
+        payload = ctx.facade.session_tail_payload(session_id)
     except KeyError:
         return responder.not_found()
-    return responder.ok({"tail": tail})
+    return responder.ok(payload)
 
 
 def _handle_harness(
@@ -290,11 +288,12 @@ def _handle_harness(
     session_id = _path_part_session_id(ctx.path, ctx.handler)
     if session_id is None:
         return True
+    assert ctx.facade is not None
     try:
-        cfg = ctx.runtime.manager.harness_get(session_id)
+        payload = ctx.facade.session_harness_payload(session_id)
     except KeyError:
         return responder.not_found()
-    return responder.ok({"ok": True, **cfg})
+    return responder.ok(payload)
 
 
 def handle_get(runtime: ServerRuntime, handler: Any, path: str, u: Any) -> bool:

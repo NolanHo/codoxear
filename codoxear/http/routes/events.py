@@ -7,6 +7,7 @@ import urllib.parse
 from typing import Any
 
 from ...runtime import ServerRuntime
+from ...runtime_facade import build_runtime_facade
 
 SSE_HEARTBEAT_SECONDS = 15.0
 SSE_RETRY_MS = 3000
@@ -45,10 +46,10 @@ def _write_sse_comment(handler: Any, text: str) -> None:
 
 
 def handle_get(runtime: ServerRuntime, handler: Any, path: str, u: Any) -> bool:
-    sv = runtime
+    facade = build_runtime_facade(runtime)
     if path != "/api/events":
         return False
-    if not sv.api.require_auth(handler):
+    if not facade.require_auth(handler):
         handler._unauthorized()
         return True
 
@@ -65,7 +66,7 @@ def handle_get(runtime: ServerRuntime, handler: Any, path: str, u: Any) -> bool:
         handler.wfile.write(f"retry: {SSE_RETRY_MS}\n\n".encode("utf-8"))
         handler.wfile.flush()
         while True:
-            result = sv.api.EVENT_HUB.poll(after_seq, timeout_s=SSE_HEARTBEAT_SECONDS)
+            result = facade.poll_events(after_seq, timeout_s=SSE_HEARTBEAT_SECONDS)
             if result.closed:
                 return True
             if result.cursor_expired:
