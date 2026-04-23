@@ -1026,11 +1026,13 @@ class PiBroker:
             return
         _send_socket_json_line(conn, {"commands": rpc.get_commands()})
 
-    def _cmd_ui_response(self, conn: socket.socket, req: dict[str, Any]) -> None:
+    def _parse_ui_response_request(
+        self,
+        req: dict[str, Any],
+    ) -> tuple[str, dict[str, Any]]:
         request_id = req.get("id")
         if not isinstance(request_id, str) or not request_id:
-            _send_socket_json_line(conn, {"error": "id required"})
-            return
+            raise ValueError("id required")
 
         ui_response_kwargs: dict[str, Any] = {}
         if bool(req.get("cancelled")):
@@ -1041,34 +1043,61 @@ class PiBroker:
                 ui_response_kwargs["confirmed"] = confirmed
             else:
                 ui_response_kwargs["value"] = req.get("value")
+        return request_id, ui_response_kwargs
 
+    def _resolve_pending_ui_request(
+        self,
+        request_id: str,
+    ) -> tuple[State, dict[str, Any], Any]:
         with self._lock:
             st = self.state
             if not st:
-                _send_socket_json_line(conn, {"error": "no state"})
-                return
+                raise RuntimeError("no state")
             pending = st.pending_ui_requests.get(request_id)
             if pending is None:
-                _send_socket_json_line(conn, {"error": "unknown or expired request"})
-                return
+                raise ValueError("unknown or expired request")
             if pending.get("status") != "pending":
-                _send_socket_json_line(conn, {"error": "request already resolved"})
-                return
+                raise RuntimeError("request already resolved")
             pending["status"] = "resolved"
             rpc = st.rpc
+        return st, pending, rpc
+
+    def _restore_pending_ui_request_on_failure(
+        self,
+        *,
+        request_id: str,
+        expected_pending: dict[str, Any],
+    ) -> None:
+        with self._lock:
+            st = self.state
+            current = st.pending_ui_requests.get(request_id) if st else None
+            if (
+                current is expected_pending
+                and isinstance(current, dict)
+                and current.get("status") == "resolved"
+            ):
+                current["status"] = "pending"
+
+    def _cmd_ui_response(self, conn: socket.socket, req: dict[str, Any]) -> None:
+        try:
+            request_id, ui_response_kwargs = self._parse_ui_response_request(req)
+        except ValueError as exc:
+            _send_socket_json_line(conn, {"error": str(exc)})
+            return
+
+        try:
+            _st, pending, rpc = self._resolve_pending_ui_request(request_id)
+        except (ValueError, RuntimeError) as exc:
+            _send_socket_json_line(conn, {"error": str(exc)})
+            return
 
         try:
             rpc.send_ui_response(request_id, **ui_response_kwargs)
         except Exception:
-            with self._lock:
-                st = self.state
-                current = st.pending_ui_requests.get(request_id) if st else None
-                if (
-                    current is pending
-                    and isinstance(current, dict)
-                    and current.get("status") == "resolved"
-                ):
-                    current["status"] = "pending"
+            self._restore_pending_ui_request_on_failure(
+                request_id=request_id,
+                expected_pending=pending,
+            )
             raise
 
         _send_socket_json_line(conn, {"ok": True})
@@ -1125,35 +1154,44 @@ class PiBroker:
         handler(conn, req)
         return True
 
-    def _handle_conn(self, conn: socket.socket) -> None:
-        f = None
+    def _read_conn_request(self, conn: socket.socket) -> dict[str, Any] | None:
+        f = conn.makefile("rb")
         try:
-            f = conn.makefile("rb")
             line = f.readline()
             if not line:
-                return
+                return None
             req = json.loads(line.decode("utf-8"))
+            return req if isinstance(req, dict) else {"cmd": None}
+        finally:
+            try:
+                f.close()
+            except Exception:
+                pass
+
+    def _send_conn_error(self, conn: socket.socket, exc: Exception) -> None:
+        if _socket_peer_disconnected(exc):
+            return
+        try:
+            error = str(exc).strip() or "exception"
+            payload = {"error": error}
+            if error == "exception":
+                payload["trace"] = traceback.format_exc()
+            _send_socket_json_line(conn, payload)
+        except Exception:
+            pass
+
+    def _handle_conn(self, conn: socket.socket) -> None:
+        try:
+            req = self._read_conn_request(conn)
+            if req is None:
+                return
             cmd = req.get("cmd")
             if self._dispatch_conn_command(conn, cmd, req):
                 return
             _send_socket_json_line(conn, {"error": "unknown cmd"})
         except Exception as exc:
-            if _socket_peer_disconnected(exc):
-                return
-            try:
-                error = str(exc).strip() or "exception"
-                payload = {"error": error}
-                if error == "exception":
-                    payload["trace"] = traceback.format_exc()
-                _send_socket_json_line(conn, payload)
-            except Exception:
-                pass
+            self._send_conn_error(conn, exc)
         finally:
-            if f is not None:
-                try:
-                    f.close()
-                except Exception:
-                    pass
             try:
                 conn.close()
             except Exception:
