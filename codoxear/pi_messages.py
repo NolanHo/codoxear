@@ -697,6 +697,58 @@ def _normalize_ask_user_answer(
     return None
 
 
+def _ask_user_answer_from_answers_map(
+    details: dict[str, Any],
+    *,
+    allow_multiple: bool,
+    question: str,
+) -> str | list[str] | None:
+    answers = details.get("answers")
+    if not isinstance(answers, dict) or not question:
+        return None
+    return _normalize_ask_user_answer(answers.get(question), allow_multiple=allow_multiple)
+
+
+def _ask_user_answer_from_response(
+    response: dict[str, Any],
+    *,
+    allow_multiple: bool,
+    was_custom: bool,
+) -> tuple[str | list[str] | None, bool] | None:
+    kind = response.get("kind") if isinstance(response.get("kind"), str) else ""
+    selections = response.get("selections")
+    if isinstance(selections, list):
+        normalized = [item for item in selections if isinstance(item, str) and item]
+        if normalized:
+            if allow_multiple or len(normalized) > 1:
+                return normalized, was_custom or kind == "custom"
+            return normalized[0], was_custom or kind == "custom"
+
+    value = response.get("value")
+    if isinstance(value, str) and value:
+        return value, was_custom or kind == "custom"
+
+    comment = response.get("comment")
+    if isinstance(comment, str) and comment.strip():
+        return comment.strip(), True
+    return None
+
+
+def _ask_user_answer_from_content_fallback(
+    *,
+    question: str,
+    content_text: str,
+    was_custom: bool,
+) -> tuple[str | list[str] | None, bool] | None:
+    if not question or not isinstance(content_text, str) or not content_text.strip():
+        return None
+    pattern = re.compile(rf'"{re.escape(question)}"\s*=\s*"([^"]+)"')
+    match = pattern.search(content_text)
+    if not match:
+        return None
+    return match.group(1), was_custom
+
+
 def _normalize_ask_user_result(
     details: dict[str, Any],
     *,
@@ -704,16 +756,17 @@ def _normalize_ask_user_result(
     question: str = "",
     content_text: str = "",
 ) -> tuple[str | list[str] | None, bool]:
-    answers = details.get("answers")
-    if isinstance(answers, dict) and question:
-        answer = _normalize_ask_user_answer(
-            answers.get(question), allow_multiple=allow_multiple
-        )
-        if answer is not None:
-            return answer, False
+    answer = _ask_user_answer_from_answers_map(
+        details,
+        allow_multiple=allow_multiple,
+        question=question,
+    )
+    if answer is not None:
+        return answer, False
 
     answer = _normalize_ask_user_answer(
-        details.get("answer"), allow_multiple=allow_multiple
+        details.get("answer"),
+        allow_multiple=allow_multiple,
     )
     was_custom = bool(details.get("wasCustom"))
     if answer is not None:
@@ -721,29 +774,21 @@ def _normalize_ask_user_result(
 
     response = details.get("response")
     if isinstance(response, dict):
-        kind = response.get("kind") if isinstance(response.get("kind"), str) else ""
-        selections = response.get("selections")
-        if isinstance(selections, list):
-            normalized = [item for item in selections if isinstance(item, str) and item]
-            if normalized:
-                if allow_multiple or len(normalized) > 1:
-                    return normalized, was_custom or kind == "custom"
-                return normalized[0], was_custom or kind == "custom"
+        resolved = _ask_user_answer_from_response(
+            response,
+            allow_multiple=allow_multiple,
+            was_custom=was_custom,
+        )
+        if resolved is not None:
+            return resolved
 
-        value = response.get("value")
-        if isinstance(value, str) and value:
-            return value, was_custom or kind == "custom"
-
-        comment = response.get("comment")
-        if isinstance(comment, str) and comment.strip():
-            return comment.strip(), True
-
-    if question and isinstance(content_text, str) and content_text.strip():
-        pattern = re.compile(rf'"{re.escape(question)}"\s*=\s*"([^"]+)"')
-        match = pattern.search(content_text)
-        if match:
-            return match.group(1), was_custom
-
+    fallback = _ask_user_answer_from_content_fallback(
+        question=question,
+        content_text=content_text,
+        was_custom=was_custom,
+    )
+    if fallback is not None:
+        return fallback
     return None, was_custom
 
 
@@ -1970,6 +2015,54 @@ def read_pi_message_delta(
     return events, new_off, meta_delta, flags, diag
 
 
+def _read_pi_tail_entries_for_idle(session_path: Path) -> list[Any] | None:
+    if not session_path.exists():
+        return None
+    try:
+        size = session_path.stat().st_size
+    except OSError:
+        return None
+    scan_bytes = min(size, 64 * 1024)
+    offset = max(0, size - scan_bytes)
+    try:
+        entries, _ = _read_jsonl_from_offset(session_path, offset, max_bytes=scan_bytes)
+    except Exception:
+        return None
+    return entries
+
+
+def _idle_signal_from_entry_lifecycle(entry: dict[str, Any]) -> bool | None:
+    payload = _payload_for_entry(entry)
+    entry_type = _entry_type(entry)
+    source_event = (
+        payload.get("source_event")
+        if isinstance(payload, dict) and isinstance(payload.get("source_event"), str)
+        else None
+    )
+    terminal_events = _PI_END_EVENT_TYPES | _PI_ABORT_EVENT_TYPES
+    if source_event in terminal_events or entry_type in terminal_events:
+        return True
+    if source_event == "turn.started" or entry_type == "turn.started":
+        return False
+    return None
+
+
+def _idle_decision_from_roles(
+    *,
+    last_role: str | None,
+    last_raw_role: str | None,
+) -> bool | None:
+    if last_role == "assistant":
+        return True
+    if last_role == "user":
+        return False
+    if last_raw_role == "toolResult":
+        return False
+    if last_raw_role == "assistant":
+        return False
+    return None
+
+
 def is_pi_session_idle(session_path: Path) -> bool | None:
     """Check if the Pi session's last turn has ended (idle).
 
@@ -1984,64 +2077,29 @@ def is_pi_session_idle(session_path: Path) -> bool | None:
     * Returns None when no useful signal is found (caller should fall back
       to the broker's busy flag).
     """
-    if not session_path.exists():
-        return None
-    try:
-        size = session_path.stat().st_size
-    except OSError:
-        return None
-    scan_bytes = min(size, 64 * 1024)
-    offset = max(0, size - scan_bytes)
-    try:
-        entries, _ = _read_jsonl_from_offset(session_path, offset, max_bytes=scan_bytes)
-    except Exception:
+    entries = _read_pi_tail_entries_for_idle(session_path)
+    if entries is None:
         return None
 
-    _TERMINAL = _PI_END_EVENT_TYPES | _PI_ABORT_EVENT_TYPES
     last_role: str | None = None
     last_raw_role: str | None = None
-
     for entry in reversed(entries):
         if not isinstance(entry, dict):
             continue
-        payload = _payload_for_entry(entry)
-        entry_type = _entry_type(entry)
-        source_event = (
-            payload.get("source_event")
-            if isinstance(payload, dict)
-            and isinstance(payload.get("source_event"), str)
-            else None
-        )
+        lifecycle_signal = _idle_signal_from_entry_lifecycle(entry)
+        if lifecycle_signal is not None:
+            return lifecycle_signal
 
-        # Prefer explicit turn lifecycle events when available.
-        if source_event in _TERMINAL or entry_type in _TERMINAL:
-            return True
-        if source_event == "turn.started" or entry_type == "turn.started":
-            return False
-
-        # Track the last message role that carried visible text.
         if last_role is None:
-            role, text, _has_ts = _message_event_info(entry)
+            role, _text, _has_ts = _message_event_info(entry)
             if role is not None:
                 last_role = role
 
-        # Track any message role (including toolResult and text-less assistant).
-        if last_raw_role is None and isinstance(payload, dict):
-            raw_role = payload.get("role")
-            if isinstance(raw_role, str) and raw_role in {
-                "user",
-                "assistant",
-                "toolResult",
-            }:
-                last_raw_role = raw_role
+        if last_raw_role is None:
+            payload = _payload_for_entry(entry)
+            if isinstance(payload, dict):
+                raw_role = payload.get("role")
+                if isinstance(raw_role, str) and raw_role in {"user", "assistant", "toolResult"}:
+                    last_raw_role = raw_role
 
-    if last_role == "assistant":
-        return True  # last text message is from assistant → idle
-    if last_role == "user":
-        return False  # user spoke last → Pi should be processing
-    # No text-bearing message in scan range; fall back to raw roles.
-    if last_raw_role == "toolResult":
-        return False  # tool result without subsequent text → still processing
-    if last_raw_role == "assistant":
-        return False  # assistant with only toolCall blocks → still invoking tools
-    return None  # no useful signal
+    return _idle_decision_from_roles(last_role=last_role, last_raw_role=last_raw_role)
