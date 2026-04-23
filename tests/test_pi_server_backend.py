@@ -2938,6 +2938,124 @@ class TestPiBackendRouting(unittest.TestCase):
             ["before", "Bridge send failed", "after"],
         )
 
+    def test_session_live_payload_orders_bridge_against_iso_timestamp_strings(
+        self,
+    ) -> None:
+        mgr = _make_manager()
+        with tempfile.TemporaryDirectory() as td:
+            sock = Path(td) / "pi.sock"
+            sock.touch()
+            session_path = Path(td) / "pi-session.jsonl"
+            mgr._sessions["pi-session"] = Session(
+                session_id="pi-session",
+                thread_id="pi-thread-001",
+                agent_backend="pi",
+                backend="pi",
+                broker_pid=3333,
+                codex_pid=4444,
+                owned=True,
+                start_ts=123.0,
+                cwd=td,
+                log_path=None,
+                sock_path=sock,
+                session_path=session_path,
+                transport="pi-rpc",
+                supports_live_ui=False,
+            )
+            mgr.refresh_session_meta = lambda *_args, **_kwargs: None  # type: ignore[method-assign]
+            mgr.get_state = lambda *_args, **_kwargs: {"busy": True, "queue_len": 0, "token": None}  # type: ignore[method-assign]
+            mgr.get_ui_state = lambda *_args, **_kwargs: {"requests": []}  # type: ignore[method-assign]
+            mgr.get_messages_page = lambda *_args, **_kwargs: {
+                "thread_id": "pi-thread-001",
+                "log_path": str(session_path),
+                "offset": 2,
+                "events": [
+                    {"role": "user", "text": "before", "timestamp": "2026-01-01T00:00:01Z"},
+                    {"role": "assistant", "text": "after", "timestamp": "2026-01-01T00:00:05Z"},
+                ],
+                "busy": True,
+                "queue_len": 0,
+                "token": None,
+            }  # type: ignore[method-assign]
+            mgr._append_bridge_event(
+                "pi-thread-001",
+                {
+                    "type": "pi_event",
+                    "summary": "Bridge send failed",
+                    "event_id": "bridge:test-iso-ts",
+                    "request_state": "failed",
+                    "ts": 1767225603.0,
+                },
+            )
+
+            payload = _session_live_payload(
+                mgr, "pi-session", offset=0, bridge_offset=0
+            )
+
+        self.assertEqual(
+            [event.get("summary") or event.get("text") for event in payload["events"]],
+            ["before", "Bridge send failed", "after"],
+        )
+
+    def test_session_live_payload_uses_monotonic_fallback_for_missing_ts(
+        self,
+    ) -> None:
+        mgr = _make_manager()
+        with tempfile.TemporaryDirectory() as td:
+            sock = Path(td) / "pi.sock"
+            sock.touch()
+            session_path = Path(td) / "pi-session.jsonl"
+            mgr._sessions["pi-session"] = Session(
+                session_id="pi-session",
+                thread_id="pi-thread-001",
+                agent_backend="pi",
+                backend="pi",
+                broker_pid=3333,
+                codex_pid=4444,
+                owned=True,
+                start_ts=123.0,
+                cwd=td,
+                log_path=None,
+                sock_path=sock,
+                session_path=session_path,
+                transport="pi-rpc",
+                supports_live_ui=False,
+            )
+            mgr.refresh_session_meta = lambda *_args, **_kwargs: None  # type: ignore[method-assign]
+            mgr.get_state = lambda *_args, **_kwargs: {"busy": True, "queue_len": 0, "token": None}  # type: ignore[method-assign]
+            mgr.get_ui_state = lambda *_args, **_kwargs: {"requests": []}  # type: ignore[method-assign]
+            mgr.get_messages_page = lambda *_args, **_kwargs: {
+                "thread_id": "pi-thread-001",
+                "log_path": str(session_path),
+                "offset": 2,
+                "events": [
+                    {"role": "user", "text": "before-no-ts"},
+                    {"role": "assistant", "text": "after", "ts": 5.0},
+                ],
+                "busy": True,
+                "queue_len": 0,
+                "token": None,
+            }  # type: ignore[method-assign]
+            mgr._append_bridge_event(
+                "pi-thread-001",
+                {
+                    "type": "pi_event",
+                    "summary": "Bridge buffered prompt during compaction",
+                    "event_id": "bridge:test-fallback-ts",
+                    "request_state": "buffered",
+                    "ts": 3.0,
+                },
+            )
+
+            payload = _session_live_payload(
+                mgr, "pi-session", offset=0, bridge_offset=0
+            )
+
+        self.assertEqual(
+            [event.get("summary") or event.get("text") for event in payload["events"]],
+            ["before-no-ts", "Bridge buffered prompt during compaction", "after"],
+        )
+
     def test_session_live_payload_appends_streaming_pi_rpc_assistant_event(
         self,
     ) -> None:

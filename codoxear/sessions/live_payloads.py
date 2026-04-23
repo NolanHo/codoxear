@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime
 from typing import Any
 
 _SERVER = None
@@ -158,25 +159,59 @@ def pi_live_messages_payload(manager: Any, session: Any, *, offset: int = 0) -> 
 
 
 
+def _parse_iso8601_to_epoch(raw: str) -> float | None:
+    text = raw.strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        return datetime.datetime.fromisoformat(text).timestamp()
+    except ValueError:
+        return None
+
+
+
 def _event_ts(event: dict[str, Any]) -> float | None:
-    ts = event.get("ts")
-    if isinstance(ts, (int, float)):
-        return float(ts)
+    for key in ("ts", "timestamp", "created_at", "updated_at"):
+        value = event.get(key)
+        if isinstance(value, (int, float)):
+            ts = float(value)
+            if ts > 1_000_000_000_000.0:
+                ts /= 1000.0
+            return ts
+        if isinstance(value, str):
+            parsed = _parse_iso8601_to_epoch(value)
+            if parsed is not None:
+                return float(parsed)
     return None
+
+
+
+def _event_sort_timestamps(events: list[dict[str, Any]]) -> tuple[list[float], float | None]:
+    out: list[float] = []
+    last_seen: float | None = None
+    for event in events:
+        ts = _event_ts(event)
+        if ts is None:
+            ts = (last_seen + 1e-6) if last_seen is not None else 1e-6
+        out.append(float(ts))
+        if last_seen is None or ts > last_seen:
+            last_seen = float(ts)
+    return out, last_seen
 
 
 
 def _insert_event_by_ts(
     merged: list[dict[str, Any]], event: dict[str, Any]
 ) -> None:
+    existing_ts, max_ts = _event_sort_timestamps(merged)
     ts = _event_ts(event)
-    if ts is None:
-        merged.append(event)
-        return
+    event_ts = float(ts) if ts is not None else ((max_ts + 1e-6) if max_ts is not None else 1e-6)
     insert_at = len(merged)
     while insert_at > 0:
-        prev_ts = _event_ts(merged[insert_at - 1])
-        if prev_ts is None or prev_ts <= ts:
+        prev_ts = existing_ts[insert_at - 1]
+        if prev_ts <= event_ts:
             break
         insert_at -= 1
     merged.insert(insert_at, event)
