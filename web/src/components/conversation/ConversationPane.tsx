@@ -1142,7 +1142,7 @@ function isRawCodeToolOutput(name: unknown): boolean {
   if (isBashTool(name)) {
     return true;
   }
-  return name === "read" || name === "grep" || name === "find" || name === "ls" || name === "context_log";
+  return name === "read" || name === "grep" || name === "find" || name === "ls";
 }
 
 function todoStatusClass(status: unknown): string {
@@ -1230,6 +1230,34 @@ function parseContextTagResult(text: string): { tag: string; target: string } | 
   return { tag: match[1] || "", target: match[2] || "" };
 }
 
+function parseContextLogDashboard(text: string): { usage: string; segment: string } | null {
+  if (!text.startsWith("[Context Dashboard]")) {
+    return null;
+  }
+  const usageLine = text.split("\n").find((line) => line.includes("Context Usage:"));
+  const segmentLine = text.split("\n").find((line) => line.includes("Segment Size:"));
+  if (!usageLine || !segmentLine) {
+    return null;
+  }
+  const usage = usageLine.split("Context Usage:")[1]?.trim() || "";
+  const segment = segmentLine.split("Segment Size:")[1]?.trim() || "";
+  if (!usage || !segment) {
+    return null;
+  }
+  return { usage, segment };
+}
+
+function parseContextCheckoutResult(text: string): { phase: string; note: string } | null {
+  if (text.trim().toLowerCase() === "checkout start") {
+    return { phase: "start", note: "Checkout procedure started" };
+  }
+  const match = text.match(/^Checked out to\s+(.+)$/i);
+  if (match) {
+    return { phase: "completed", note: (match[1] || "").trim() };
+  }
+  return null;
+}
+
 function renderStructuredToolResult(event: MessageEvent) {
   const text = firstNonEmptyText(event.text);
   if (!text) {
@@ -1295,6 +1323,44 @@ function renderStructuredToolResult(event: MessageEvent) {
         <div className="messageMetaItem rounded-xl bg-background/70 p-3 text-sm">
           <span className="block text-xs uppercase tracking-wide text-muted-foreground">Target</span>
           <strong>{parsed.target}</strong>
+        </div>
+      </div>
+    );
+  }
+
+  if (event.name === "context_log") {
+    const parsed = parseContextLogDashboard(text);
+    if (!parsed) {
+      return null;
+    }
+    return (
+      <div className="grid grid-cols-1 gap-2">
+        <div className="messageMetaItem rounded-xl bg-background/70 p-3 text-sm">
+          <span className="block text-xs uppercase tracking-wide text-muted-foreground">Context Usage</span>
+          <strong>{parsed.usage}</strong>
+        </div>
+        <div className="messageMetaItem rounded-xl bg-background/70 p-3 text-sm">
+          <span className="block text-xs uppercase tracking-wide text-muted-foreground">Segment Size</span>
+          <strong>{parsed.segment}</strong>
+        </div>
+      </div>
+    );
+  }
+
+  if (event.name === "context_checkout") {
+    const parsed = parseContextCheckoutResult(text);
+    if (!parsed) {
+      return null;
+    }
+    return (
+      <div className="grid grid-cols-2 gap-2">
+        <div className="messageMetaItem rounded-xl bg-background/70 p-3 text-sm">
+          <span className="block text-xs uppercase tracking-wide text-muted-foreground">Checkout</span>
+          <strong>{parsed.phase}</strong>
+        </div>
+        <div className="messageMetaItem rounded-xl bg-background/70 p-3 text-sm">
+          <span className="block text-xs uppercase tracking-wide text-muted-foreground">Note</span>
+          <strong>{parsed.note}</strong>
         </div>
       </div>
     );

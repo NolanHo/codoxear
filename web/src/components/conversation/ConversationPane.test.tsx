@@ -695,6 +695,95 @@ describe("ConversationPane", () => {
     expect(root.textContent).toContain("09582f3d");
   });
 
+  it("renders context_log dashboard as structured usage card", () => {
+    const sessionsStore = createStaticStore(
+      { items: [], activeSessionId: "sess-context-log", loading: false, newSessionDefaults: null },
+      { refresh: () => Promise.resolve(), select: () => undefined },
+    );
+    const messagesStore = createStaticStore(
+      {
+        bySessionId: {
+          "sess-context-log": [
+            {
+              type: "tool_result",
+              name: "context_log",
+              text: "[Context Dashboard]\\n• Context Usage:    8.7% (87k/1.0M)\\n• Segment Size:     1542 steps since last tag 'None'",
+              ts: 100,
+            },
+          ],
+        },
+        offsetsBySessionId: { "sess-context-log": 1 },
+        loading: false,
+      },
+      { loadInitial: () => Promise.resolve(), poll: () => Promise.resolve() },
+    );
+
+    root = document.createElement("div");
+    document.body.appendChild(root);
+    render(
+      <AppProviders sessionsStore={sessionsStore as any} messagesStore={messagesStore as any}>
+        <ConversationPane />
+      </AppProviders>,
+      root,
+    );
+
+    const token = root.querySelector(".machineTraceToken.tool_result") as HTMLButtonElement | null;
+    expect(token).not.toBeNull();
+
+    act(() => {
+      token?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+
+    expect(root.textContent).toContain("Context Usage");
+    expect(root.textContent).toContain("8.7% (87k/1.0M)");
+    expect(root.textContent).toContain("Segment Size");
+    expect(root.textContent).toContain("1542 steps since last tag 'None'");
+  });
+
+  it("renders context_checkout start as structured status card", () => {
+    const sessionsStore = createStaticStore(
+      { items: [], activeSessionId: "sess-context-checkout", loading: false, newSessionDefaults: null },
+      { refresh: () => Promise.resolve(), select: () => undefined },
+    );
+    const messagesStore = createStaticStore(
+      {
+        bySessionId: {
+          "sess-context-checkout": [
+            {
+              type: "tool_result",
+              name: "context_checkout",
+              text: "checkout start",
+              ts: 100,
+            },
+          ],
+        },
+        offsetsBySessionId: { "sess-context-checkout": 1 },
+        loading: false,
+      },
+      { loadInitial: () => Promise.resolve(), poll: () => Promise.resolve() },
+    );
+
+    root = document.createElement("div");
+    document.body.appendChild(root);
+    render(
+      <AppProviders sessionsStore={sessionsStore as any} messagesStore={messagesStore as any}>
+        <ConversationPane />
+      </AppProviders>,
+      root,
+    );
+
+    const token = root.querySelector(".machineTraceToken.tool_result") as HTMLButtonElement | null;
+    expect(token).not.toBeNull();
+
+    act(() => {
+      token?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+
+    expect(root.textContent).toContain("Checkout");
+    expect(root.textContent).toContain("start");
+    expect(root.textContent).toContain("Checkout procedure started");
+  });
+
   it("renders read tool_result as raw code block output", () => {
     const sessionsStore = createStaticStore(
       { items: [], activeSessionId: "sess-read-raw", loading: false, newSessionDefaults: null },
