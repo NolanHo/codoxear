@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import socket
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -10,6 +11,35 @@ from .runtime_access import manager_runtime
 
 def _runtime(manager: Any):
     return manager_runtime(manager)
+
+
+@dataclass(slots=True)
+class SessionTransportService:
+    manager: Any
+
+    def sock_call(
+        self, sock_path: Path, req: dict[str, Any], timeout_s: float = 2.0
+    ) -> dict[str, Any]:
+        return sock_call(self.manager, sock_path, req, timeout_s=timeout_s)
+
+    def kill_session_via_pids(self, session: Any) -> bool:
+        return kill_session_via_pids(self.manager, session)
+
+    def kill_session(self, session_id: str) -> bool:
+        return kill_session(self.manager, session_id)
+
+    def get_state(self, session_id: str) -> dict[str, Any]:
+        return get_state(self.manager, session_id)
+
+    def get_tail(self, session_id: str) -> str:
+        return get_tail(self.manager, session_id)
+
+    def inject_keys(self, session_id: str, seq: str) -> dict[str, Any]:
+        return inject_keys(self.manager, session_id, seq)
+
+
+def service(manager: Any) -> SessionTransportService:
+    return SessionTransportService(manager)
 
 
 def sock_call(

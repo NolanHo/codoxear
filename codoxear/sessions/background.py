@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 import threading
 import traceback
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +13,82 @@ from .runtime_access import manager_runtime
 
 def _runtime(manager: Any):
     return manager_runtime(manager)
+
+
+@dataclass(slots=True)
+class SessionBackgroundService:
+    manager: Any
+
+    def set_bridge_transport_state(
+        self,
+        runtime_id: str,
+        *,
+        state: str,
+        error: str | None = None,
+        checked_ts: float | None = None,
+    ) -> None:
+        set_bridge_transport_state(
+            self.manager,
+            runtime_id,
+            state=state,
+            error=error,
+            checked_ts=checked_ts,
+        )
+
+    def probe_bridge_transport(
+        self, session_id: str, *, force_rpc: bool = False
+    ) -> tuple[str, str | None]:
+        return probe_bridge_transport(self.manager, session_id, force_rpc=force_rpc)
+
+    def enqueue_outbound_request(self, runtime_id: str, text: str):
+        return enqueue_outbound_request(self.manager, runtime_id, text)
+
+    def fail_outbound_request(self, request: Any, error: str) -> None:
+        fail_outbound_request(self.manager, request, error)
+
+    def mark_outbound_request_buffered_for_compaction(self, request: Any) -> None:
+        mark_outbound_request_buffered_for_compaction(self.manager, request)
+
+    def maybe_drain_outbound_request(self, runtime_id: str) -> bool:
+        return maybe_drain_outbound_request(self.manager, runtime_id)
+
+    def session_display_name(self, session_id: str) -> str:
+        return session_display_name(self.manager, session_id)
+
+    def observe_rollout_delta(
+        self, session_id: str, *, objs: list[dict[str, Any]], new_off: int
+    ) -> None:
+        observe_rollout_delta(self.manager, session_id, objs=objs, new_off=new_off)
+
+    def voice_push_scan_loop(self) -> None:
+        voice_push_scan_loop(self.manager)
+
+    def voice_push_scan_sweep(self) -> None:
+        voice_push_scan_sweep(self.manager)
+
+    def harness_loop(self) -> None:
+        harness_loop(self.manager)
+
+    def harness_sweep(self) -> None:
+        harness_sweep(self.manager)
+
+    def queue_loop(self) -> None:
+        queue_loop(self.manager)
+
+    def maybe_drain_session_queue(
+        self, session_id: str, *, now_ts: float | None = None
+    ) -> bool:
+        return maybe_drain_session_queue(self.manager, session_id, now_ts=now_ts)
+
+    def queue_sweep(self) -> None:
+        queue_sweep(self.manager)
+
+    def update_meta_counters(self) -> None:
+        update_meta_counters(self.manager)
+
+
+def service(manager: Any) -> SessionBackgroundService:
+    return SessionBackgroundService(manager)
 
 
 def set_bridge_transport_state(

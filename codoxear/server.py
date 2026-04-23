@@ -2967,8 +2967,7 @@ class SessionManager:
         error: str | None = None,
         checked_ts: float | None = None,
     ) -> None:
-        _session_background.set_bridge_transport_state(
-            self,
+        _session_background.service(self).set_bridge_transport_state(
             runtime_id,
             state=state,
             error=error,
@@ -2978,25 +2977,24 @@ class SessionManager:
     def _probe_bridge_transport(
         self, session_id: str, *, force_rpc: bool = False
     ) -> tuple[str, str | None]:
-        return _session_background.probe_bridge_transport(
-            self,
+        return _session_background.service(self).probe_bridge_transport(
             session_id,
             force_rpc=force_rpc,
         )
 
     def _enqueue_outbound_request(self, runtime_id: str, text: str) -> BridgeOutboundRequest:
-        return _session_background.enqueue_outbound_request(self, runtime_id, text)
+        return _session_background.service(self).enqueue_outbound_request(runtime_id, text)
 
     def _fail_outbound_request(self, request: BridgeOutboundRequest, error: str) -> None:
-        _session_background.fail_outbound_request(self, request, error)
+        _session_background.service(self).fail_outbound_request(request, error)
 
     def _mark_outbound_request_buffered_for_compaction(
         self, request: BridgeOutboundRequest
     ) -> None:
-        _session_background.mark_outbound_request_buffered_for_compaction(self, request)
+        _session_background.service(self).mark_outbound_request_buffered_for_compaction(request)
 
     def _maybe_drain_outbound_request(self, runtime_id: str) -> bool:
-        return _session_background.maybe_drain_outbound_request(self, runtime_id)
+        return _session_background.service(self).maybe_drain_outbound_request(runtime_id)
 
     def _catalog_record_for_ref(self, ref: SessionRef) -> DurableSessionRecord | None:
         return _session_lifecycle.service(self).catalog_record_for_ref(ref)
@@ -3509,44 +3507,42 @@ class SessionManager:
         )
 
     def _session_display_name(self, session_id: str) -> str:
-        return _session_background.session_display_name(self, session_id)
+        return _session_background.service(self).session_display_name(session_id)
 
     def _observe_rollout_delta(
         self, session_id: str, *, objs: list[dict[str, Any]], new_off: int
     ) -> None:
-        _session_background.observe_rollout_delta(
-            self,
+        _session_background.service(self).observe_rollout_delta(
             session_id,
             objs=objs,
             new_off=new_off,
         )
 
     def _voice_push_scan_loop(self) -> None:
-        _session_background.voice_push_scan_loop(self)
+        _session_background.service(self).voice_push_scan_loop()
 
     def _voice_push_scan_sweep(self) -> None:
-        _session_background.voice_push_scan_sweep(self)
+        _session_background.service(self).voice_push_scan_sweep()
 
     def _harness_loop(self) -> None:
-        _session_background.harness_loop(self)
+        _session_background.service(self).harness_loop()
 
     def _harness_sweep(self) -> None:
-        _session_background.harness_sweep(self)
+        _session_background.service(self).harness_sweep()
 
     def _queue_loop(self) -> None:
-        _session_background.queue_loop(self)
+        _session_background.service(self).queue_loop()
 
     def _maybe_drain_session_queue(
         self, session_id: str, *, now_ts: float | None = None
     ) -> bool:
-        return _session_background.maybe_drain_session_queue(
-            self,
+        return _session_background.service(self).maybe_drain_session_queue(
             session_id,
             now_ts=now_ts,
         )
 
     def _queue_sweep(self) -> None:
-        _session_background.queue_sweep(self)
+        _session_background.service(self).queue_sweep()
 
     def _discover_existing(
         self, *, force: bool = False, skip_invalid_sidecars: bool = False
@@ -3575,7 +3571,7 @@ class SessionManager:
         _session_catalog.service(self).prune_dead_sessions()
 
     def _update_meta_counters(self) -> None:
-        _session_background.update_meta_counters(self)
+        _session_background.service(self).update_meta_counters()
 
     def list_sessions(self) -> list[dict[str, Any]]:
         if getattr(self, "_runtime", None) is None:
@@ -3701,13 +3697,13 @@ class SessionManager:
     def _sock_call(
         self, sock_path: Path, req: dict[str, Any], timeout_s: float = 2.0
     ) -> dict[str, Any]:
-        return _session_transport.sock_call(self, sock_path, req, timeout_s=timeout_s)
+        return _session_transport.service(self).sock_call(sock_path, req, timeout_s=timeout_s)
 
     def _kill_session_via_pids(self, s: Session) -> bool:
-        return _session_transport.kill_session_via_pids(self, s)
+        return _session_transport.service(self).kill_session_via_pids(s)
 
     def kill_session(self, session_id: str) -> bool:
-        return _session_transport.kill_session(self, session_id)
+        return _session_transport.service(self).kill_session(session_id)
 
     def spawn_web_session(
         self,
@@ -3787,7 +3783,7 @@ class SessionManager:
         return _session_control.service(self).queue_update(session_id, int(index), text)
 
     def get_state(self, session_id: str) -> dict[str, Any]:
-        return _session_transport.get_state(self, session_id)
+        return _session_transport.service(self).get_state(session_id)
 
     def get_ui_state(self, session_id: str) -> dict[str, Any]:
         return _pi_ui_bridge.get_ui_state(RUNTIME, self, session_id)
@@ -3801,10 +3797,10 @@ class SessionManager:
         return _pi_ui_bridge.submit_ui_response(RUNTIME, self, session_id, payload)
 
     def get_tail(self, session_id: str) -> str:
-        return _session_transport.get_tail(self, session_id)
+        return _session_transport.service(self).get_tail(session_id)
 
     def inject_keys(self, session_id: str, seq: str) -> dict[str, Any]:
-        return _session_transport.inject_keys(self, session_id, seq)
+        return _session_transport.service(self).inject_keys(session_id, seq)
 
     def mark_turn_complete(self, session_id: str, payload: dict[str, Any]) -> None:
         return
