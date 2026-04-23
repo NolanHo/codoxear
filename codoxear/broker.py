@@ -1089,75 +1089,121 @@ class Broker:
             except OSError:
                 break
 
+
+    def _drain_key_queue_if_idle(self) -> None:
+        fd: int | None = None
+        kq: list[bytes] = []
+        with self._lock:
+            st = self.state
+            if not st:
+                return
+            if st.busy or st.turn_open or st.pending_calls:
+                return
+            if not st.key_queue:
+                return
+            fd = st.pty_master_fd
+            if fd is None:
+                return
+            kq = st.key_queue[:]
+            st.key_queue.clear()
+        for b in kq:
+            try:
+                _write_all(fd, b)
+            except Exception:
+                break
+
+    def _mark_idle_if_quiet(self) -> None:
+        now_ts = _now()
+        with self._lock:
+            st = self.state
+            if st and _should_clear_busy_state(st, now_ts):
+                st.busy = False
+                st.turn_open = False
+                st.turn_has_completion_candidate = False
+                st.last_turn_activity_ts = 0.0
+                st.last_interrupt_hint_ts = 0.0
+
+    def _clear_resume_delivery_mute_if_idle(self) -> None:
+        clear_meta = False
+        with self._lock:
+            st = self.state
+            if (
+                st
+                and st.resume_session_id
+                and (not st.busy)
+                and (not st.turn_open)
+                and (not st.pending_calls)
+            ):
+                st.resume_session_id = None
+                clear_meta = True
+        if clear_meta:
+            self._write_meta()
+
+    def _update_token_from_rollout_obj(self, obj: dict[str, Any]) -> None:
+        token_update = _pi_token_update(obj)
+        if token_update is not None:
+            with self._lock:
+                if self.state:
+                    self.state.token = token_update
+
+        if obj.get("type") != "event_msg":
+            return
+        payload = obj.get("payload")
+        if not isinstance(payload, dict):
+            raise ValueError("invalid rollout event_msg payload")
+        if payload.get("type") != "token_count":
+            return
+        info = payload.get("info")
+        if not isinstance(info, dict) or not isinstance(info.get("total_token_usage"), dict):
+            return
+        ctx = info.get("model_context_window")
+        last = info.get("last_token_usage")
+        if not isinstance(ctx, int) or not isinstance(last, dict):
+            return
+        tt = last.get("total_tokens")
+        if not isinstance(tt, int):
+            return
+        token_update = {
+            "context_window": ctx,
+            "tokens_in_context": tt,
+            "tokens_remaining": max(ctx - tt, 0),
+            "percent_remaining": _context_percent_remaining(
+                tokens_in_context=tt,
+                context_window=ctx,
+            ),
+            "baseline_tokens": CONTEXT_WINDOW_BASELINE_TOKENS,
+            "as_of": obj.get("timestamp") if isinstance(obj.get("timestamp"), str) else None,
+        }
+        with self._lock:
+            if self.state:
+                self.state.token = token_update
+
+    def _apply_rollout_obj(self, obj: dict[str, Any], *, now_ts: float) -> None:
+        with self._lock:
+            st = self.state
+            if st:
+                _apply_rollout_obj_to_state(st, obj, now_ts=now_ts)
+
     def _log_watcher(self) -> None:
         while not self._stop.is_set():
             with self._lock:
                 st = self.state
-                if not st or not st.log_path:
-                    pass
-                else:
+                if st and st.log_path:
                     log_path = st.log_path
                     off = st.log_off
-            if not st or not st.log_path:
+                else:
+                    log_path = None
+                    off = 0
+            if log_path is None:
                 time.sleep(0.25)
                 continue
 
             objs, new_off = _read_jsonl_from_offset(log_path, off, max_bytes=256 * 1024)
 
-            def maybe_drain_one_if_idle() -> None:
-                fd: int | None = None
-                kq: list[bytes] = []
-                with self._lock:
-                    st3 = self.state
-                    if not st3:
-                        return
-                    if st3.busy or st3.turn_open or st3.pending_calls:
-                        return
-                    if not st3.key_queue:
-                        return
-                    fd = st3.pty_master_fd
-                    if fd is None:
-                        return
-                    if st3.key_queue:
-                        kq = st3.key_queue[:]
-                        st3.key_queue.clear()
-                for b in kq:
-                    try:
-                        _write_all(fd, b)
-                    except Exception:
-                        break
-
-            def maybe_mark_idle() -> None:
-                now_ts = _now()
-                with self._lock:
-                    st3 = self.state
-                    if st3 and _should_clear_busy_state(st3, now_ts):
-                        st3.busy = False
-                        st3.turn_open = False
-                        st3.turn_has_completion_candidate = False
-                        st3.last_turn_activity_ts = 0.0
-                        st3.last_interrupt_hint_ts = 0.0
-
-            def maybe_clear_resume_delivery_mute() -> None:
-                clear_meta = False
-                with self._lock:
-                    st3 = self.state
-                    if (
-                        st3
-                        and st3.resume_session_id
-                        and (not st3.busy)
-                        and (not st3.turn_open)
-                        and (not st3.pending_calls)
-                    ):
-                        st3.resume_session_id = None
-                        clear_meta = True
-                if clear_meta:
-                    self._write_meta()
-
             if new_off == off:
-                maybe_mark_idle()
-                maybe_clear_resume_delivery_mute()
-                maybe_drain_one_if_idle()
+                self._mark_idle_if_quiet()
+                self._clear_resume_delivery_mute_if_idle()
+                self._drain_key_queue_if_idle()
                 time.sleep(0.25)
                 continue
 
@@ -1167,50 +1213,15 @@ class Broker:
                     st2.log_off = new_off
 
             for obj in objs:
+                if not isinstance(obj, dict):
+                    continue
                 now_ts = _now()
-                token_update = _pi_token_update(obj)
-                if token_update is not None:
-                    with self._lock:
-                        if self.state:
-                            self.state.token = token_update
-                if obj.get("type") == "event_msg":
-                    p = obj.get("payload")
-                    if not isinstance(p, dict):
-                        raise ValueError("invalid rollout event_msg payload")
-                    pt = p.get("type")
-                    if pt == "token_count":
-                        info = p.get("info")
-                        if isinstance(info, dict) and isinstance(
-                            info.get("total_token_usage"), dict
-                        ):
-                            ctx = info.get("model_context_window")
-                            last = info.get("last_token_usage")
-                            if isinstance(ctx, int) and isinstance(last, dict):
-                                tt = last.get("total_tokens")
-                                if isinstance(tt, int):
-                                    token_update = {
-                                        "context_window": ctx,
-                                        "tokens_in_context": tt,
-                                        "tokens_remaining": max(ctx - tt, 0),
-                                        "percent_remaining": _context_percent_remaining(
-                                            tokens_in_context=tt, context_window=ctx
-                                        ),
-                                        "baseline_tokens": CONTEXT_WINDOW_BASELINE_TOKENS,
-                                        "as_of": obj.get("timestamp")
-                                        if isinstance(obj.get("timestamp"), str)
-                                        else None,
-                                    }
-                                    with self._lock:
-                                        if self.state:
-                                            self.state.token = token_update
-                with self._lock:
-                    st3 = self.state
-                    if st3:
-                        _apply_rollout_obj_to_state(st3, obj, now_ts=now_ts)
+                self._update_token_from_rollout_obj(obj)
+                self._apply_rollout_obj(obj, now_ts=now_ts)
 
-            maybe_mark_idle()
-            maybe_clear_resume_delivery_mute()
-            maybe_drain_one_if_idle()
+            self._mark_idle_if_quiet()
+            self._clear_resume_delivery_mute_if_idle()
+            self._drain_key_queue_if_idle()
 
     def _write_meta(self) -> None:
         st = self.state
