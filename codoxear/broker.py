@@ -814,52 +814,36 @@ class Broker:
             threading.Thread(target=self._log_watcher, daemon=True).start()
         return True
 
+    def _reply_terminal_query(
+        self,
+        *,
+        fd: int,
+        query: bytes,
+        reply: bytes,
+    ) -> None:
+        if query not in self._term_query_buf:
+            return
+        try:
+            _write_all(fd, reply)
+        except Exception:
+            traceback.print_exc()
+        self._term_query_buf = self._term_query_buf.replace(query, b"")
+
     def _maybe_reply_to_terminal_queries(self, *, fd: int, b: bytes) -> None:
         if not self._emulate_terminal:
             return
         self._term_query_buf = (self._term_query_buf + b)[-256:]
-        if b"\x1b[5n" in self._term_query_buf:
-            try:
-                _write_all(fd, b"\x1b[0n")
-            except Exception:
-                traceback.print_exc()
-            self._term_query_buf = self._term_query_buf.replace(b"\x1b[5n", b"")
-        if b"\x1b[6n" in self._term_query_buf:
-            try:
-                _write_all(fd, b"\x1b[1;1R")
-            except Exception:
-                traceback.print_exc()
-            self._term_query_buf = self._term_query_buf.replace(b"\x1b[6n", b"")
-        if b"\x1b[c" in self._term_query_buf:
-            try:
-                _write_all(fd, b"\x1b[?1;2c")
-            except Exception:
-                traceback.print_exc()
-            self._term_query_buf = self._term_query_buf.replace(b"\x1b[c", b"")
-        if b"\x1b[>c" in self._term_query_buf:
-            try:
-                _write_all(fd, b"\x1b[>0;0;0c")
-            except Exception:
-                traceback.print_exc()
-            self._term_query_buf = self._term_query_buf.replace(b"\x1b[>c", b"")
-        if b"\x1b[?u" in self._term_query_buf:
-            try:
-                _write_all(fd, b"\x1b[?1u")
-            except Exception:
-                traceback.print_exc()
-            self._term_query_buf = self._term_query_buf.replace(b"\x1b[?u", b"")
-        if b"\x1b]10;?\x1b\\" in self._term_query_buf:
-            try:
-                _write_all(fd, b"\x1b]10;rgb:c0c0/c0c0/c0c0\x1b\\")
-            except Exception:
-                traceback.print_exc()
-            self._term_query_buf = self._term_query_buf.replace(b"\x1b]10;?\x1b\\", b"")
-        if b"\x1b]11;?\x1b\\" in self._term_query_buf:
-            try:
-                _write_all(fd, b"\x1b]11;rgb:0000/0000/0000\x1b\\")
-            except Exception:
-                traceback.print_exc()
-            self._term_query_buf = self._term_query_buf.replace(b"\x1b]11;?\x1b\\", b"")
+        query_replies = (
+            (b"\x1b[5n", b"\x1b[0n"),
+            (b"\x1b[6n", b"\x1b[1;1R"),
+            (b"\x1b[c", b"\x1b[?1;2c"),
+            (b"\x1b[>c", b"\x1b[>0;0;0c"),
+            (b"\x1b[?u", b"\x1b[?1u"),
+            (b"\x1b]10;?\x1b\\", b"\x1b]10;rgb:c0c0/c0c0/c0c0\x1b\\"),
+            (b"\x1b]11;?\x1b\\", b"\x1b]11;rgb:0000/0000/0000\x1b\\"),
+        )
+        for query, reply in query_replies:
+            self._reply_terminal_query(fd=fd, query=query, reply=reply)
 
     def _pty_to_stdout(self) -> None:
         st = self.state
