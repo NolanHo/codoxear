@@ -1281,6 +1281,101 @@ class Broker:
 
         s.close()
 
+
+    def _cmd_state(self, conn: socket.socket, _req: dict[str, Any]) -> None:
+        with self._lock:
+            st = self.state
+            if not st:
+                resp = {"error": "no state"}
+            else:
+                resp = {"busy": st.busy, "queue_len": 0, "token": st.token}
+        _send_socket_json_line(conn, resp)
+
+    def _cmd_tail(self, conn: socket.socket, _req: dict[str, Any]) -> None:
+        with self._lock:
+            st = self.state
+            resp = {"tail": st.output_tail if st else ""}
+        _send_socket_json_line(conn, resp)
+
+    def _cmd_send(self, conn: socket.socket, req: dict[str, Any]) -> None:
+        text = req.get("text")
+        if not isinstance(text, str) or not text.strip():
+            _send_socket_json_line(conn, {"error": "text required"})
+            return
+        seq_raw = req.get("enter_seq")
+        seq = _seq_bytes(seq_raw) if isinstance(seq_raw, str) else _encode_enter()
+        fd: int | None = None
+        with self._lock:
+            st = self.state
+            if not st:
+                resp = {"error": "no state"}
+            else:
+                now_ts = _now()
+                st.pending_calls.clear()
+                st.busy = True
+                st.turn_open = True
+                st.turn_has_completion_candidate = False
+                st.last_interrupt_hint_ts = 0.0
+                if now_ts > st.last_turn_activity_ts:
+                    st.last_turn_activity_ts = now_ts
+                fd = st.pty_master_fd
+                resp = {"queued": False, "queue_len": 0}
+        _send_socket_json_line(conn, resp)
+        if fd is not None:
+            try:
+                _inject(fd, text=text, suffix=seq)
+            except Exception:
+                traceback.print_exc()
+
+    def _cmd_keys(self, conn: socket.socket, req: dict[str, Any]) -> None:
+        seq_raw = req.get("seq")
+        if not isinstance(seq_raw, str) or not seq_raw:
+            _send_socket_json_line(conn, {"error": "seq required"})
+            return
+        seq = _seq_bytes(seq_raw)
+        key_fd: int | None = None
+        with self._lock:
+            st = self.state
+            if not st:
+                _send_socket_json_line(conn, {"error": "no state"})
+                return
+            key_fd = st.pty_master_fd
+            resp = {
+                "ok": True,
+                "queued": False,
+                "n": len(seq),
+                "key_queue_len": len(st.key_queue),
+            }
+        if key_fd is not None:
+            try:
+                _write_all(key_fd, seq)
+            except Exception:
+                traceback.print_exc()
+        _send_socket_json_line(conn, resp)
+
+    def _cmd_shutdown(self, conn: socket.socket, _req: dict[str, Any]) -> None:
+        _send_socket_json_line(conn, {"ok": True})
+        self._teardown_managed_process_group()
+
+    def _dispatch_conn_command(
+        self,
+        conn: socket.socket,
+        cmd: Any,
+        req: dict[str, Any],
+    ) -> bool:
+        handlers = {
+            "state": self._cmd_state,
+            "tail": self._cmd_tail,
+            "send": self._cmd_send,
+            "keys": self._cmd_keys,
+            "shutdown": self._cmd_shutdown,
+        }
+        handler = handlers.get(cmd)
+        if handler is None:
+            return False
+        handler(conn, req)
+        return True
+
     def _handle_conn(self, conn: socket.socket) -> None:
         f = None
         try:
@@ -1290,90 +1385,8 @@ class Broker:
                 return
             req = json.loads(line.decode("utf-8"))
             cmd = req.get("cmd")
-            if cmd == "state":
-                resp: dict[str, Any]
-                with self._lock:
-                    st = self.state
-                    if not st:
-                        resp = {"error": "no state"}
-                    else:
-                        resp = {"busy": st.busy, "queue_len": 0, "token": st.token}
-                _send_socket_json_line(conn, resp)
+            if self._dispatch_conn_command(conn, cmd, req):
                 return
-
-            if cmd == "tail":
-                with self._lock:
-                    st = self.state
-                    resp = {"tail": st.output_tail if st else ""}
-                _send_socket_json_line(conn, resp)
-                return
-
-            if cmd == "send":
-                text = req.get("text")
-                if not isinstance(text, str) or not text.strip():
-                    resp = {"error": "text required"}
-                    _send_socket_json_line(conn, resp)
-                    return
-                seq_raw = req.get("enter_seq")
-                seq = (
-                    _seq_bytes(seq_raw) if isinstance(seq_raw, str) else _encode_enter()
-                )
-                fd: int | None = None
-                with self._lock:
-                    st = self.state
-                    if not st:
-                        resp = {"error": "no state"}
-                    else:
-                        now_ts = _now()
-                        st.pending_calls.clear()
-                        st.busy = True
-                        st.turn_open = True
-                        st.turn_has_completion_candidate = False
-                        st.last_interrupt_hint_ts = 0.0
-                        if now_ts > st.last_turn_activity_ts:
-                            st.last_turn_activity_ts = now_ts
-                        fd = st.pty_master_fd
-                        resp = {"queued": False, "queue_len": 0}
-                _send_socket_json_line(conn, resp)
-                if fd is not None:
-                    try:
-                        _inject(fd, text=text, suffix=seq)
-                    except Exception:
-                        traceback.print_exc()
-                return
-
-            if cmd == "keys":
-                seq_raw = req.get("seq")
-                if not isinstance(seq_raw, str) or not seq_raw:
-                    resp = {"error": "seq required"}
-                else:
-                    b = _seq_bytes(seq_raw)
-                    key_fd: int | None = None
-                    with self._lock:
-                        st = self.state
-                        if not st:
-                            resp = {"error": "no state"}
-                        else:
-                            key_fd = st.pty_master_fd
-                            resp = {
-                                "ok": True,
-                                "queued": False,
-                                "n": len(b),
-                                "key_queue_len": len(st.key_queue),
-                            }
-                    if key_fd is not None:
-                        try:
-                            _write_all(key_fd, b)
-                        except Exception:
-                            traceback.print_exc()
-                _send_socket_json_line(conn, resp)
-                return
-
-            if cmd == "shutdown":
-                _send_socket_json_line(conn, {"ok": True})
-                self._teardown_managed_process_group()
-                return
-
             _send_socket_json_line(conn, {"error": "unknown cmd"})
         except Exception as exc:
             if _socket_peer_disconnected(exc):
