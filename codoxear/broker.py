@@ -1223,7 +1223,7 @@ class Broker:
         m = _SESSION_ID_RE.findall(name)
         return m[-1] if m else None
 
-    def _maybe_register_or_switch_rollout(self, *, log_path: Path) -> None:
+    def _resolve_rollout_candidate(self, log_path: Path) -> Path | None:
         try:
             lp = log_path.resolve()
         except Exception:
@@ -1231,54 +1231,69 @@ class Broker:
         try:
             lp.resolve().relative_to(self.sessions_dir.resolve())
         except Exception:
-            return
+            return None
         if AGENT_BACKEND == "codex":
             if not (lp.name.startswith("rollout-") and lp.name.endswith(".jsonl")):
-                return
+                return None
         elif lp.suffix != ".jsonl":
-            return
+            return None
+        return lp
 
+    def _resolve_rollout_payload(self, lp: Path) -> tuple[Path, dict[str, Any]] | None:
         payload = _read_session_meta_payload(
-            lp, agent_backend=AGENT_BACKEND, timeout_s=1.5
+            lp,
+            agent_backend=AGENT_BACKEND,
+            timeout_s=1.5,
         )
         if not payload:
-            return
-        if AGENT_BACKEND == "codex" and _is_subagent_session_meta(payload):
-            parent = _subagent_parent_thread_id(payload)
-            if not parent:
-                return
-            parent_log = _find_session_log_for_session_id(
-                self.sessions_dir, parent, agent_backend=AGENT_BACKEND
-            )
-            if not parent_log:
-                return
-            parent_payload = _read_session_meta_payload(
-                parent_log, agent_backend=AGENT_BACKEND, timeout_s=0.2
-            )
-            if not parent_payload:
-                return
-            if _is_subagent_session_meta(parent_payload):
-                return
-            lp = parent_log
-            payload = parent_payload
+            return None
 
+        if AGENT_BACKEND != "codex" or (not _is_subagent_session_meta(payload)):
+            return lp, payload
+
+        parent = _subagent_parent_thread_id(payload)
+        if not parent:
+            return None
+        parent_log = _find_session_log_for_session_id(
+            self.sessions_dir,
+            parent,
+            agent_backend=AGENT_BACKEND,
+        )
+        if not parent_log:
+            return None
+        parent_payload = _read_session_meta_payload(
+            parent_log,
+            agent_backend=AGENT_BACKEND,
+            timeout_s=0.2,
+        )
+        if not parent_payload:
+            return None
+        if _is_subagent_session_meta(parent_payload):
+            return None
+        return parent_log, parent_payload
+
+    def _resolve_rollout_session_id(self, *, payload: dict[str, Any], lp: Path) -> str | None:
         sid = payload.get("id")
-        if not isinstance(sid, str) or not sid:
-            sid = self._session_id_from_rollout_path(lp)
-            if sid is None:
-                raise RuntimeError(
-                    f"unable to determine session_id from rollout filename: {lp}"
-                )
-        if not sid:
-            return
+        if isinstance(sid, str) and sid:
+            return sid
+        sid = self._session_id_from_rollout_path(lp)
+        if sid is not None:
+            return sid
+        raise RuntimeError(f"unable to determine session_id from rollout filename: {lp}")
 
+    def _commit_rollout_switch_locked(
+        self,
+        *,
+        lp: Path,
+        sid: str,
+    ) -> tuple[bool, Path | None] | None:
         with self._lock:
             st = self.state
             if not st:
-                return
+                return None
             last = st.last_rollout_path
             if last is not None and _paths_match(last, lp):
-                return
+                return None
             have_sock = st.sock_path is not None
             prev_lp = st.log_path
             if prev_lp is not None and not _paths_match(prev_lp, lp):
@@ -1295,16 +1310,36 @@ class Broker:
                 st.log_off = int(lp.stat().st_size)
             except Exception:
                 st.log_off = 0
+        return have_sock, prev_lp
+
+    def _maybe_register_or_switch_rollout(self, *, log_path: Path) -> None:
+        lp = self._resolve_rollout_candidate(log_path)
+        if lp is None:
+            return
+
+        resolved = self._resolve_rollout_payload(lp)
+        if resolved is None:
+            return
+        resolved_lp, payload = resolved
+
+        sid = self._resolve_rollout_session_id(payload=payload, lp=resolved_lp)
+        if not sid:
+            return
+
+        state_update = self._commit_rollout_switch_locked(lp=resolved_lp, sid=sid)
+        if state_update is None:
+            return
+        have_sock, prev_lp = state_update
 
         if not have_sock:
             try:
-                self._register_from_log(log_path=lp)
+                self._register_from_log(log_path=resolved_lp)
             except Exception:
                 _dprint(
                     f"broker: register_from_rollout failed: {traceback.format_exc()}"
                 )
                 return
-        elif prev_lp is None or not _paths_match(prev_lp, lp):
+        elif prev_lp is None or not _paths_match(prev_lp, resolved_lp):
             self._write_meta()
 
     def _run_pi_foreground_broker(self) -> int:
