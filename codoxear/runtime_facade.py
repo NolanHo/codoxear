@@ -114,6 +114,248 @@ class RuntimeFacade:
         cfg = self.manager.harness_get(session_id)
         return {"ok": True, **cfg}
 
+    def _normalize_git_list(self, rows: list[str]) -> list[str]:
+        out: list[str] = []
+        for row in rows:
+            text = row.strip()
+            if not text:
+                continue
+            out.append(text)
+            if len(out) >= self.api.GIT_CHANGED_FILES_MAX:
+                break
+        return out
+
+    def session_git_changed_files_payload(self, session_id: str) -> dict[str, Any]:
+        self.manager.refresh_session_meta(session_id, strict=False)
+        session = self.manager.get_session(session_id)
+        if not session:
+            raise KeyError("unknown session")
+        cwd = self.api.safe_expanduser(Path(session.cwd))
+        if not cwd.is_absolute():
+            cwd = cwd.resolve()
+        self.api.require_git_repo(cwd)
+        unstaged = self.api.run_git(
+            cwd,
+            ["diff", "--name-only"],
+            timeout_s=self.api.GIT_DIFF_TIMEOUT_SECONDS,
+            max_bytes=64 * 1024,
+        ).splitlines()
+        staged = self.api.run_git(
+            cwd,
+            ["diff", "--name-only", "--cached"],
+            timeout_s=self.api.GIT_DIFF_TIMEOUT_SECONDS,
+            max_bytes=64 * 1024,
+        ).splitlines()
+        unstaged_numstat = self.api.run_git(
+            cwd,
+            ["diff", "--numstat"],
+            timeout_s=self.api.GIT_DIFF_TIMEOUT_SECONDS,
+            max_bytes=128 * 1024,
+        )
+        staged_numstat = self.api.run_git(
+            cwd,
+            ["diff", "--numstat", "--cached"],
+            timeout_s=self.api.GIT_DIFF_TIMEOUT_SECONDS,
+            max_bytes=128 * 1024,
+        )
+        unstaged2 = self._normalize_git_list(unstaged)
+        staged2 = self._normalize_git_list(staged)
+        seen: set[str] = set()
+        merged: list[str] = []
+        for row in [*unstaged2, *staged2]:
+            if row in seen:
+                continue
+            seen.add(row)
+            merged.append(row)
+        stats = self.api.parse_git_numstat(unstaged_numstat)
+        for path_key, vals in self.api.parse_git_numstat(staged_numstat).items():
+            prev = stats.get(path_key)
+            if prev is None:
+                stats[path_key] = vals
+                continue
+            add_prev = prev.get("additions")
+            del_prev = prev.get("deletions")
+            add_new = vals.get("additions")
+            del_new = vals.get("deletions")
+            prev["additions"] = (
+                None if add_prev is None or add_new is None else int(add_prev) + int(add_new)
+            )
+            prev["deletions"] = (
+                None if del_prev is None or del_new is None else int(del_prev) + int(del_new)
+            )
+        entries: list[dict[str, Any]] = []
+        for path_key in merged:
+            vals = stats.get(path_key, {})
+            entries.append(
+                {
+                    "path": path_key,
+                    "additions": vals.get("additions"),
+                    "deletions": vals.get("deletions"),
+                    "changed": True,
+                }
+            )
+        return {
+            "ok": True,
+            "cwd": str(cwd),
+            "files": merged,
+            "entries": entries,
+            "unstaged": unstaged2,
+            "staged": staged2,
+        }
+
+    def session_git_diff_payload(
+        self,
+        session_id: str,
+        *,
+        rel_path: str,
+        staged: bool,
+    ) -> dict[str, Any]:
+        self.manager.refresh_session_meta(session_id, strict=False)
+        session = self.manager.get_session(session_id)
+        if not session:
+            raise KeyError("unknown session")
+        cwd = self.api.safe_expanduser(Path(session.cwd))
+        if not cwd.is_absolute():
+            cwd = cwd.resolve()
+        self.api.require_git_repo(cwd)
+        _target, _repo_root, rel = self.api.resolve_git_path(cwd, rel_path)
+        args = ["diff", "-U3"]
+        if staged:
+            args.append("--cached")
+        args.extend(["--", rel])
+        diff = self.api.run_git(
+            cwd,
+            args,
+            timeout_s=self.api.GIT_DIFF_TIMEOUT_SECONDS,
+            max_bytes=self.api.GIT_DIFF_MAX_BYTES,
+        )
+        return {
+            "ok": True,
+            "cwd": str(cwd),
+            "path": rel,
+            "staged": staged,
+            "diff": diff,
+        }
+
+    def session_git_file_versions_payload(
+        self,
+        session_id: str,
+        *,
+        rel_path: str,
+    ) -> dict[str, Any]:
+        self.manager.refresh_session_meta(session_id, strict=False)
+        session = self.manager.get_session(session_id)
+        if not session:
+            raise KeyError("unknown session")
+        cwd = self.api.safe_expanduser(Path(session.cwd))
+        if not cwd.is_absolute():
+            cwd = cwd.resolve()
+        self.api.require_git_repo(cwd)
+        path_obj, _repo_root, rel = self.api.resolve_git_path(cwd, rel_path)
+        current_text = ""
+        current_size = 0
+        current_exists = bool(path_obj.exists() and path_obj.is_file())
+        if current_exists:
+            current_text, current_size = self.api.read_text_file_strict(
+                path_obj,
+                max_bytes=self.api.FILE_READ_MAX_BYTES,
+            )
+        try:
+            self.manager.files_add(session_id, str(path_obj))
+        except KeyError:
+            pass
+        base_exists = False
+        base_text = ""
+        try:
+            base_text = self.api.run_git(
+                cwd,
+                ["show", f"HEAD:{rel}"],
+                timeout_s=self.api.GIT_DIFF_TIMEOUT_SECONDS,
+                max_bytes=self.api.FILE_READ_MAX_BYTES,
+            )
+            base_exists = True
+        except RuntimeError:
+            base_exists = False
+            base_text = ""
+        return {
+            "ok": True,
+            "cwd": str(cwd),
+            "path": rel,
+            "abs_path": str(path_obj),
+            "current_exists": current_exists,
+            "current_size": int(current_size),
+            "current_text": current_text,
+            "base_exists": base_exists,
+            "base_text": base_text,
+        }
+
+    def voice_settings_payload(self) -> dict[str, Any]:
+        return {"ok": True, **self.manager._voice_push.settings_snapshot()}
+
+    def voice_subscriptions_payload(self) -> dict[str, Any]:
+        return {"ok": True, **self.manager._voice_push.subscriptions_snapshot()}
+
+    def voice_notification_message_payload(self, message_id: str) -> dict[str, Any]:
+        state = self.manager._voice_push.notification_state_for_message(message_id)
+        if state is None:
+            raise KeyError("unknown message")
+        return {"ok": True, **state}
+
+    def voice_notification_feed_payload(self, *, since_ts: float) -> dict[str, Any]:
+        items = self.manager._voice_push.notification_feed_since(since_ts)
+        return {"ok": True, "items": items}
+
+    def audio_playlist_bytes(self) -> bytes:
+        return self.manager._voice_push.playlist_bytes()
+
+    def audio_segment_bytes(self, segment_name: str) -> bytes:
+        segment_path = self.manager._voice_push.segment_path(segment_name)
+        return segment_path.read_bytes()
+
+    def voice_set_settings(self, obj: dict[str, Any]) -> dict[str, Any]:
+        payload = self.manager._voice_push.set_settings(obj)
+        return {"ok": True, **payload}
+
+    def voice_upsert_subscription(self, obj: dict[str, Any]) -> dict[str, Any]:
+        payload = self.manager._voice_push.upsert_subscription(
+            subscription=obj.get("subscription"),
+            user_agent=str(obj.get("user_agent") or ""),
+            device_label=str(obj.get("device_label") or ""),
+            device_class=str(obj.get("device_class") or ""),
+        )
+        return {"ok": True, **payload}
+
+    def voice_toggle_subscription(self, *, endpoint: str, enabled: bool) -> dict[str, Any]:
+        payload = self.manager._voice_push.toggle_subscription(
+            endpoint=endpoint,
+            enabled=enabled,
+        )
+        return {"ok": True, **payload}
+
+    def voice_test_push_payload(self) -> dict[str, Any]:
+        payload = self.manager._voice_push.send_test_push_notification(
+            session_display_name="Codoxear test"
+        )
+        return {"ok": True, **payload}
+
+    def audio_listener_heartbeat_payload(
+        self,
+        *,
+        client_id: str,
+        enabled: bool,
+    ) -> dict[str, Any]:
+        payload = self.manager._voice_push.listener_heartbeat(
+            client_id=client_id,
+            enabled=enabled,
+        )
+        return {"ok": True, **payload}
+
+    def audio_test_announcement_payload(self) -> dict[str, Any]:
+        payload = self.manager._voice_push.enqueue_test_announcement(
+            session_display_name="Codoxear test"
+        )
+        return {"ok": True, **payload}
+
     def sessions_bootstrap_payload(
         self,
         *,

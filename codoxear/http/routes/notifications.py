@@ -3,43 +3,58 @@ from __future__ import annotations
 import json
 import urllib.parse
 from typing import Any
+
 from ...runtime import ServerRuntime
+from ...runtime_facade import build_runtime_facade
+
+
+def _read_json_object(runtime: ServerRuntime, handler: Any) -> dict[str, Any]:
+    body = runtime.api.read_body(handler)
+    body_text = body.decode("utf-8")
+    if not body_text.strip():
+        raise ValueError("empty request body")
+    obj = json.loads(body_text)
+    if not isinstance(obj, dict):
+        raise ValueError("invalid json body (expected object)")
+    return obj
+
 
 def handle_get(runtime: ServerRuntime, handler: Any, path: str, u: Any) -> bool:
-    sv = runtime
+    facade = build_runtime_facade(runtime)
+
     if path == "/api/settings/voice":
-        if not sv.api.require_auth(handler):
+        if not facade.require_auth(handler):
             handler._unauthorized()
             return True
-        sv.api.json_response(handler, 200, {"ok": True, **sv.manager._voice_push.settings_snapshot()})
+        facade.json_response(handler, 200, facade.voice_settings_payload())
         return True
+
     if path == "/api/notifications/subscription":
-        if not sv.api.require_auth(handler):
+        if not facade.require_auth(handler):
             handler._unauthorized()
             return True
-        sv.api.json_response(
-            handler,
-            200,
-            {"ok": True, **sv.manager._voice_push.subscriptions_snapshot()},
-        )
+        facade.json_response(handler, 200, facade.voice_subscriptions_payload())
         return True
+
     if path == "/api/notifications/message":
-        if not sv.api.require_auth(handler):
+        if not facade.require_auth(handler):
             handler._unauthorized()
             return True
         qs = urllib.parse.parse_qs(u.query)
         message_id = (qs.get("message_id") or [""])[0].strip()
         if not message_id:
-            sv.api.json_response(handler, 400, {"error": "message_id required"})
+            facade.json_response(handler, 400, {"error": "message_id required"})
             return True
-        state = sv.manager._voice_push.notification_state_for_message(message_id)
-        if state is None:
-            sv.api.json_response(handler, 404, {"error": "unknown message"})
+        try:
+            payload = facade.voice_notification_message_payload(message_id)
+        except KeyError:
+            facade.json_response(handler, 404, {"error": "unknown message"})
             return True
-        sv.api.json_response(handler, 200, {"ok": True, **state})
+        facade.json_response(handler, 200, payload)
         return True
+
     if path == "/api/notifications/feed":
-        if not sv.api.require_auth(handler):
+        if not facade.require_auth(handler):
             handler._unauthorized()
             return True
         qs = urllib.parse.parse_qs(u.query)
@@ -47,16 +62,20 @@ def handle_get(runtime: ServerRuntime, handler: Any, path: str, u: Any) -> bool:
         try:
             since_ts = float(since_raw or "0")
         except ValueError:
-            sv.api.json_response(handler, 400, {"error": "invalid since"})
+            facade.json_response(handler, 400, {"error": "invalid since"})
             return True
-        items = sv.manager._voice_push.notification_feed_since(since_ts)
-        sv.api.json_response(handler, 200, {"ok": True, "items": items})
+        facade.json_response(
+            handler,
+            200,
+            facade.voice_notification_feed_payload(since_ts=since_ts),
+        )
         return True
+
     if path == "/api/audio/live.m3u8":
-        if not sv.api.require_auth(handler):
+        if not facade.require_auth(handler):
             handler._unauthorized()
             return True
-        body = sv.manager._voice_push.playlist_bytes()
+        body = facade.audio_playlist_bytes()
         handler.send_response(200)
         handler.send_header("Content-Type", "application/vnd.apple.mpegurl")
         handler.send_header("Content-Length", str(len(body)))
@@ -66,17 +85,17 @@ def handle_get(runtime: ServerRuntime, handler: Any, path: str, u: Any) -> bool:
         handler.end_headers()
         handler.wfile.write(body)
         return True
+
     if path.startswith("/api/audio/segments/"):
-        if not sv.api.require_auth(handler):
+        if not facade.require_auth(handler):
             handler._unauthorized()
             return True
         segment_name = path.split("/api/audio/segments/", 1)[1]
         try:
-            segment_path = sv.manager._voice_push.segment_path(segment_name)
+            raw = facade.audio_segment_bytes(segment_name)
         except FileNotFoundError:
             handler.send_error(404)
             return True
-        raw = segment_path.read_bytes()
         handler.send_response(200)
         handler.send_header("Content-Type", "video/mp2t")
         handler.send_header("Content-Length", str(len(raw)))
@@ -86,138 +105,110 @@ def handle_get(runtime: ServerRuntime, handler: Any, path: str, u: Any) -> bool:
         handler.end_headers()
         handler.wfile.write(raw)
         return True
+
     return False
 
 
-
 def handle_post(runtime: ServerRuntime, handler: Any, path: str, _u: Any) -> bool:
-    sv = runtime
+    facade = build_runtime_facade(runtime)
+
     if path == "/api/settings/voice":
-        if not sv.api.require_auth(handler):
+        if not facade.require_auth(handler):
             handler._unauthorized()
             return True
-        body = sv.api.read_body(handler)
-        body_text = body.decode("utf-8")
-        if not body_text.strip():
-            raise ValueError("empty request body")
-        obj = json.loads(body_text)
-        if not isinstance(obj, dict):
-            raise ValueError("invalid json body (expected object)")
+        obj = _read_json_object(runtime, handler)
         try:
-            payload = sv.manager._voice_push.set_settings(obj)
+            payload = facade.voice_set_settings(obj)
         except ValueError as e:
-            sv.api.json_response(handler, 400, {"error": str(e)})
+            facade.json_response(handler, 400, {"error": str(e)})
             return True
-        sv.api.json_response(handler, 200, {"ok": True, **payload})
+        facade.json_response(handler, 200, payload)
         return True
+
     if path == "/api/notifications/subscription":
-        if not sv.api.require_auth(handler):
+        if not facade.require_auth(handler):
             handler._unauthorized()
             return True
-        body = sv.api.read_body(handler)
-        body_text = body.decode("utf-8")
-        if not body_text.strip():
-            raise ValueError("empty request body")
-        obj = json.loads(body_text)
-        if not isinstance(obj, dict):
-            raise ValueError("invalid json body (expected object)")
+        obj = _read_json_object(runtime, handler)
         try:
-            payload = sv.manager._voice_push.upsert_subscription(
-                subscription=obj.get("subscription"),
-                user_agent=str(obj.get("user_agent") or ""),
-                device_label=str(obj.get("device_label") or ""),
-                device_class=str(obj.get("device_class") or ""),
-            )
+            payload = facade.voice_upsert_subscription(obj)
         except ValueError as e:
-            sv.api.json_response(handler, 400, {"error": str(e)})
+            facade.json_response(handler, 400, {"error": str(e)})
             return True
-        sv.api.json_response(handler, 200, {"ok": True, **payload})
+        facade.json_response(handler, 200, payload)
         return True
+
     if path == "/api/notifications/subscription/toggle":
-        if not sv.api.require_auth(handler):
+        if not facade.require_auth(handler):
             handler._unauthorized()
             return True
-        body = sv.api.read_body(handler)
-        body_text = body.decode("utf-8")
-        if not body_text.strip():
-            raise ValueError("empty request body")
-        obj = json.loads(body_text)
-        if not isinstance(obj, dict):
-            raise ValueError("invalid json body (expected object)")
+        obj = _read_json_object(runtime, handler)
         endpoint = obj.get("endpoint")
         enabled = obj.get("enabled")
         if not isinstance(endpoint, str) or not endpoint.strip():
-            sv.api.json_response(handler, 400, {"error": "endpoint required"})
+            facade.json_response(handler, 400, {"error": "endpoint required"})
             return True
         if not isinstance(enabled, bool):
-            sv.api.json_response(handler, 400, {"error": "enabled must be a boolean"})
+            facade.json_response(handler, 400, {"error": "enabled must be a boolean"})
             return True
         try:
-            payload = sv.manager._voice_push.toggle_subscription(
-                endpoint=endpoint,
-                enabled=enabled,
-            )
+            payload = facade.voice_toggle_subscription(endpoint=endpoint, enabled=enabled)
         except KeyError:
-            sv.api.json_response(handler, 404, {"error": "unknown subscription"})
+            facade.json_response(handler, 404, {"error": "unknown subscription"})
             return True
         except ValueError as e:
-            sv.api.json_response(handler, 400, {"error": str(e)})
+            facade.json_response(handler, 400, {"error": str(e)})
             return True
-        sv.api.json_response(handler, 200, {"ok": True, **payload})
+        facade.json_response(handler, 200, payload)
         return True
+
     if path == "/api/notifications/test_push":
-        if not sv.api.require_auth(handler):
+        if not facade.require_auth(handler):
             handler._unauthorized()
             return True
         try:
-            payload = sv.manager._voice_push.send_test_push_notification(
-                session_display_name="Codoxear test"
-            )
+            payload = facade.voice_test_push_payload()
         except ValueError as e:
-            sv.api.json_response(handler, 400, {"error": str(e)})
+            facade.json_response(handler, 400, {"error": str(e)})
             return True
-        sv.api.json_response(handler, 200, {"ok": True, **payload})
+        facade.json_response(handler, 200, payload)
         return True
+
     if path == "/api/audio/listener":
-        if not sv.api.require_auth(handler):
+        if not facade.require_auth(handler):
             handler._unauthorized()
             return True
-        body = sv.api.read_body(handler)
-        body_text = body.decode("utf-8")
-        if not body_text.strip():
-            raise ValueError("empty request body")
-        obj = json.loads(body_text)
-        if not isinstance(obj, dict):
-            raise ValueError("invalid json body (expected object)")
+        obj = _read_json_object(runtime, handler)
         client_id = obj.get("client_id")
         enabled = obj.get("enabled")
         if not isinstance(client_id, str) or not client_id.strip():
-            sv.api.json_response(handler, 400, {"error": "client_id required"})
+            facade.json_response(handler, 400, {"error": "client_id required"})
             return True
         if not isinstance(enabled, bool):
-            sv.api.json_response(handler, 400, {"error": "enabled must be a boolean"})
+            facade.json_response(handler, 400, {"error": "enabled must be a boolean"})
             return True
-        payload = sv.manager._voice_push.listener_heartbeat(
+        payload = facade.audio_listener_heartbeat_payload(
             client_id=client_id,
             enabled=enabled,
         )
-        sv.api.json_response(handler, 200, {"ok": True, **payload})
+        facade.json_response(handler, 200, payload)
         return True
+
     if path == "/api/audio/test_announcement":
-        if not sv.api.require_auth(handler):
+        if not facade.require_auth(handler):
             handler._unauthorized()
             return True
         try:
-            payload = sv.manager._voice_push.enqueue_test_announcement(
-                session_display_name="Codoxear test"
-            )
+            payload = facade.audio_test_announcement_payload()
         except ValueError as e:
-            sv.api.json_response(handler, 400, {"error": str(e)})
+            facade.json_response(handler, 400, {"error": str(e)})
             return True
-        sv.api.json_response(handler, 200, {"ok": True, **payload})
+        facade.json_response(handler, 200, payload)
         return True
+
     if path == "/api/hooks/notify":
-        sv.api.read_body(handler)
-        sv.api.json_response(handler, 200, {"ignored": True})
+        runtime.api.read_body(handler)
+        facade.json_response(handler, 200, {"ignored": True})
         return True
+
     return False
