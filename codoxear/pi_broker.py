@@ -133,6 +133,54 @@ def _tail_delta(previous: str, current: str) -> str:
     return current
 
 
+def _request_flag(event: dict[str, Any], snake: str, camel: str, *, default: bool) -> bool:
+    if snake in event:
+        return bool(event.get(snake))
+    if camel in event:
+        return bool(event.get(camel))
+    return default
+
+
+def _request_timeout_ms(event: dict[str, Any]) -> int | None:
+    for key in ("timeout_ms", "timeoutMs", "timeout"):
+        value = event.get(key)
+        if isinstance(value, int):
+            return value
+    return None
+
+
+def _pending_ui_request_payload(
+    *,
+    request_id: str,
+    method: str,
+    event: dict[str, Any],
+) -> dict[str, Any]:
+    options = event.get("options")
+    return {
+        "id": request_id,
+        "method": method,
+        "title": event.get("title"),
+        "message": event.get("message"),
+        "question": event.get("question") if isinstance(event.get("question"), str) else None,
+        "context": event.get("context") if isinstance(event.get("context"), str) else None,
+        "options": list(options) if isinstance(options, list) else [],
+        "allow_freeform": _request_flag(
+            event,
+            "allow_freeform",
+            "allowFreeform",
+            default=method in {"select", "input", "editor"},
+        ),
+        "allow_multiple": _request_flag(
+            event,
+            "allow_multiple",
+            "allowMultiple",
+            default=False,
+        ),
+        "timeout_ms": _request_timeout_ms(event),
+        "status": "pending",
+    }
+
+
 def _record_ui_request(st: "State", event: dict[str, Any]) -> None:
     request_id = event.get("id")
     if not isinstance(request_id, str) or not request_id:
@@ -140,48 +188,11 @@ def _record_ui_request(st: "State", event: dict[str, Any]) -> None:
     method = event.get("method")
     if not isinstance(method, str) or method not in _DIALOG_UI_METHODS:
         return
-
-    options = event.get("options")
-    timeout_ms = next(
-        (
-            event.get(key)
-            for key in ("timeout_ms", "timeoutMs", "timeout")
-            if isinstance(event.get(key), int)
-        ),
-        None,
+    st.pending_ui_requests[request_id] = _pending_ui_request_payload(
+        request_id=request_id,
+        method=method,
+        event=event,
     )
-    allow_freeform = method in {"select", "input", "editor"}
-    if "allow_freeform" in event or "allowFreeform" in event:
-        allow_freeform = bool(
-            event.get("allow_freeform")
-            if "allow_freeform" in event
-            else event.get("allowFreeform")
-        )
-    allow_multiple = False
-    if "allow_multiple" in event or "allowMultiple" in event:
-        allow_multiple = bool(
-            event.get("allow_multiple")
-            if "allow_multiple" in event
-            else event.get("allowMultiple")
-        )
-
-    st.pending_ui_requests[request_id] = {
-        "id": request_id,
-        "method": method,
-        "title": event.get("title"),
-        "message": event.get("message"),
-        "question": event.get("question")
-        if isinstance(event.get("question"), str)
-        else None,
-        "context": event.get("context")
-        if isinstance(event.get("context"), str)
-        else None,
-        "options": list(options) if isinstance(options, list) else [],
-        "allow_freeform": allow_freeform,
-        "allow_multiple": allow_multiple,
-        "timeout_ms": timeout_ms,
-        "status": "pending",
-    }
 
 
 def _resume_session_id_from_agent_args(args: list[str]) -> str | None:
@@ -339,28 +350,21 @@ def _terminal_turn_live_event(
 
 
 
-def _compaction_live_event(st: "State", event: dict[str, Any]) -> dict[str, Any] | None:
-    event_type = _extract_event_type(event)
-    if event_type == "compaction_start":
-        reason = event.get("reason") if isinstance(event.get("reason"), str) else "manual"
-        if reason == "overflow":
-            summary = "Auto-compacting after context overflow"
-        elif reason == "threshold":
-            summary = "Auto-compacting context"
-        else:
-            summary = "Compacting context"
-        return _live_pi_event(
-            st,
-            summary=summary,
-            text="New bridge messages wait until compaction finishes.",
-            event=event,
-        )
-    if event_type != "compaction_end":
-        return None
+def _compaction_start_summary(event: dict[str, Any]) -> str:
+    reason = event.get("reason") if isinstance(event.get("reason"), str) else "manual"
+    if reason == "overflow":
+        return "Auto-compacting after context overflow"
+    if reason == "threshold":
+        return "Auto-compacting context"
+    return "Compacting context"
+
+
+def _compaction_end_live_event(st: "State", event: dict[str, Any]) -> dict[str, Any]:
     if event.get("aborted") is True:
         reason = event.get("reason") if isinstance(event.get("reason"), str) else "manual"
         summary = "Auto-compaction cancelled" if reason != "manual" else "Compaction cancelled"
         return _live_pi_event(st, summary=summary, event=event)
+
     error_message = _event_error_text(event)
     if error_message:
         return _live_pi_event(
@@ -370,16 +374,30 @@ def _compaction_live_event(st: "State", event: dict[str, Any]) -> dict[str, Any]
             is_error=True,
             event=event,
         )
+
     result = event.get("result") if isinstance(event.get("result"), dict) else None
-    summary_text = result.get("summary") if isinstance(result, dict) and isinstance(result.get("summary"), str) else None
+    summary_text = (
+        result.get("summary")
+        if isinstance(result, dict) and isinstance(result.get("summary"), str)
+        else None
+    )
     will_retry = event.get("willRetry") is True
     text = summary_text or ("Retrying with compacted context." if will_retry else None)
-    return _live_pi_event(
-        st,
-        summary="Compaction finished",
-        text=text,
-        event=event,
-    )
+    return _live_pi_event(st, summary="Compaction finished", text=text, event=event)
+
+
+def _compaction_live_event(st: "State", event: dict[str, Any]) -> dict[str, Any] | None:
+    event_type = _extract_event_type(event)
+    if event_type == "compaction_start":
+        return _live_pi_event(
+            st,
+            summary=_compaction_start_summary(event),
+            text="New bridge messages wait until compaction finishes.",
+            event=event,
+        )
+    if event_type != "compaction_end":
+        return None
+    return _compaction_end_live_event(st, event)
 
 
 def _append_live_message_event(st: "State", event: dict[str, Any]) -> None:
