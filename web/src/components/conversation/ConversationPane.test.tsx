@@ -455,6 +455,112 @@ describe("ConversationPane", () => {
     expect(root.textContent).toContain("threshold");
   });
 
+  it("shows tool call arguments in compact trace detail", () => {
+    const sessionsStore = createStaticStore(
+      { items: [], activeSessionId: "sess-tool-args", loading: false, newSessionDefaults: null },
+      { refresh: () => Promise.resolve(), select: () => undefined },
+    );
+    const messagesStore = createStaticStore(
+      {
+        bySessionId: {
+          "sess-tool-args": [
+            { role: "assistant", text: "before", ts: 100 },
+            {
+              type: "tool",
+              name: "bash",
+              details: {
+                arguments: {
+                  command: "ls -la",
+                  timeout: 10,
+                },
+              },
+              ts: 110,
+            },
+            { role: "assistant", text: "after", ts: 120 },
+          ],
+        },
+        offsetsBySessionId: { "sess-tool-args": 3 },
+        loading: false,
+      },
+      { loadInitial: () => Promise.resolve(), poll: () => Promise.resolve() },
+    );
+
+    root = document.createElement("div");
+    document.body.appendChild(root);
+    render(
+      <AppProviders sessionsStore={sessionsStore as any} messagesStore={messagesStore as any}>
+        <ConversationPane />
+      </AppProviders>,
+      root,
+    );
+
+    const token = root.querySelector(".machineTraceToken.tool") as HTMLButtonElement | null;
+    expect(token).not.toBeNull();
+
+    act(() => {
+      token?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+
+    expect(root.textContent).toContain("ls -la");
+    expect(root.textContent).toContain("timeout");
+  });
+
+  it("renders process tool_result events with dedicated process styling and fields", () => {
+    const sessionsStore = createStaticStore(
+      { items: [], activeSessionId: "sess-process-result", loading: false, newSessionDefaults: null },
+      { refresh: () => Promise.resolve(), select: () => undefined },
+    );
+    const messagesStore = createStaticStore(
+      {
+        bySessionId: {
+          "sess-process-result": [
+            {
+              type: "tool_result",
+              name: "process",
+              text: "Started \"demo\" (proc_1, PID: 1234)",
+              details: {
+                action: "start",
+                success: true,
+                process: {
+                  id: "proc_1",
+                  name: "demo",
+                  status: "running",
+                },
+              },
+              ts: 100,
+            },
+          ],
+        },
+        offsetsBySessionId: { "sess-process-result": 1 },
+        loading: false,
+      },
+      { loadInitial: () => Promise.resolve(), poll: () => Promise.resolve() },
+    );
+
+    root = document.createElement("div");
+    document.body.appendChild(root);
+    render(
+      <AppProviders sessionsStore={sessionsStore as any} messagesStore={messagesStore as any}>
+        <ConversationPane />
+      </AppProviders>,
+      root,
+    );
+
+    const token = root.querySelector(".machineTraceToken.tool_result.isProcessTool") as HTMLButtonElement | null;
+    expect(token).not.toBeNull();
+
+    act(() => {
+      token?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+
+    const detail = root.querySelector(".machineTraceDetail.tool_result.isProcessTool");
+    expect(detail).not.toBeNull();
+    expect(root.textContent).toContain("Action");
+    expect(root.textContent).toContain("start");
+    expect(root.textContent).toContain("Process ID");
+    expect(root.textContent).toContain("proc_1");
+  });
+
   it("renders ad-process custom messages as compact process icons", () => {
     const sessionsStore = createStaticStore(
       { items: [], activeSessionId: "sess-process-custom", loading: false, newSessionDefaults: null },
@@ -469,6 +575,12 @@ describe("ConversationPane", () => {
               type: "custom_message",
               custom_type: "ad-process:update",
               text: "Process 'issue512-manual-rayclient-server' was terminated",
+              details: {
+                processName: "issue512-manual-rayclient-server",
+                status: "exited",
+                exitCode: 1,
+                runtime: "12s",
+              },
               ts: 110,
             },
             { role: "assistant", text: "after", ts: 120 },
@@ -499,6 +611,9 @@ describe("ConversationPane", () => {
 
     expect(root.textContent).toContain("Process 'issue512-manual-rayclient-server' was terminated");
     expect(root.textContent).toContain("ad-process:update");
+    expect(root.textContent).toContain("Status");
+    expect(root.textContent).toContain("exited");
+    expect(root.textContent).toContain("Exit Code");
   });
 
   it("groups consecutive assistant messages and avoids showing role labels as body text", () => {

@@ -1395,6 +1395,12 @@ select {
   color: hsl(var(--destructive));
 }
 
+.machineTraceToken.isProcessTool {
+  background: color-mix(in srgb, var(--message-card-base) 80%, #0ea5e9);
+  border-color: color-mix(in srgb, var(--chrome-border) 70%, #0ea5e9);
+  color: color-mix(in srgb, var(--text) 82%, #0369a1);
+}
+
 .machineTraceToken.reasoning {
   background: var(--message-card-reasoning-bg);
   border-color: var(--message-card-reasoning-border);
@@ -1488,6 +1494,10 @@ select {
 .machineTraceDetail.tool_result.isError {
   background: var(--message-card-tool-error-bg);
   border-color: var(--message-card-tool-error-border);
+}
+
+.machineTraceDetail.isProcessTool {
+  border-color: color-mix(in srgb, var(--chrome-border) 70%, #0ea5e9);
 }
 
 .machineTraceDetail.reasoning {

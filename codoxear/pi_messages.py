@@ -415,6 +415,15 @@ def _coerce_tool_arguments(args: Any) -> dict[str, Any]:
     return args if isinstance(args, dict) else {}
 
 
+def _tool_call_details(args: Any) -> dict[str, Any] | None:
+    normalized = _coerce_tool_arguments(args)
+    if normalized:
+        return {"arguments": normalized}
+    if isinstance(args, str) and args.strip():
+        return {"raw_arguments": args.strip()}
+    return None
+
+
 def _is_ask_user_tool_name(name: Any) -> bool:
     return isinstance(name, str) and name in _ASK_USER_TOOL_NAMES
 
@@ -1155,6 +1164,9 @@ def normalize_pi_entries(
                             )
                         ),
                     }
+                    tool_call_details = _tool_call_details(item.get("arguments"))
+                    if tool_call_details is not None:
+                        assistant_tool_event["details"] = tool_call_details
                     events.append(assistant_tool_event)
                     meta_delta["tool"] += 1
                     tool_names.append(tc_name)

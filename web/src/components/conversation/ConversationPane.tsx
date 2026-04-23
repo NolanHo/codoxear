@@ -1097,6 +1097,37 @@ function machineTraceSummary(event: MessageEvent, kind: CompactTraceKind) {
   return compactSingleLine(firstNonEmptyText(event.summary, event.text, detailsSummary(event.details), detailsText), 90);
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
+function toolCallArgumentDetails(event: MessageEvent): Record<string, unknown> | null {
+  const details = asRecord(event.details);
+  if (!details) {
+    return null;
+  }
+  return asRecord(details.arguments);
+}
+
+function toolCallRawArguments(event: MessageEvent): string | null {
+  const details = asRecord(event.details);
+  const raw = details?.raw_arguments;
+  return typeof raw === "string" && raw.trim() ? raw.trim() : null;
+}
+
+function processDetails(event: MessageEvent): Record<string, unknown> | null {
+  return asRecord(event.details);
+}
+
+function processNameFromDetails(details: Record<string, unknown> | null): string {
+  return firstNonEmptyText(
+    typeof details?.processName === "string" ? details.processName : "",
+    typeof details?.name === "string" ? details.name : "",
+    typeof asRecord(details?.process)?.name === "string" ? asRecord(details?.process)?.name as string : "",
+    "process",
+  );
+}
+
 function hasTrailingUnresolvedTool(events: MessageEvent[]) {
   for (let index = events.length - 1; index >= 0; index -= 1) {
     const kind = eventKind(events[index]);
@@ -1136,10 +1167,37 @@ function renderMachineTraceDetail(event: MessageEvent, kind: CompactTraceKind, o
 
   if (kind === "tool") {
     const body = firstNonEmptyText(event.text, event.summary, event.context);
+    const args = toolCallArgumentDetails(event);
+    const rawArgs = toolCallRawArguments(event);
+    const argsText = args ? JSON.stringify(args, null, 2) : rawArgs;
+    const isProcessTool = event.name === "process";
     return (
-      <div className="machineTraceDetailBody space-y-3">
+      <div className={cn("machineTraceDetailBody space-y-3", isProcessTool && "processToolDetail")}> 
         {renderCardHeader("tool", machineTraceTitle(event, kind), event.summary || undefined, event.ts)}
-        {body ? renderRichText(body, "messageBody", options) : <div className="messageCardFooterText text-sm text-muted-foreground">No additional tool input.</div>}
+        {isProcessTool && args ? (
+          <div className="grid grid-cols-2 gap-2">
+            {typeof args.action === "string" ? (
+              <div className="messageMetaItem rounded-xl bg-background/70 p-3 text-sm">
+                <span className="block text-xs uppercase tracking-wide text-muted-foreground">Action</span>
+                <strong>{args.action}</strong>
+              </div>
+            ) : null}
+            {typeof args.name === "string" ? (
+              <div className="messageMetaItem rounded-xl bg-background/70 p-3 text-sm">
+                <span className="block text-xs uppercase tracking-wide text-muted-foreground">Process Name</span>
+                <strong>{args.name}</strong>
+              </div>
+            ) : null}
+            {typeof args.id === "string" ? (
+              <div className="messageMetaItem rounded-xl bg-background/70 p-3 text-sm col-span-2">
+                <span className="block text-xs uppercase tracking-wide text-muted-foreground">Process ID</span>
+                <strong>{args.id}</strong>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+        {body ? renderRichText(body, "messageBody", options) : null}
+        {argsText ? <pre className="messageCardPre overflow-x-auto rounded-xl bg-background/80 p-3 text-sm">{argsText}</pre> : <div className="messageCardFooterText text-sm text-muted-foreground">No additional tool input.</div>}
       </div>
     );
   }
@@ -1166,10 +1224,38 @@ function renderMachineTraceDetail(event: MessageEvent, kind: CompactTraceKind, o
 
   if (kind === "custom_message") {
     const body = firstNonEmptyText(event.description, event.summary, event.text);
+    const details = processDetails(event);
     const detailsText = event.details ? JSON.stringify(event.details, null, 2) : "";
+    const isProcessUpdate = typeof event.custom_type === "string" && event.custom_type.startsWith("ad-process:");
     return (
-      <div className="machineTraceDetailBody space-y-3">
+      <div className={cn("machineTraceDetailBody space-y-3", isProcessUpdate && "processToolDetail")}> 
         {renderCardHeader("custom_message", machineTraceTitle(event, kind), typeof event.custom_type === "string" ? event.custom_type : undefined, event.ts)}
+        {isProcessUpdate ? (
+          <div className="grid grid-cols-2 gap-2">
+            <div className="messageMetaItem rounded-xl bg-background/70 p-3 text-sm">
+              <span className="block text-xs uppercase tracking-wide text-muted-foreground">Process</span>
+              <strong>{processNameFromDetails(details)}</strong>
+            </div>
+            {typeof details?.status === "string" ? (
+              <div className="messageMetaItem rounded-xl bg-background/70 p-3 text-sm">
+                <span className="block text-xs uppercase tracking-wide text-muted-foreground">Status</span>
+                <strong>{details.status}</strong>
+              </div>
+            ) : null}
+            {typeof details?.exitCode === "number" ? (
+              <div className="messageMetaItem rounded-xl bg-background/70 p-3 text-sm">
+                <span className="block text-xs uppercase tracking-wide text-muted-foreground">Exit Code</span>
+                <strong>{details.exitCode}</strong>
+              </div>
+            ) : null}
+            {typeof details?.runtime === "string" ? (
+              <div className="messageMetaItem rounded-xl bg-background/70 p-3 text-sm">
+                <span className="block text-xs uppercase tracking-wide text-muted-foreground">Runtime</span>
+                <strong>{details.runtime}</strong>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
         {body ? renderRichText(body, "messageBody", options) : null}
         {detailsText ? <pre className="messageCardPre overflow-x-auto rounded-xl bg-background/80 p-3 text-sm">{detailsText}</pre> : null}
       </div>
@@ -1190,9 +1276,34 @@ function renderMachineTraceDetail(event: MessageEvent, kind: CompactTraceKind, o
 
   const body = firstNonEmptyText(event.text, detailsSummary(event.details));
   const detailsText = !event.text && event.details ? JSON.stringify(event.details, null, 2) : "";
+  const details = processDetails(event);
+  const process = asRecord(details?.process);
+  const isProcessResult = event.name === "process";
   return (
-    <div className="machineTraceDetailBody space-y-3">
+    <div className={cn("machineTraceDetailBody space-y-3", isProcessResult && "processToolDetail")}> 
       {renderCardHeader("tool_result", machineTraceTitle(event, kind), event.summary || undefined, event.ts)}
+      {isProcessResult ? (
+        <div className="grid grid-cols-2 gap-2">
+          <div className="messageMetaItem rounded-xl bg-background/70 p-3 text-sm">
+            <span className="block text-xs uppercase tracking-wide text-muted-foreground">Action</span>
+            <strong>{typeof details?.action === "string" ? details.action : "output"}</strong>
+          </div>
+          <div className="messageMetaItem rounded-xl bg-background/70 p-3 text-sm">
+            <span className="block text-xs uppercase tracking-wide text-muted-foreground">Status</span>
+            <strong>{typeof process?.status === "string" ? process.status : (typeof details?.success === "boolean" ? (details.success ? "ok" : "failed") : "unknown")}</strong>
+          </div>
+          <div className="messageMetaItem rounded-xl bg-background/70 p-3 text-sm">
+            <span className="block text-xs uppercase tracking-wide text-muted-foreground">Process</span>
+            <strong>{processNameFromDetails(details)}</strong>
+          </div>
+          {typeof process?.id === "string" ? (
+            <div className="messageMetaItem rounded-xl bg-background/70 p-3 text-sm">
+              <span className="block text-xs uppercase tracking-wide text-muted-foreground">Process ID</span>
+              <strong>{process.id}</strong>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
       {body ? renderRichText(body, "messageBody", options) : null}
       {detailsText ? <pre className="messageCardPre overflow-x-auto rounded-xl bg-background/80 p-3 text-sm">{detailsText}</pre> : null}
     </div>
@@ -1241,6 +1352,7 @@ function CompactMachineTrace({ events, options, isBusy }: { events: MessageEvent
                 isSelected && "isSelected",
                 isRunning && "isRunning",
                 event.is_error && "isError",
+                (kind === "tool" || kind === "tool_result") && event.name === "process" && "isProcessTool",
                 (piEventVariant === PI_EVENT_COMPACT_VARIANTS.turn_terminal || piEventVariant === PI_EVENT_COMPACT_VARIANTS.empty_output || piEventVariant === PI_EVENT_COMPACT_VARIANTS.retry_error) && "isAlert",
                 piEventVariant === PI_EVENT_COMPACT_VARIANTS.turn_terminal && "isTurnTerminal",
                 piEventVariant === PI_EVENT_COMPACT_VARIANTS.compaction && "isCompaction",
@@ -1251,9 +1363,13 @@ function CompactMachineTrace({ events, options, isBusy }: { events: MessageEvent
             >
               <span className="machineTraceTokenIcon" aria-hidden="true">
                 {kind === "tool"
-                  ? <ToolCallIcon />
+                  ? event.name === "process"
+                    ? <ProcessUpdateIcon />
+                    : <ToolCallIcon />
                   : kind === "tool_result"
-                    ? <ToolResultIcon />
+                    ? event.name === "process"
+                      ? <ProcessUpdateIcon />
+                      : <ToolResultIcon />
                     : kind === "todo_snapshot"
                       ? <TodoChangeIcon />
                       : kind === "custom_message"
@@ -1277,6 +1393,7 @@ function CompactMachineTrace({ events, options, isBusy }: { events: MessageEvent
             "machineTraceDetail",
             selectedKind,
             selectedEvent.is_error && "isError",
+            (selectedKind === "tool" || selectedKind === "tool_result") && selectedEvent.name === "process" && "isProcessTool",
             (selectedVariant === PI_EVENT_COMPACT_VARIANTS.turn_terminal || selectedVariant === PI_EVENT_COMPACT_VARIANTS.empty_output || selectedVariant === PI_EVENT_COMPACT_VARIANTS.retry_error) && "isAlert",
             selectedVariant === PI_EVENT_COMPACT_VARIANTS.turn_terminal && "isTurnTerminal",
             selectedVariant === PI_EVENT_COMPACT_VARIANTS.compaction && "isCompaction",
