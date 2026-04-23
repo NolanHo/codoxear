@@ -630,6 +630,44 @@ function isDisplayableEpochTs(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value) && value >= 1_000_000_000;
 }
 
+function eventTimestampSeconds(event: MessageEvent): number | null {
+  for (const key of ["ts", "timestamp", "created_at", "updated_at"] as const) {
+    const value = event[key];
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return value > 1_000_000_000_000 ? value / 1000 : value;
+    }
+    if (typeof value === "string" && value.trim()) {
+      const parsed = Date.parse(value);
+      if (Number.isFinite(parsed)) {
+        return parsed / 1000;
+      }
+    }
+  }
+  return null;
+}
+
+function sortMachineTraceEvents(events: MessageEvent[]): MessageEvent[] {
+  if (events.length <= 1) {
+    return events;
+  }
+  let lastTs: number | null = null;
+  const rows = events.map((event, index) => {
+    const parsedTs = eventTimestampSeconds(event);
+    const ts = parsedTs ?? (lastTs != null ? lastTs + 1e-6 : (index + 1) * 1e-6);
+    if (lastTs == null || ts > lastTs) {
+      lastTs = ts;
+    }
+    return { event, index, ts };
+  });
+  rows.sort((a, b) => {
+    if (a.ts !== b.ts) {
+      return a.ts - b.ts;
+    }
+    return a.index - b.index;
+  });
+  return rows.map((row) => row.event);
+}
+
 function formatMessageTimestamp(ts: number): string {
   return new Intl.DateTimeFormat(undefined, {
     month: "short",
@@ -1144,17 +1182,18 @@ function renderMachineTraceDetail(event: MessageEvent, kind: CompactTraceKind, o
 }
 
 function CompactMachineTrace({ events, options, isBusy }: { events: MessageEvent[]; options: MarkdownRenderOptions; isBusy: boolean }) {
-  const runningIndex = machineTraceRunningIndex(events, isBusy);
+  const traceEvents = sortMachineTraceEvents(events);
+  const runningIndex = machineTraceRunningIndex(traceEvents, isBusy);
   const initialSelected = runningIndex >= 0 ? runningIndex : null;
   const [selectedIndex, setSelectedIndex] = useState<number | null>(initialSelected);
-  const selectedEvent = selectedIndex == null ? null : events[selectedIndex] ?? null;
+  const selectedEvent = selectedIndex == null ? null : traceEvents[selectedIndex] ?? null;
   const selectedKind = selectedEvent ? compactTraceKind(selectedEvent) : null;
   const selectedVariant = selectedEvent ? piEventCompactVariant(selectedEvent) : null;
 
   return (
     <MessageSurface kind="event" compact className="machineTraceSurface" contentClassName="space-y-3">
       <div className="machineTraceStrip" data-testid="machine-trace-strip">
-        {events.map((event, index) => {
+        {traceEvents.map((event, index) => {
           const kind = compactTraceKind(event);
           if (!kind || !isMachineTraceKind(kind)) {
             return null;

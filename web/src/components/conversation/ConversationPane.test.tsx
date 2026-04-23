@@ -925,6 +925,42 @@ describe("ConversationPane", () => {
     expect(toolResultToken?.getAttribute("aria-expanded")).toBe("true");
   });
 
+  it("orders machine-trace tokens by parsed timestamp with fallback for missing ts", () => {
+    const sessionsStore = createStaticStore(
+      { items: [], activeSessionId: "sess-trace-order", loading: false, newSessionDefaults: null },
+      { refresh: () => Promise.resolve(), select: () => undefined },
+    );
+    const messagesStore = createStaticStore(
+      {
+        bySessionId: {
+          "sess-trace-order": [
+            { type: "tool_result", name: "bash", text: "late", ts: 1761177605 },
+            { type: "pi_event", summary: "Compaction finished", text: "done", timestamp: "2025-10-23T00:00:04Z" },
+            { type: "tool", name: "read", text: "early", ts: 1761177603 },
+            { type: "reasoning", text: "no timestamp available" },
+          ],
+        },
+        offsetsBySessionId: { "sess-trace-order": 4 },
+        loading: false,
+      },
+      { loadInitial: () => Promise.resolve(), poll: () => Promise.resolve() },
+    );
+
+    root = document.createElement("div");
+    document.body.appendChild(root);
+    render(
+      <AppProviders sessionsStore={sessionsStore as any} messagesStore={messagesStore as any}>
+        <ConversationPane />
+      </AppProviders>,
+      root,
+    );
+
+    const kinds = Array.from(root.querySelectorAll<HTMLButtonElement>(".machineTraceToken"))
+      .map((node) => String(node.dataset.kind || ""));
+
+    expect(kinds).toEqual(["tool", "pi_event", "tool_result", "reasoning"]);
+  });
+
   it("marks the latest unfinished tool token as running while the session is busy", () => {
     const sessionsStore = createStaticStore(
       { items: [{ session_id: "sess-trace-running", busy: true }], activeSessionId: "sess-trace-running", loading: false, newSessionDefaults: null },
