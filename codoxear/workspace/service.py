@@ -12,11 +12,11 @@ from . import file_access as _file_access
 
 
 def _session_base(runtime: ServerRuntime, session_id: str, *, strict: bool = False) -> tuple[Any, Path]:
-    runtime.MANAGER.refresh_session_meta(session_id, strict=strict)
-    session = runtime.MANAGER.get_session(session_id)
+    runtime.manager.refresh_session_meta(session_id, strict=strict)
+    session = runtime.manager.get_session(session_id)
     if session is None:
         raise KeyError("unknown session")
-    base = runtime._safe_expanduser(Path(session.cwd))
+    base = runtime.api.safe_expanduser(Path(session.cwd))
     if not base.is_absolute():
         base = base.resolve()
     return session, base
@@ -24,7 +24,7 @@ def _session_base(runtime: ServerRuntime, session_id: str, *, strict: bool = Fal
 
 def _track_file(runtime: ServerRuntime, session_id: str, path_obj: Path) -> None:
     try:
-        runtime.MANAGER.files_add(session_id, str(path_obj))
+        runtime.manager.files_add(session_id, str(path_obj))
     except KeyError:
         pass
 
@@ -128,7 +128,7 @@ def list_session_directory_entries(
     base: Path,
     raw_path: str = "",
 ) -> list[dict[str, str]]:
-    root = runtime._safe_expanduser(base).resolve()
+    root = runtime.api.safe_expanduser(base).resolve()
     if not root.exists():
         raise FileNotFoundError("session cwd not found")
     if not root.is_dir():
@@ -143,7 +143,7 @@ def list_session_directory_entries(
     out: list[dict[str, str]] = []
     for child in target.iterdir():
         rel = child.relative_to(root).as_posix()
-        if child.is_dir() and child.name in runtime.FILE_LIST_IGNORED_DIRS:
+        if child.is_dir() and child.name in runtime.api.FILE_LIST_IGNORED_DIRS:
             continue
         if _is_ignored_session_relpath(rel, is_dir=child.is_dir(), patterns=patterns):
             continue
@@ -172,10 +172,10 @@ def write_text_file_atomic(
         raise ValueError("symlink write not supported")
     data = text.encode("utf-8")
     size = len(data)
-    max_allowed = int(runtime.FILE_READ_MAX_BYTES if max_bytes is None else max_bytes)
+    max_allowed = int(runtime.api.FILE_READ_MAX_BYTES if max_bytes is None else max_bytes)
     if size > max_allowed:
         raise ValueError(f"file too large (max {max_allowed} bytes)")
-    tmp = path.with_name(f".{path.name}.codoxear-tmp-{runtime.secrets.token_hex(6)}")
+    tmp = path.with_name(f".{path.name}.codoxear-tmp-{runtime.api.secrets.token_hex(6)}")
     try:
         fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL, st.st_mode & 0o777)
         with os.fdopen(fd, "wb") as fh:
@@ -187,7 +187,7 @@ def write_text_file_atomic(
                 tmp.unlink()
         except OSError:
             pass
-    return size, runtime._file_content_version(data)
+    return size, runtime.api.file_content_version(data)
 
 
 def write_new_text_file_atomic(
@@ -197,7 +197,7 @@ def write_new_text_file_atomic(
     text: str,
     max_bytes: int | None = None,
 ) -> tuple[int, str]:
-    path = runtime._safe_expanduser(path)
+    path = runtime.api.safe_expanduser(path)
     parent = path.parent
     if not parent.exists():
         raise FileNotFoundError("parent directory not found")
@@ -209,10 +209,10 @@ def write_new_text_file_atomic(
         raise FileExistsError("file already exists")
     data = text.encode("utf-8")
     size = len(data)
-    max_allowed = int(runtime.FILE_READ_MAX_BYTES if max_bytes is None else max_bytes)
+    max_allowed = int(runtime.api.FILE_READ_MAX_BYTES if max_bytes is None else max_bytes)
     if size > max_allowed:
         raise ValueError(f"file too large (max {max_allowed} bytes)")
-    tmp = path.with_name(f".{path.name}.codoxear-tmp-{runtime.secrets.token_hex(6)}")
+    tmp = path.with_name(f".{path.name}.codoxear-tmp-{runtime.api.secrets.token_hex(6)}")
     try:
         fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
         with os.fdopen(fd, "wb") as fh:
@@ -224,7 +224,7 @@ def write_new_text_file_atomic(
                 tmp.unlink()
         except OSError:
             pass
-    return size, runtime._file_content_version(data)
+    return size, runtime.api.file_content_version(data)
 
 
 def _safe_filename(name: str, *, default: str = "file") -> str:
@@ -254,13 +254,13 @@ def stage_uploaded_file(
     if not isinstance(raw, (bytes, bytearray)):
         raise ValueError("file bytes required")
     data = bytes(raw)
-    max_allowed = int(runtime.ATTACH_UPLOAD_MAX_BYTES if max_bytes is None else max_bytes)
+    max_allowed = int(runtime.api.ATTACH_UPLOAD_MAX_BYTES if max_bytes is None else max_bytes)
     if len(data) > max_allowed:
         raise ValueError(f"file too large (max {max_allowed} bytes)")
     safe_name = _safe_filename(filename, default="file")
-    subdir = (runtime.UPLOAD_DIR / session_id).resolve()
+    subdir = (runtime.api.UPLOAD_DIR / session_id).resolve()
     subdir.mkdir(parents=True, exist_ok=True)
-    out_path = (subdir / f"{int(runtime._now() * 1000)}_{safe_name}").resolve()
+    out_path = (subdir / f"{int(runtime.api.now() * 1000)}_{safe_name}").resolve()
     if not str(out_path).startswith(str(subdir) + os.sep):
         raise ValueError("bad path")
     out_path.write_bytes(data)
@@ -277,7 +277,7 @@ def attachment_inject_text(attachment_index: int, path: Path) -> str:
 
 def read_session_file(runtime: ServerRuntime, session_id: str, rel: str) -> dict[str, Any]:
     _session, base = _session_base(runtime, session_id, strict=False)
-    path_obj = runtime._resolve_session_path(base, rel)
+    path_obj = runtime.api.resolve_session_path(base, rel)
     if not path_obj.exists():
         raise FileNotFoundError("file not found")
     if not path_obj.is_file():
@@ -328,7 +328,7 @@ def read_session_file(runtime: ServerRuntime, session_id: str, rel: str) -> dict
 
 def search_session_files(runtime: ServerRuntime, session_id: str, query: str, limit: int) -> dict[str, Any]:
     _session, base = _session_base(runtime, session_id, strict=False)
-    result = runtime._search_session_relative_files(base, query=query, limit=limit)
+    result = runtime.api.search_session_relative_files(base, query=query, limit=limit)
     return {
         "ok": True,
         "cwd": str(base),
@@ -353,7 +353,7 @@ def list_session_files(runtime: ServerRuntime, session_id: str, raw_rel: str) ->
 
 def resolve_session_blob(runtime: ServerRuntime, session_id: str, rel: str) -> Path:
     _session, base = _session_base(runtime, session_id, strict=False)
-    path_obj = runtime._resolve_session_path(base, rel)
+    path_obj = runtime.api.resolve_session_path(base, rel)
     if not path_obj.exists():
         raise FileNotFoundError("file not found")
     if not path_obj.is_file():
@@ -362,7 +362,7 @@ def resolve_session_blob(runtime: ServerRuntime, session_id: str, rel: str) -> P
 
 
 def resolve_client_blob(runtime: ServerRuntime, raw_path: str) -> Path:
-    path_obj = runtime._safe_expanduser(Path(raw_path)).resolve()
+    path_obj = runtime.api.safe_expanduser(Path(raw_path)).resolve()
     if not path_obj.exists():
         raise FileNotFoundError("file not found")
     if not path_obj.is_file():
@@ -459,9 +459,9 @@ def write_session_file(
         except FileExistsError as exc:
             raise FileExistsError(str(path_obj)) from exc
     else:
-        path_obj = runtime._resolve_session_path(base, path_raw)
-        _current_text, _current_size, current_version = runtime._read_text_file_for_write(
-            path_obj, max_bytes=runtime.FILE_READ_MAX_BYTES
+        path_obj = runtime.api.resolve_session_path(base, path_raw)
+        _current_text, _current_size, current_version = runtime.api.read_text_file_for_write(
+            path_obj, max_bytes=runtime.api.FILE_READ_MAX_BYTES
         )
         if current_version != version:
             raise FileExistsError(str(path_obj), current_version)
@@ -497,7 +497,7 @@ def inject_session_attachment(
     inject_text = attachment_inject_text(attachment_index, out_path)
     seq = f"\x1b[200~{inject_text}\x1b[201~"
     try:
-        broker = runtime.MANAGER.inject_keys(session_id, seq)
+        broker = runtime.manager.inject_keys(session_id, seq)
     except ValueError as exc:
         raise ConnectionError(str(exc)) from exc
     return {

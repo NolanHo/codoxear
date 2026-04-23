@@ -54,7 +54,7 @@ def last_attention_ts_from_pi_tail(
         return None
     try:
         events, _token_update, _off, _scan_bytes, _complete, _diag = (
-            runtime._pi_messages.read_pi_message_tail_snapshot(
+            runtime.api.pi_messages.read_pi_message_tail_snapshot(
                 session_path,
                 min_events=80,
                 initial_scan_bytes=256 * 1024,
@@ -64,7 +64,7 @@ def last_attention_ts_from_pi_tail(
     except Exception:
         return None
     if any(is_attention_worthy_session_event(event) for event in events):
-        activity_ts = runtime._session_file_activity_ts(session_path)
+        activity_ts = runtime.api.session_file_activity_ts(session_path)
         if activity_ts is not None:
             return activity_ts
     return attention_updated_ts_from_events(events)
@@ -80,14 +80,14 @@ def display_updated_ts(session: Any) -> float:
 
 def session_row_dedupe_key(runtime: Any, row: dict[str, Any]) -> str:
     if row.get("historical"):
-        backend = runtime.normalize_agent_backend(
+        backend = runtime.api.normalize_agent_backend(
             row.get("agent_backend"),
             default=str(row.get("backend", "codex")),
         )
         return f"historical:{backend}:{str(row.get('session_id', '')).strip()}"
     thread_id = str(row.get("thread_id", "")).strip()
     if thread_id:
-        backend = runtime.normalize_agent_backend(
+        backend = runtime.api.normalize_agent_backend(
             row.get("agent_backend"),
             default=str(row.get("backend", "codex")),
         )
@@ -103,15 +103,15 @@ def display_source_path(session: Any) -> str | None:
 
 def durable_session_id_for_live_session(runtime: Any, session: Any) -> str:
     return (
-        runtime._clean_optional_text(session.thread_id)
-        or runtime._clean_optional_text(session.session_id)
+        runtime.api.clean_optional_text(session.thread_id)
+        or runtime.api.clean_optional_text(session.session_id)
         or ""
     )
 
 
 def display_pi_busy(runtime: Any, session: Any, *, broker_busy: bool) -> bool:
     if not broker_busy:
-        activity_ts = runtime._session_file_activity_ts(session.session_path)
+        activity_ts = runtime.api.session_file_activity_ts(session.session_path)
         if activity_ts is not None:
             session.pi_idle_activity_ts = activity_ts
         session.pi_busy_activity_floor = None
@@ -119,7 +119,7 @@ def display_pi_busy(runtime: Any, session: Any, *, broker_busy: bool) -> bool:
     session_path = session.session_path
     if session_path is None or (not session_path.exists()):
         return True
-    activity_ts = runtime._session_file_activity_ts(session_path)
+    activity_ts = runtime.api.session_file_activity_ts(session_path)
     if activity_ts is None:
         return True
     floor = session.pi_busy_activity_floor
@@ -128,7 +128,7 @@ def display_pi_busy(runtime: Any, session: Any, *, broker_busy: bool) -> bool:
     idle_marker = session.pi_idle_activity_ts
     if isinstance(idle_marker, (int, float)) and activity_ts <= float(idle_marker):
         return False
-    idle = runtime._pi_messages.is_pi_session_idle(session_path)
+    idle = runtime.api.pi_messages.is_pi_session_idle(session_path)
     if idle is True:
         session.pi_idle_activity_ts = activity_ts
         session.pi_busy_activity_floor = None
@@ -190,7 +190,7 @@ def resolved_session_run_settings(runtime: Any, session: Any) -> tuple[str | Non
         and session.session_path is not None
         and session.session_path.exists()
     ):
-        pi_provider, pi_model, pi_effort = runtime._read_pi_run_settings(session.session_path)
+        pi_provider, pi_model, pi_effort = runtime.api.read_pi_run_settings(session.session_path)
         if model_provider is None:
             model_provider = pi_provider
         if model is None:
@@ -202,7 +202,7 @@ def resolved_session_run_settings(runtime: Any, session: Any) -> tuple[str | Non
         and session.log_path is not None
         and session.log_path.exists()
     ):
-        log_provider, log_model, log_effort = runtime._read_run_settings_from_log(
+        log_provider, log_model, log_effort = runtime.api.read_run_settings_from_log(
             session.log_path,
             agent_backend=session.agent_backend,
         )
@@ -231,5 +231,5 @@ def resolved_session_token(
         source_path = session.log_path
     if source_path is None:
         return None
-    token_update = runtime._rollout_log._find_latest_token_update(source_path)
+    token_update = runtime.api.rollout_log._find_latest_token_update(source_path)
     return token_update if isinstance(token_update, dict) else None

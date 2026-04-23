@@ -12,7 +12,7 @@ def terminate_process_group(
     *,
     wait_seconds: float = 1.0,
 ) -> bool:
-    pids = runtime._descendant_pids(root_pid)
+    pids = runtime.api.descendant_pids(root_pid)
     pids.add(root_pid)
     for pid in sorted(pids, reverse=True):
         if pid <= 0:
@@ -25,10 +25,10 @@ def terminate_process_group(
             return False
     deadline = time.time() + wait_seconds
     while time.time() < deadline:
-        if all(not runtime._pid_alive(pid) for pid in pids):
+        if all(not runtime.api.pid_alive(pid) for pid in pids):
             return True
         time.sleep(0.05)
-    return all(not runtime._pid_alive(pid) for pid in pids)
+    return all(not runtime.api.pid_alive(pid) for pid in pids)
 
 
 def terminate_process(runtime: Any, pid: int, *, wait_seconds: float = 1.0) -> bool:
@@ -42,7 +42,7 @@ def terminate_process(runtime: Any, pid: int, *, wait_seconds: float = 1.0) -> b
         return False
     deadline = time.time() + wait_seconds
     while time.time() < deadline:
-        if not runtime._pid_alive(pid):
+        if not runtime.api.pid_alive(pid):
             return True
         time.sleep(0.05)
-    return not runtime._pid_alive(pid)
+    return not runtime.api.pid_alive(pid)

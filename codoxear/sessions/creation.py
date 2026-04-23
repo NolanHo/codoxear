@@ -21,9 +21,9 @@ def parse_create_session_request(
     else:
         raise ValueError("name must be a string")
 
-    backend = sv.normalize_agent_backend(
+    backend = sv.api.normalize_agent_backend(
         obj.get("backend"),
-        default=sv.normalize_agent_backend(obj.get("agent_backend"), default="codex"),
+        default=sv.api.normalize_agent_backend(obj.get("agent_backend"), default="codex"),
     )
     args = obj.get("args")
     if args is None:
@@ -33,7 +33,7 @@ def parse_create_session_request(
     else:
         raise ValueError("args must be a list of strings")
 
-    resume_session_id = sv._clean_optional_resume_session_id(obj.get("resume_session_id"))
+    resume_session_id = sv.api.clean_optional_resume_session_id(obj.get("resume_session_id"))
 
     create_in_tmux_raw = obj.get("create_in_tmux")
     if create_in_tmux_raw is None:
@@ -51,12 +51,12 @@ def parse_create_session_request(
             )
             if isinstance(value, str) and value.strip()
         }
-        model_provider = sv._normalize_requested_model_provider(
+        model_provider = sv.api.normalize_requested_model_provider(
             obj.get("model_provider"),
             allowed=pi_provider_choices or None,
         )
-        model = sv._normalize_requested_model(obj.get("model"))
-        reasoning_effort = sv._normalize_requested_pi_reasoning_effort(
+        model = sv.api.normalize_requested_model(obj.get("model"))
+        reasoning_effort = sv.api.normalize_requested_pi_reasoning_effort(
             obj.get("reasoning_effort")
         )
         return {
@@ -77,7 +77,7 @@ def parse_create_session_request(
     allowed_providers = set(
         read_codex_launch_defaults(runtime).get("model_providers") or ["openai"]
     )
-    model_provider = sv._normalize_requested_model_provider(
+    model_provider = sv.api.normalize_requested_model_provider(
         obj.get("model_provider"),
         allowed=set(
             [
@@ -86,14 +86,14 @@ def parse_create_session_request(
             ]
         ),
     )
-    preferred_auth_method = sv._normalize_requested_preferred_auth_method(
+    preferred_auth_method = sv.api.normalize_requested_preferred_auth_method(
         obj.get("preferred_auth_method")
     )
-    model = sv._normalize_requested_model(obj.get("model"))
-    reasoning_effort = sv._normalize_requested_reasoning_effort(
+    model = sv.api.normalize_requested_model(obj.get("model"))
+    reasoning_effort = sv.api.normalize_requested_reasoning_effort(
         obj.get("reasoning_effort")
     )
-    service_tier = sv._normalize_requested_service_tier(obj.get("service_tier"))
+    service_tier = sv.api.normalize_requested_service_tier(obj.get("service_tier"))
 
     worktree_branch_raw = obj.get("worktree_branch")
     if worktree_branch_raw is None:
@@ -144,16 +144,16 @@ def read_codex_launch_defaults(runtime: ServerRuntime) -> dict[str, Any]:
     configured_auth_method = "apikey"
     configured_service_tier = "flex"
     configured_providers = ["chatgpt", "openai-api"]
-    if sv.CODEX_CONFIG_PATH.exists():
-        data = sv.tomllib.loads(sv.CODEX_CONFIG_PATH.read_text(encoding="utf-8"))
+    if sv.api.CODEX_CONFIG_PATH.exists():
+        data = sv.api.tomllib.loads(sv.api.CODEX_CONFIG_PATH.read_text(encoding="utf-8"))
         if not isinstance(data, dict):
-            raise ValueError(f"invalid Codex config in {sv.CODEX_CONFIG_PATH}")
-        configured_model = sv._clean_optional_text(data.get("model"))
-        configured_effort = sv._display_reasoning_effort(
+            raise ValueError(f"invalid Codex config in {sv.api.CODEX_CONFIG_PATH}")
+        configured_model = sv.api.clean_optional_text(data.get("model"))
+        configured_effort = sv.api.display_reasoning_effort(
             data.get("model_reasoning_effort")
         )
         configured_auth_method = (
-            sv._normalize_requested_preferred_auth_method(
+            sv.api.normalize_requested_preferred_auth_method(
                 data.get("preferred_auth_method")
             )
             or configured_auth_method
@@ -164,7 +164,7 @@ def read_codex_launch_defaults(runtime: ServerRuntime) -> dict[str, Any]:
             *[p for p in configured_model_providers(data) if p != "openai"],
         ]
         configured_provider = (
-            sv._normalize_requested_model_provider(
+            sv.api.normalize_requested_model_provider(
                 data.get("model_provider") or data.get("model_provider_id"),
                 allowed=set(
                     [
@@ -180,13 +180,13 @@ def read_codex_launch_defaults(runtime: ServerRuntime) -> dict[str, Any]:
             or configured_provider
         )
         configured_service_tier = (
-            sv._normalize_requested_service_tier(data.get("service_tier"))
+            sv.api.normalize_requested_service_tier(data.get("service_tier"))
             or configured_service_tier
         )
     defaults: dict[str, Any] = {
         "model_provider": configured_provider,
         "preferred_auth_method": configured_auth_method,
-        "provider_choice": sv._provider_choice_for_settings(
+        "provider_choice": sv.api.provider_choice_for_settings(
             model_provider=configured_provider,
             preferred_auth_method=configured_auth_method,
         ),
@@ -197,13 +197,13 @@ def read_codex_launch_defaults(runtime: ServerRuntime) -> dict[str, Any]:
     if configured_effort is not None:
         defaults["reasoning_effort"] = configured_effort
         return defaults
-    if not sv.MODELS_CACHE_PATH.exists():
+    if not sv.api.MODELS_CACHE_PATH.exists():
         defaults["reasoning_effort"] = None
         return defaults
-    cache = sv.json.loads(sv.MODELS_CACHE_PATH.read_text(encoding="utf-8"))
+    cache = sv.api.json.loads(sv.api.MODELS_CACHE_PATH.read_text(encoding="utf-8"))
     models = cache.get("models") if isinstance(cache, dict) else None
     if not isinstance(models, list):
-        raise ValueError(f"invalid models cache in {sv.MODELS_CACHE_PATH}")
+        raise ValueError(f"invalid models cache in {sv.api.MODELS_CACHE_PATH}")
     rows: list[dict[str, Any]] = [row for row in models if isinstance(row, dict)]
     if not rows:
         defaults["reasoning_effort"] = None
@@ -211,11 +211,11 @@ def read_codex_launch_defaults(runtime: ServerRuntime) -> dict[str, Any]:
     if configured_model is not None:
         for row in rows:
             names = {
-                sv._clean_optional_text(row.get("slug")),
-                sv._clean_optional_text(row.get("display_name")),
+                sv.api.clean_optional_text(row.get("slug")),
+                sv.api.clean_optional_text(row.get("display_name")),
             }
             if configured_model in names:
-                defaults["reasoning_effort"] = sv._display_reasoning_effort(
+                defaults["reasoning_effort"] = sv.api.display_reasoning_effort(
                     row.get("default_reasoning_level")
                 )
                 return defaults
@@ -223,10 +223,10 @@ def read_codex_launch_defaults(runtime: ServerRuntime) -> dict[str, Any]:
         rows,
         key=lambda row: (
             row.get("priority") if isinstance(row.get("priority"), int) else 999999,
-            sv._clean_optional_text(row.get("slug")) or "",
+            sv.api.clean_optional_text(row.get("slug")) or "",
         ),
     )
-    defaults["reasoning_effort"] = sv._display_reasoning_effort(
+    defaults["reasoning_effort"] = sv.api.display_reasoning_effort(
         ranked[0].get("default_reasoning_level")
     )
     return defaults
@@ -245,19 +245,19 @@ def normalize_pi_provider_models_snapshot(
     provider_choices: list[str] = []
     if isinstance(provider_choices_raw, list):
         for value in provider_choices_raw:
-            name = sv._clean_optional_text(value)
+            name = sv.api.clean_optional_text(value)
             if name is None or name in provider_choices:
                 continue
             provider_choices.append(name)
     provider_models: dict[str, list[str]] = {}
     for key, value in provider_models_raw.items():
-        name = sv._clean_optional_text(key)
+        name = sv.api.clean_optional_text(key)
         if name is None:
             continue
         model_choices: list[str] = []
         if isinstance(value, list):
             for item in value:
-                model_id = sv._clean_optional_text(item)
+                model_id = sv.api.clean_optional_text(item)
                 if model_id is None or model_id in model_choices:
                     continue
                 model_choices.append(model_id)
@@ -278,14 +278,14 @@ def read_pi_provider_models_snapshot_from_source(
     sv = runtime
     provider_choices: list[str] = []
     provider_models: dict[str, list[str]] = {}
-    if sv.PI_MODELS_PATH.exists():
-        data = sv.json.loads(sv.PI_MODELS_PATH.read_text(encoding="utf-8"))
+    if sv.api.PI_MODELS_PATH.exists():
+        data = sv.api.json.loads(sv.api.PI_MODELS_PATH.read_text(encoding="utf-8"))
         if not isinstance(data, dict):
-            raise ValueError(f"invalid Pi models config in {sv.PI_MODELS_PATH}")
+            raise ValueError(f"invalid Pi models config in {sv.api.PI_MODELS_PATH}")
         providers = data.get("providers")
         if isinstance(providers, dict):
             for key, value in providers.items():
-                name = sv._clean_optional_text(key)
+                name = sv.api.clean_optional_text(key)
                 if name is None or name in provider_choices:
                     continue
                 provider_choices.append(name)
@@ -296,7 +296,7 @@ def read_pi_provider_models_snapshot_from_source(
                         for row in models:
                             if not isinstance(row, dict):
                                 continue
-                            model_id = sv._clean_optional_text(row.get("id"))
+                            model_id = sv.api.clean_optional_text(row.get("id"))
                             if model_id is None or model_id in model_choices:
                                 continue
                             model_choices.append(model_id)
@@ -304,7 +304,7 @@ def read_pi_provider_models_snapshot_from_source(
     return {
         "provider_choices": provider_choices,
         "provider_models": provider_models,
-        "cached_at": sv.time.time(),
+        "cached_at": sv.api.time.time(),
     }
 
 
@@ -318,13 +318,13 @@ def read_pi_provider_models_snapshot(
     if not force_refresh and page_state_db is not None:
         cached = normalize_pi_provider_models_snapshot(
             runtime,
-            page_state_db.load_app_kv(sv.PI_MODELS_CACHE_NAMESPACE).get("snapshot"),
+            page_state_db.load_app_kv(sv.api.PI_MODELS_CACHE_NAMESPACE).get("snapshot"),
         )
         if cached is not None:
             return cached
     snapshot = read_pi_provider_models_snapshot_from_source(runtime)
     if page_state_db is not None:
-        page_state_db.save_app_kv(sv.PI_MODELS_CACHE_NAMESPACE, {"snapshot": snapshot})
+        page_state_db.save_app_kv(sv.api.PI_MODELS_CACHE_NAMESPACE, {"snapshot": snapshot})
     return snapshot
 
 
@@ -339,12 +339,12 @@ def read_pi_launch_defaults(
     configured_model: str | None = None
     configured_effort: str | None = "high"
 
-    if sv.PI_SETTINGS_PATH.exists():
-        data = sv.json.loads(sv.PI_SETTINGS_PATH.read_text(encoding="utf-8"))
+    if sv.api.PI_SETTINGS_PATH.exists():
+        data = sv.api.json.loads(sv.api.PI_SETTINGS_PATH.read_text(encoding="utf-8"))
         if not isinstance(data, dict):
-            raise ValueError(f"invalid Pi settings in {sv.PI_SETTINGS_PATH}")
-        configured_provider = sv._clean_optional_text(data.get("defaultProvider"))
-        configured_model = sv._clean_optional_text(data.get("defaultModel"))
+            raise ValueError(f"invalid Pi settings in {sv.api.PI_SETTINGS_PATH}")
+        configured_provider = sv.api.clean_optional_text(data.get("defaultProvider"))
+        configured_model = sv.api.clean_optional_text(data.get("defaultModel"))
 
     snapshot = read_pi_provider_models_snapshot(
         runtime,
@@ -382,7 +382,7 @@ def read_pi_launch_defaults(
         "models": selected_models,
         "provider_models": provider_models,
         "reasoning_effort": configured_effort,
-        "reasoning_efforts": list(sv.SUPPORTED_PI_REASONING_EFFORTS),
+        "reasoning_efforts": list(sv.api.SUPPORTED_PI_REASONING_EFFORTS),
         "service_tier": None,
         "supports_fast": False,
         "models_cached_at": snapshot.get("cached_at"),
@@ -399,7 +399,7 @@ def read_new_session_defaults(
     codex = read_codex_launch_defaults(runtime)
     codex["agent_backend"] = "codex"
     codex["provider_choices"] = list(codex.get("model_providers") or [])
-    codex["reasoning_efforts"] = list(sv.SUPPORTED_REASONING_EFFORTS)
+    codex["reasoning_efforts"] = list(sv.api.SUPPORTED_REASONING_EFFORTS)
     codex["supports_fast"] = True
     pi = read_pi_launch_defaults(
         runtime,
@@ -407,7 +407,7 @@ def read_new_session_defaults(
         force_refresh=refresh_pi_models,
     )
     return {
-        "default_backend": sv.DEFAULT_AGENT_BACKEND,
+        "default_backend": sv.api.DEFAULT_AGENT_BACKEND,
         "backends": {
             "codex": codex,
             "pi": pi,

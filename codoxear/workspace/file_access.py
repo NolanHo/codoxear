@@ -20,14 +20,14 @@ def file_extension(path: Path) -> str:
 
 
 def markdown_kind(runtime: ServerRuntime, path: Path) -> str:
-    return "markdown" if file_extension(path) in runtime.MARKDOWN_EXTENSIONS else "text"
+    return "markdown" if file_extension(path) in runtime.api.MARKDOWN_EXTENSIONS else "text"
 
 
 def path_looks_textual(runtime: ServerRuntime, path: Path) -> bool:
     ext = file_extension(path)
-    if ext in runtime.TEXTUAL_EXTENSIONS:
+    if ext in runtime.api.TEXTUAL_EXTENSIONS:
         return True
-    return str(path.name or "").strip().lower() in runtime.TEXTUAL_FILENAMES
+    return str(path.name or "").strip().lower() in runtime.api.TEXTUAL_FILENAMES
 
 
 def looks_like_text_bytes(raw: bytes) -> bool:
@@ -167,12 +167,12 @@ def resolve_tracked_file_by_basename(
     if not name or "/" in name or "\\" in name or "\x00" in name:
         return None
     try:
-        tracked = sv.MANAGER.files_get(session_id)
+        tracked = sv.manager.files_get(session_id)
     except KeyError:
         return None
     match: Path | None = None
     for raw in tracked:
-        candidate = sv._safe_expanduser(Path(raw)).resolve()
+        candidate = sv.api.safe_expanduser(Path(raw)).resolve()
         if candidate.name != name:
             continue
         if match is None:
@@ -196,7 +196,7 @@ def resolve_client_file_path(
         raise ValueError("invalid path format")
 
     try:
-        path_obj = sv._safe_expanduser(Path(raw_path))
+        path_obj = sv.api.safe_expanduser(Path(raw_path))
         for part in path_obj.parts:
             if len(part.encode("utf-8", errors="ignore")) > 255:
                 raise ValueError("invalid path format (name too long)")
@@ -207,10 +207,10 @@ def resolve_client_file_path(
 
     if not path_obj.is_absolute():
         if session_id:
-            sv.MANAGER.refresh_session_meta(session_id, strict=False)
-            session = sv.MANAGER.get_session(session_id)
+            sv.manager.refresh_session_meta(session_id, strict=False)
+            session = sv.manager.get_session(session_id)
             if session:
-                base = sv._safe_expanduser(Path(session.cwd))
+                base = sv.api.safe_expanduser(Path(session.cwd))
                 if not base.is_absolute():
                     base = base.resolve()
                 direct = (base / path_obj).resolve()
@@ -223,10 +223,10 @@ def resolve_client_file_path(
                         return path_obj
                     try:
                         repo_root = Path(
-                            sv._run_git(
+                            sv.api.run_git(
                                 base,
                                 ["rev-parse", "--show-toplevel"],
-                                timeout_s=sv.GIT_DIFF_TIMEOUT_SECONDS,
+                                timeout_s=sv.api.GIT_DIFF_TIMEOUT_SECONDS,
                                 max_bytes=64 * 1024,
                             ).strip()
                         ).resolve()
@@ -247,7 +247,7 @@ def read_client_file_view(runtime: ServerRuntime, path_obj: Path):
     if not path_obj.exists():
         raise FileNotFoundError("file not found")
     if path_obj.is_dir():
-        return sv.ClientFileView(kind="directory", size=0)
+        return sv.api.ClientFileView(kind="directory", size=0)
     if not path_obj.is_file():
         raise ValueError("path is not a file")
     try:
@@ -258,20 +258,20 @@ def read_client_file_view(runtime: ServerRuntime, path_obj: Path):
         raise PermissionError("permission denied") from e
     kind, content_type = file_kind(path_obj, prefix)
     if kind in {"image", "pdf"}:
-        return sv.ClientFileView(kind=kind, size=size, content_type=content_type)
-    if size > sv.FILE_READ_MAX_BYTES:
-        return sv.ClientFileView(
+        return sv.api.ClientFileView(kind=kind, size=size, content_type=content_type)
+    if size > sv.api.FILE_READ_MAX_BYTES:
+        return sv.api.ClientFileView(
             kind="download_only",
             size=size,
             blocked_reason="too_large",
-            viewer_max_bytes=sv.FILE_READ_MAX_BYTES,
+            viewer_max_bytes=sv.api.FILE_READ_MAX_BYTES,
         )
     raw = path_obj.read_bytes()
     text_payload = decode_text_view_for_client(runtime, path_obj, raw)
     if text_payload is None:
-        return sv.ClientFileView(kind="download_only", size=size, blocked_reason="binary")
+        return sv.api.ClientFileView(kind="download_only", size=size, blocked_reason="binary")
     text, editable, version = text_payload
-    return sv.ClientFileView(
+    return sv.api.ClientFileView(
         kind=markdown_kind(runtime, path_obj),
         size=size,
         text=text,
@@ -290,7 +290,7 @@ def inspect_openable_file(
     if view.kind == "download_only":
         if view.blocked_reason == "too_large":
             raise ValueError(
-                f"file too large (max {runtime.FILE_READ_MAX_BYTES} bytes)"
+                f"file too large (max {runtime.api.FILE_READ_MAX_BYTES} bytes)"
             )
         raise ValueError("binary file not supported")
     raw = path_obj.read_bytes()

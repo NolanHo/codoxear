@@ -66,6 +66,7 @@ from .pi_log import pi_user_text as _pi_user_text
 from .pi_log import read_pi_run_settings as _read_pi_run_settings
 from .pi_log import read_pi_session_id as _read_pi_session_id
 from .runtime import RuntimeApi, ServerRuntime, build_server_runtime
+from .runtime_api_exports import RUNTIME_API_EXPORTS as _RUNTIME_API_EXPORTS
 from .sessions import background as _session_background
 from .sessions import lifecycle as _session_lifecycle
 from .sessions import listing as _session_listing
@@ -404,6 +405,49 @@ def _pid_alive(pid: int) -> bool:
     except PermissionError:
         # The PID exists but is owned by another user.
         return True
+
+
+def _descendant_pids(root_pid: int) -> set[int]:
+    root = int(root_pid)
+    if root <= 0:
+        return set()
+    children: dict[int, set[int]] = {}
+    try:
+        entries = PROC_ROOT.iterdir()
+    except OSError:
+        return set()
+    for entry in entries:
+        name = entry.name
+        if not name.isdigit():
+            continue
+        pid = int(name)
+        stat_path = entry / "stat"
+        try:
+            stat_text = stat_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        close_idx = stat_text.rfind(")")
+        if close_idx < 0:
+            continue
+        tail = stat_text[close_idx + 2 :].split()
+        if len(tail) < 2:
+            continue
+        try:
+            ppid = int(tail[1])
+        except ValueError:
+            continue
+        children.setdefault(ppid, set()).add(pid)
+
+    out: set[int] = set()
+    stack = [root]
+    while stack:
+        cur = stack.pop()
+        for child in children.get(cur, set()):
+            if child in out:
+                continue
+            out.add(child)
+            stack.append(child)
+    return out
 
 
 def _process_group_alive(root_pid: int) -> bool:
@@ -1526,53 +1570,6 @@ def _session_live_payload(
 
 def _supports_web_control(meta: dict[str, Any]) -> bool:
     return meta.get("supports_web_control") is True
-
-
-_RUNTIME_API_EXPORTS = (
-    "clean_harness_cooldown_minutes",
-    "clean_harness_remaining_injections",
-    "clip01",
-    "current_git_branch",
-    "describe_session_cwd",
-    "display_pi_busy",
-    "display_source_path",
-    "display_updated_ts",
-    "durable_session_id_for_live_session",
-    "file_kind",
-    "first_user_message_preview_from_log",
-    "first_user_message_preview_from_pi_session",
-    "historical_session_row",
-    "json_response",
-    "list_resume_candidates_for_cwd",
-    "match_session_route",
-    "metrics_snapshot",
-    "normalize_requested_backend",
-    "parse_git_numstat",
-    "priority_from_elapsed_seconds",
-    "provider_choice_for_backend",
-    "publish_session_live_invalidate",
-    "publish_session_workspace_invalidate",
-    "publish_sessions_invalidate",
-    "read_body",
-    "read_run_settings_from_log",
-    "read_text_file_strict",
-    "record_metric",
-    "require_auth",
-    "require_git_repo",
-    "resolve_dir_target",
-    "resolve_git_path",
-    "run_git",
-    "safe_expanduser",
-    "session_details_payload",
-    "session_list_payload",
-    "session_live_payload",
-    "session_workspace_payload",
-    "state_busy_value",
-    "tmux_available",
-    "todo_snapshot_payload_for_session",
-    "validated_session_state",
-    "workspace_file_access",
-)
 
 
 def _build_runtime_api() -> RuntimeApi:

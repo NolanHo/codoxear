@@ -129,7 +129,7 @@ def normalize_session_cwd_row(
         return row
     normalized = dict(row)
     if "cwd" in normalized:
-        canonical_cwd = sv._canonical_session_cwd(normalized.get("cwd"))
+        canonical_cwd = sv.api.canonical_session_cwd(normalized.get("cwd"))
         if canonical_cwd is not None:
             normalized["cwd"] = canonical_cwd
     normalized["display_name"] = session_row_display_name(normalized)
@@ -144,14 +144,14 @@ def frontend_session_list_row(
     if not isinstance(normalized, dict):
         return normalized
     return {
-        key: normalized[key] for key in sv.SESSION_LIST_ROW_KEYS if key in normalized
+        key: normalized[key] for key in sv.api.SESSION_LIST_ROW_KEYS if key in normalized
     }
 
 
 def session_list_group_key(runtime: ServerRuntime, row: dict[str, Any]) -> str:
     sv = runtime
-    cwd = sv._canonical_session_cwd(row.get("cwd"))
-    return cwd or sv.SESSION_LIST_FALLBACK_GROUP_KEY
+    cwd = sv.api.canonical_session_cwd(row.get("cwd"))
+    return cwd or sv.api.SESSION_LIST_FALLBACK_GROUP_KEY
 
 
 def session_list_payload(
@@ -171,7 +171,7 @@ def session_list_payload(
     if (
         group_key is None
         and group_offset <= 0
-        and group_limit == sv.SESSION_LIST_RECENT_GROUP_LIMIT
+        and group_limit == sv.api.SESSION_LIST_RECENT_GROUP_LIMIT
     ):
         page_rows = [frontend_session_list_row(runtime, row) for row in rows[start:stop]]
         remaining = max(0, len(rows) - stop)
@@ -232,7 +232,7 @@ def session_list_payload(
             "remaining_by_group": {group_key: remaining} if remaining > 0 else {},
         }
 
-    selected_group_keys = set(group_order[: sv.SESSION_LIST_RECENT_GROUP_LIMIT])
+    selected_group_keys = set(group_order[: sv.api.SESSION_LIST_RECENT_GROUP_LIMIT])
     omitted_group_count = 0
     for key, group_rows in grouped.items():
         if any(bool(row.get("busy")) for row in group_rows) or any(
@@ -240,7 +240,7 @@ def session_list_payload(
         ):
             selected_group_keys.add(key)
 
-    if group_offset > 0 or group_limit != sv.SESSION_LIST_RECENT_GROUP_LIMIT:
+    if group_offset > 0 or group_limit != sv.api.SESSION_LIST_RECENT_GROUP_LIMIT:
         group_stop = max(group_offset, 0) + max(1, int(group_limit))
         extra_group_order = group_order[group_offset:group_stop]
         selected_group_keys = set(extra_group_order)
@@ -252,7 +252,7 @@ def session_list_payload(
         if key not in selected_group_keys:
             continue
         group_rows = grouped[key]
-        page_rows = _page_rows_for_group(group_rows, sv.SESSION_LIST_GROUP_PAGE_SIZE)
+        page_rows = _page_rows_for_group(group_rows, sv.api.SESSION_LIST_GROUP_PAGE_SIZE)
         sessions.extend(frontend_session_list_row(runtime, row) for row in page_rows)
         remaining = len(group_rows) - len(page_rows)
         if remaining > 0:
@@ -261,7 +261,7 @@ def session_list_payload(
         "sessions": sessions,
         "remaining_by_group": remaining_by_group,
     }
-    if group_offset <= 0 and group_limit == sv.SESSION_LIST_RECENT_GROUP_LIMIT:
+    if group_offset <= 0 and group_limit == sv.api.SESSION_LIST_RECENT_GROUP_LIMIT:
         omitted_group_count = max(0, len(group_order) - len(selected_group_keys))
     result["omitted_group_count"] = omitted_group_count
     return result
@@ -284,8 +284,8 @@ def parse_historical_session_id(
     _prefix, backend, resume_session_id = (
         raw.split(":", 2) if raw.count(":") >= 2 else ("", "", "")
     )
-    backend_clean = sv.normalize_agent_backend(backend, default="codex")
-    resume_clean = sv._clean_optional_text(resume_session_id)
+    backend_clean = sv.api.normalize_agent_backend(backend, default="codex")
+    resume_clean = sv.api.clean_optional_text(resume_session_id)
     if not resume_clean:
         return None
     return backend_clean, resume_clean
@@ -299,15 +299,15 @@ def historical_session_row(
     if parsed is None:
         return None
     backend, resume_session_id = parsed
-    for row in sv._iter_all_resume_candidates():
+    for row in sv.api.iter_all_resume_candidates():
         if (
-            sv.normalize_agent_backend(
+            sv.api.normalize_agent_backend(
                 row.get("agent_backend", row.get("backend")), default="codex"
             )
             != backend
         ):
             continue
-        if sv._clean_optional_text(row.get("session_id")) != resume_session_id:
+        if sv.api.clean_optional_text(row.get("session_id")) != resume_session_id:
             continue
         out = dict(row)
         out["session_id"] = historical_session_id(runtime, backend, resume_session_id)
@@ -325,14 +325,14 @@ def historical_sidebar_items(
 ) -> list[dict[str, Any]]:
     sv = runtime
     out: list[dict[str, Any]] = []
-    for row in sv._iter_all_resume_candidates():
+    for row in sv.api.iter_all_resume_candidates():
         resume_session_id = row.get("session_id")
         cwd = row.get("cwd")
         if not isinstance(resume_session_id, str) or not resume_session_id:
             continue
         if not isinstance(cwd, str) or not cwd:
             continue
-        backend = sv.normalize_agent_backend(
+        backend = sv.api.normalize_agent_backend(
             row.get("agent_backend", row.get("backend")), default="codex"
         )
         live_key = (backend, resume_session_id)
@@ -345,7 +345,7 @@ def historical_sidebar_items(
             else float(now_ts)
         )
         elapsed_s = max(0.0, now_ts - updated_ts)
-        time_priority = sv._priority_from_elapsed_seconds(elapsed_s)
+        time_priority = sv.api.priority_from_elapsed_seconds(elapsed_s)
         first_user_message = ""
         try:
             if backend == "pi":
@@ -389,8 +389,8 @@ def historical_sidebar_items(
                 "tools": 0,
                 "system": 0,
                 "harness_enabled": False,
-                "harness_cooldown_minutes": sv.HARNESS_DEFAULT_IDLE_MINUTES,
-                "harness_remaining_injections": sv.HARNESS_DEFAULT_MAX_INJECTIONS,
+                "harness_cooldown_minutes": sv.api.HARNESS_DEFAULT_IDLE_MINUTES,
+                "harness_remaining_injections": sv.api.HARNESS_DEFAULT_MAX_INJECTIONS,
                 "alias": "",
                 "first_user_message": first_user_message,
                 "files": [],
@@ -485,7 +485,7 @@ def first_user_message_preview_from_log(
                 if not isinstance(obj, dict):
                     continue
                 if obj.get("type") == "message":
-                    text = sv._pi_user_text(obj) or ""
+                    text = sv.api.pi_user_text(obj) or ""
                 elif obj.get("type") == "response_item":
                     payload = obj.get("payload")
                     if not isinstance(payload, dict):

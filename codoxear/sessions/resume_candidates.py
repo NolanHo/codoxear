@@ -120,7 +120,7 @@ def fallback_path_mtime(path: Path) -> float | None:
 def last_pi_conversation_ts(runtime: ServerRuntime, path: Path) -> float | None:
     sv = runtime
     try:
-        for entry in sv._rollout_log._iter_jsonl_objects_reverse(path):
+        for entry in sv.api.rollout_log._iter_jsonl_objects_reverse(path):
             if entry.get("type") != "message":
                 continue
             message = entry.get("message")
@@ -129,9 +129,9 @@ def last_pi_conversation_ts(runtime: ServerRuntime, path: Path) -> float | None:
             role = message.get("role")
             if role not in {"user", "assistant", "toolResult"}:
                 continue
-            ts = sv._pi_messages._entry_ts(message)
+            ts = sv.api.pi_messages._entry_ts(message)
             if ts is None:
-                ts = sv._pi_messages._entry_ts(entry)
+                ts = sv.api.pi_messages._entry_ts(entry)
             if isinstance(ts, (int, float)) and math.isfinite(float(ts)) and float(ts) > 0:
                 return float(ts)
     except FileNotFoundError:
@@ -148,11 +148,11 @@ def resume_candidate_updated_ts(
     agent_backend: str,
 ) -> float | None:
     sv = runtime
-    backend_name = sv.normalize_agent_backend(agent_backend)
+    backend_name = sv.api.normalize_agent_backend(agent_backend)
     if backend_name == "pi":
         ts = last_pi_conversation_ts(runtime, path)
     else:
-        ts = sv._last_conversation_ts_from_tail(path)
+        ts = sv.api.last_conversation_ts_from_tail(path)
     if isinstance(ts, (int, float)) and math.isfinite(float(ts)) and float(ts) > 0:
         return float(ts)
     return fallback_path_mtime(path)
@@ -165,9 +165,9 @@ def resume_candidate_from_log(
     agent_backend: str = "codex",
 ) -> dict[str, Any] | None:
     sv = runtime
-    backend_name = sv.normalize_agent_backend(agent_backend)
-    meta = sv._read_session_meta(log_path, agent_backend=backend_name)
-    if backend_name == "codex" and sv._is_subagent_session_meta(meta):
+    backend_name = sv.api.normalize_agent_backend(agent_backend)
+    meta = sv.api.read_session_meta(log_path, agent_backend=backend_name)
+    if backend_name == "codex" and sv.api.is_subagent_session_meta(meta):
         return None
     session_id = meta.get("id")
     cwd = meta.get("cwd")
@@ -201,7 +201,7 @@ def pi_resume_candidate_from_session_file(
     session_path: Path,
 ) -> dict[str, Any] | None:
     sv = runtime
-    if sv._pi_session_has_handoff_history(session_path):
+    if sv.api.pi_session_has_handoff_history(session_path):
         return None
     try:
         with session_path.open("rb") as f:
@@ -236,7 +236,7 @@ def pi_resume_candidate_from_session_file(
                     "git_branch": None,
                     "agent_backend": "pi",
                     "backend": "pi",
-                    "title": sv._pi_session_name_from_session_file(session_path),
+                    "title": sv.api.pi_session_name_from_session_file(session_path),
                 }
     except OSError:
         return None
@@ -251,7 +251,7 @@ def discover_pi_session_for_cwd(
     exclude: set[Path] | None = None,
 ) -> Path | None:
     sv = runtime
-    session_dir = sv._pi_native_session_dir_for_cwd(cwd)
+    session_dir = sv.api.pi_native_session_dir_for_cwd(cwd)
     if not session_dir.is_dir():
         return None
     best: Path | None = None
@@ -259,7 +259,7 @@ def discover_pi_session_for_cwd(
     for f in session_dir.glob("*.jsonl"):
         if exclude and f in exclude:
             continue
-        if sv._pi_session_has_handoff_history(f):
+        if sv.api.pi_session_has_handoff_history(f):
             continue
         try:
             mtime = f.stat().st_mtime
@@ -291,16 +291,16 @@ def resolve_pi_session_path(
             preferred_exists = False
         if preferred_exists:
             if (not clean_thread_id) or (
-                sv._read_pi_session_id(preferred) == clean_thread_id
+                sv.api.read_pi_session_id(preferred) == clean_thread_id
             ):
                 return preferred, "preferred"
     if clean_thread_id:
-        exact = sv._find_session_log_for_session_id(clean_thread_id, agent_backend="pi")
+        exact = sv.api.find_session_log_for_session_id(clean_thread_id, agent_backend="pi")
         if exact is not None:
             return exact, "exact"
     if preferred is not None:
         return preferred, "preferred"
-    discovered = sv._discover_pi_session_for_cwd(cwd, start_ts, exclude=exclude)
+    discovered = sv.api.discover_pi_session_for_cwd(cwd, start_ts, exclude=exclude)
     if discovered is not None:
         return discovered, "discovered"
     return None, None
@@ -316,18 +316,18 @@ def list_resume_candidates_for_cwd(
     agent_backend: str | None = None,
 ) -> list[dict[str, Any]]:
     sv = runtime
-    cwd2 = str(sv._safe_expanduser(Path(cwd)).resolve())
+    cwd2 = str(sv.api.safe_expanduser(Path(cwd)).resolve())
     backend_raw = backend if backend is not None else agent_backend
-    backend2 = sv.normalize_agent_backend(backend_raw, default="codex")
+    backend2 = sv.api.normalize_agent_backend(backend_raw, default="codex")
     limit2 = max(1, int(limit))
     offset2 = max(0, int(offset))
     if backend2 == "pi":
         rows: list[dict[str, Any]] = []
-        session_dir = sv._pi_native_session_dir_for_cwd(cwd2)
+        session_dir = sv.api.pi_native_session_dir_for_cwd(cwd2)
         if not session_dir.exists():
             return rows
         for session_path in session_dir.glob("*.jsonl"):
-            row = sv._pi_resume_candidate_from_session_file(session_path)
+            row = sv.api.pi_resume_candidate_from_session_file(session_path)
             if not isinstance(row, dict):
                 continue
             if row.get("cwd") != cwd2:
@@ -337,9 +337,9 @@ def list_resume_candidates_for_cwd(
         return rows[offset2 : offset2 + limit2]
     out: list[dict[str, Any]] = []
     seen: set[str] = set()
-    for log_path in sv._iter_session_logs(agent_backend=backend2):
+    for log_path in sv.api.iter_session_logs(agent_backend=backend2):
         try:
-            row = sv._resume_candidate_from_log(log_path, agent_backend=backend2)
+            row = sv.api.resume_candidate_from_log(log_path, agent_backend=backend2)
         except Exception:
             continue
         if not isinstance(row, dict):
@@ -367,9 +367,9 @@ def iter_all_resume_candidates(
     seen: set[tuple[str, str]] = set()
     ranked_rows: list[tuple[float, dict[str, Any]]] = []
 
-    if sv.PI_NATIVE_SESSIONS_DIR.exists():
-        for session_path in sv.PI_NATIVE_SESSIONS_DIR.glob("--*--/*.jsonl"):
-            row = sv._pi_resume_candidate_from_session_file(session_path)
+    if sv.api.PI_NATIVE_SESSIONS_DIR.exists():
+        for session_path in sv.api.PI_NATIVE_SESSIONS_DIR.glob("--*--/*.jsonl"):
+            row = sv.api.pi_resume_candidate_from_session_file(session_path)
             if not isinstance(row, dict):
                 continue
             session_id = row.get("session_id")
@@ -381,9 +381,9 @@ def iter_all_resume_candidates(
             seen.add(key)
             ranked_rows.append((float(row.get("updated_ts") or 0.0), row))
 
-    for log_path in sv._iter_session_logs(agent_backend="codex"):
+    for log_path in sv.api.iter_session_logs(agent_backend="codex"):
         try:
-            row = sv._resume_candidate_from_log(log_path, agent_backend="codex")
+            row = sv.api.resume_candidate_from_log(log_path, agent_backend="codex")
         except Exception:
             continue
         if not isinstance(row, dict):

@@ -14,7 +14,7 @@ def handle_post(runtime: ServerRuntime, handler: Any, path: str) -> bool:
             return True
         try:
             obj = _common.read_json_object(runtime, handler)
-            cwd, entry = runtime.MANAGER.cwd_group_set(
+            cwd, entry = runtime.manager.cwd_group_set(
                 cwd=obj.get("cwd"),
                 label=obj.get("label"),
                 collapsed=obj.get("collapsed"),
@@ -40,7 +40,7 @@ def handle_post(runtime: ServerRuntime, handler: Any, path: str) -> bool:
             runtime.api.json_response(handler, 400, out)
             return True
         try:
-            res = runtime.MANAGER.spawn_web_session(
+            res = runtime.manager.spawn_web_session(
                 cwd=payload["cwd"],
                 args=payload["args"],
                 resume_session_id=payload["resume_session_id"],
@@ -53,7 +53,7 @@ def handle_post(runtime: ServerRuntime, handler: Any, path: str) -> bool:
                 create_in_tmux=payload["create_in_tmux"],
                 backend=payload["backend"],
             )
-            alias = runtime.MANAGER.set_created_session_name(
+            alias = runtime.manager.set_created_session_name(
                 session_id=res.get("session_id"),
                 runtime_id=res.get("runtime_id"),
                 backend=res.get("backend") or payload["backend"],
@@ -81,7 +81,7 @@ def handle_post(runtime: ServerRuntime, handler: Any, path: str) -> bool:
             handler._unauthorized()
             return True
         runtime.api.read_body(handler)
-        ok = runtime.MANAGER.delete_session(session_id)
+        ok = runtime.manager.delete_session(session_id)
         if not ok:
             runtime.api.json_response(handler, 404, {"error": "unknown session"})
             return True
@@ -96,7 +96,7 @@ def handle_post(runtime: ServerRuntime, handler: Any, path: str) -> bool:
             return True
         runtime.api.read_body(handler)
         try:
-            res = runtime.MANAGER.handoff_session(session_id)
+            res = runtime.manager.handoff_session(session_id)
         except ValueError as exc:
             runtime.api.json_response(handler, 400, {"error": str(exc)})
             return True
@@ -114,7 +114,7 @@ def handle_post(runtime: ServerRuntime, handler: Any, path: str) -> bool:
             return True
         runtime.api.read_body(handler)
         try:
-            res = runtime.MANAGER.restart_session(session_id)
+            res = runtime.manager.restart_session(session_id)
         except ValueError as exc:
             runtime.api.json_response(handler, 400, {"error": str(exc)})
             return True

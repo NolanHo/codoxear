@@ -44,7 +44,7 @@ def handle_post(runtime: ServerRuntime, handler: Any, path: str) -> bool:
                 return True
         else:
             remaining_injections = None
-        cfg = runtime.MANAGER.harness_set(
+        cfg = runtime.manager.harness_set(
             session_id,
             enabled=enabled,
             request=request,
@@ -61,15 +61,15 @@ def handle_post(runtime: ServerRuntime, handler: Any, path: str) -> bool:
         session_id = _common.session_id_from_path(path)
         runtime.api.read_body(handler)
         try:
-            resp = runtime.MANAGER.inject_keys(session_id, "\\x1b")
+            resp = runtime.manager.inject_keys(session_id, "\\x1b")
         except KeyError:
             runtime.api.json_response(handler, 404, {"error": "unknown session"})
             return True
         except ValueError as exc:
             runtime.api.json_response(handler, 502, {"error": str(exc)})
             return True
-        durable_session_id = runtime.MANAGER._durable_session_id_for_identifier(session_id) or session_id
-        runtime_id = runtime.MANAGER._runtime_session_id_for_identifier(session_id)
+        durable_session_id = runtime.manager._durable_session_id_for_identifier(session_id) or session_id
+        runtime_id = runtime.manager._runtime_session_id_for_identifier(session_id)
         runtime.api.publish_session_live_invalidate(
             durable_session_id,
             runtime_id=runtime_id,

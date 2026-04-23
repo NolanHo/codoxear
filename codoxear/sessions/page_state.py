@@ -135,7 +135,7 @@ def service(manager: Any) -> PageStateService:
 def load_harness(manager: Any) -> None:
     sv = _runtime(manager)
     try:
-        raw = sv.HARNESS_PATH.read_text(encoding="utf-8")
+        raw = sv.api.HARNESS_PATH.read_text(encoding="utf-8")
     except FileNotFoundError:
         return
     obj = json.loads(raw)
@@ -157,8 +157,8 @@ def load_harness(manager: Any) -> None:
             request = ""
         if not isinstance(request, str):
             raise ValueError(f"invalid harness request for session {sid!r}")
-        cooldown_minutes = sv._clean_harness_cooldown_minutes(v.get("cooldown_minutes"))
-        remaining_injections = sv._clean_harness_remaining_injections(
+        cooldown_minutes = sv.api.clean_harness_cooldown_minutes(v.get("cooldown_minutes"))
+        remaining_injections = sv.api.clean_harness_remaining_injections(
             v.get("remaining_injections"), allow_zero=True
         )
         cleaned[sid] = {
@@ -175,13 +175,13 @@ def save_harness(manager: Any) -> None:
     sv = _runtime(manager)
     with manager._lock:
         obj = dict(manager._harness)
-    os.makedirs(sv.APP_DIR, exist_ok=True)
-    tmp = sv.HARNESS_PATH.with_suffix(".json.tmp")
+    os.makedirs(sv.api.APP_DIR, exist_ok=True)
+    tmp = sv.api.HARNESS_PATH.with_suffix(".json.tmp")
     tmp.write_text(
         json.dumps(obj, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
         encoding="utf-8",
     )
-    os.replace(tmp, sv.HARNESS_PATH)
+    os.replace(tmp, sv.api.HARNESS_PATH)
 
 
 def clear_deleted_session_state(manager: Any, session_id: str) -> None:
@@ -252,7 +252,7 @@ def load_files(manager: Any) -> None:
     db = getattr(manager, "_page_state_db", None)
     if db is None:
         try:
-            raw = sv.FILE_HISTORY_PATH.read_text(encoding="utf-8")
+            raw = sv.api.FILE_HISTORY_PATH.read_text(encoding="utf-8")
         except FileNotFoundError:
             return
         obj = json.loads(raw)
@@ -275,7 +275,7 @@ def load_files(manager: Any) -> None:
                 if not p or p in out:
                     continue
                 out.append(p)
-                if len(out) >= sv.FILE_HISTORY_MAX:
+                if len(out) >= sv.api.FILE_HISTORY_MAX:
                     break
             if out:
                 cleaned[key] = out
@@ -292,13 +292,13 @@ def save_files(manager: Any) -> None:
     if db is None:
         with manager._lock:
             obj = dict(manager._files)
-        os.makedirs(sv.APP_DIR, exist_ok=True)
-        tmp = sv.FILE_HISTORY_PATH.with_suffix(".json.tmp")
+        os.makedirs(sv.api.APP_DIR, exist_ok=True)
+        tmp = sv.api.FILE_HISTORY_PATH.with_suffix(".json.tmp")
         tmp.write_text(
             json.dumps(obj, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
             encoding="utf-8",
         )
-        os.replace(tmp, sv.FILE_HISTORY_PATH)
+        os.replace(tmp, sv.api.FILE_HISTORY_PATH)
         return
     manager._persist_files()
 
@@ -308,7 +308,7 @@ def load_queues(manager: Any) -> None:
     db = getattr(manager, "_page_state_db", None)
     if db is None:
         try:
-            raw = sv.QUEUE_PATH.read_text(encoding="utf-8")
+            raw = sv.api.QUEUE_PATH.read_text(encoding="utf-8")
         except FileNotFoundError:
             return
         obj = json.loads(raw)
@@ -343,13 +343,13 @@ def save_queues(manager: Any) -> None:
     if db is None:
         with manager._lock:
             obj = dict(manager._queues)
-        os.makedirs(sv.APP_DIR, exist_ok=True)
-        tmp = sv.QUEUE_PATH.with_suffix(".json.tmp")
+        os.makedirs(sv.api.APP_DIR, exist_ok=True)
+        tmp = sv.api.QUEUE_PATH.with_suffix(".json.tmp")
         tmp.write_text(
             json.dumps(obj, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
             encoding="utf-8",
         )
-        os.replace(tmp, sv.QUEUE_PATH)
+        os.replace(tmp, sv.api.QUEUE_PATH)
         return
     manager._persist_queues()
 
@@ -359,7 +359,7 @@ def load_recent_cwds(manager: Any) -> None:
     db = getattr(manager, "_page_state_db", None)
     if db is None:
         try:
-            raw = sv.RECENT_CWD_PATH.read_text(encoding="utf-8")
+            raw = sv.api.RECENT_CWD_PATH.read_text(encoding="utf-8")
         except FileNotFoundError:
             return
         obj = json.loads(raw)
@@ -370,7 +370,7 @@ def load_recent_cwds(manager: Any) -> None:
         source_items = db.load_recent_cwds().items()
     cleaned: dict[str, float] = {}
     for raw_cwd, raw_ts in source_items:
-        cwd = sv._clean_recent_cwd(raw_cwd)
+        cwd = sv.api.clean_recent_cwd(raw_cwd)
         if cwd is None or isinstance(raw_ts, bool):
             continue
         try:
@@ -382,7 +382,7 @@ def load_recent_cwds(manager: Any) -> None:
         prev = cleaned.get(cwd)
         if prev is None or ts > prev:
             cleaned[cwd] = ts
-    top = sorted(cleaned.items(), key=lambda item: (-item[1], item[0]))[: sv.RECENT_CWD_MAX]
+    top = sorted(cleaned.items(), key=lambda item: (-item[1], item[0]))[: sv.api.RECENT_CWD_MAX]
     with manager._lock:
         manager._recent_cwds = dict(top)
 
@@ -394,19 +394,19 @@ def save_recent_cwds(manager: Any) -> None:
         items = sorted(
             getattr(manager, "_recent_cwds", {}).items(),
             key=lambda item: (-float(item[1]), item[0]),
-        )[: sv.RECENT_CWD_MAX]
+        )[: sv.api.RECENT_CWD_MAX]
         manager._recent_cwds = dict(items)
     if db is not None:
         manager._persist_recent_cwds()
         return
     obj = {cwd: ts for cwd, ts in items}
-    os.makedirs(sv.APP_DIR, exist_ok=True)
-    tmp = sv.RECENT_CWD_PATH.with_suffix(".json.tmp")
+    os.makedirs(sv.api.APP_DIR, exist_ok=True)
+    tmp = sv.api.RECENT_CWD_PATH.with_suffix(".json.tmp")
     tmp.write_text(
         json.dumps(obj, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
         encoding="utf-8",
     )
-    os.replace(tmp, sv.RECENT_CWD_PATH)
+    os.replace(tmp, sv.api.RECENT_CWD_PATH)
 
 
 def load_cwd_groups(manager: Any) -> None:
@@ -415,7 +415,7 @@ def load_cwd_groups(manager: Any) -> None:
     source_items: Any
     if db is None:
         try:
-            raw = sv.CWD_GROUPS_PATH.read_text(encoding="utf-8")
+            raw = sv.api.CWD_GROUPS_PATH.read_text(encoding="utf-8")
         except FileNotFoundError:
             with manager._lock:
                 manager._cwd_groups = {}
@@ -426,19 +426,19 @@ def load_cwd_groups(manager: Any) -> None:
                 raise ValueError("invalid cwd_groups.json (expected object)")
             source_items = obj.items()
         except (json.JSONDecodeError, TypeError, ValueError) as e:
-            sv.LOG.warning("recovering malformed cwd_groups.json as empty state: %s", e)
+            sv.api.LOG.warning("recovering malformed cwd_groups.json as empty state: %s", e)
             source_items = []
     else:
         source_items = db.load_cwd_groups().items()
     cleaned: dict[str, dict[str, Any]] = {}
     for cwd, v in source_items:
         try:
-            normalized_cwd = sv._normalize_cwd_group_key(cwd)
+            normalized_cwd = sv.api.normalize_cwd_group_key(cwd)
         except ValueError:
             continue
         if not isinstance(v, dict):
             continue
-        label = sv._clean_alias(v.get("label", ""))
+        label = sv.api.clean_alias(v.get("label", ""))
         persisted_collapsed = v.get("collapsed", False)
         collapsed = persisted_collapsed if isinstance(persisted_collapsed, bool) else False
         if label or collapsed:
@@ -455,13 +455,13 @@ def save_cwd_groups(manager: Any) -> None:
         return
     with manager._lock:
         obj = dict(manager._cwd_groups)
-    os.makedirs(sv.APP_DIR, exist_ok=True)
-    tmp = sv.CWD_GROUPS_PATH.with_suffix(".json.tmp")
+    os.makedirs(sv.api.APP_DIR, exist_ok=True)
+    tmp = sv.api.CWD_GROUPS_PATH.with_suffix(".json.tmp")
     tmp.write_text(
         json.dumps(obj, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
         encoding="utf-8",
     )
-    os.replace(tmp, sv.CWD_GROUPS_PATH)
+    os.replace(tmp, sv.api.CWD_GROUPS_PATH)
 
 
 def cwd_groups_get(manager: Any) -> dict[str, dict[str, Any]]:
@@ -481,18 +481,18 @@ def prune_stale_workspace_dirs(manager: Any) -> None:
         grouped_items = list(getattr(manager, "_cwd_groups", {}).keys())
     for session in sessions:
         try:
-            active_cwds.add(sv._normalize_cwd_group_key(getattr(session, "cwd", None)))
+            active_cwds.add(sv.api.normalize_cwd_group_key(getattr(session, "cwd", None)))
         except ValueError:
             continue
     stale_recent = {
         cwd
         for cwd in recent_items
-        if cwd not in active_cwds and sv._existing_workspace_dir(cwd) is None
+        if cwd not in active_cwds and sv.api.existing_workspace_dir(cwd) is None
     }
     stale_groups = {
         cwd
         for cwd in grouped_items
-        if cwd not in active_cwds and sv._existing_workspace_dir(cwd) is None
+        if cwd not in active_cwds and sv.api.existing_workspace_dir(cwd) is None
     }
     save_recent = False
     save_groups = False
@@ -524,19 +524,19 @@ def known_cwd_group_keys(manager: Any) -> set[str]:
         grouped_items = list(getattr(manager, "_cwd_groups", {}).keys())
     for session in sessions:
         try:
-            normalized = sv._normalize_cwd_group_key(getattr(session, "cwd", None))
+            normalized = sv.api.normalize_cwd_group_key(getattr(session, "cwd", None))
         except ValueError:
             continue
         known.add(normalized)
     for cwd in recent_items:
         try:
-            normalized = sv._normalize_cwd_group_key(cwd)
+            normalized = sv.api.normalize_cwd_group_key(cwd)
         except ValueError:
             continue
         known.add(normalized)
     for cwd in grouped_items:
         try:
-            normalized = sv._normalize_cwd_group_key(cwd)
+            normalized = sv.api.normalize_cwd_group_key(cwd)
         except ValueError:
             continue
         known.add(normalized)
@@ -550,10 +550,10 @@ def cwd_group_set(
     collapsed: bool | None = None,
 ) -> tuple[str, dict[str, Any]]:
     sv = _runtime(manager)
-    normalized_cwd = sv._normalize_cwd_group_key(cwd)
+    normalized_cwd = sv.api.normalize_cwd_group_key(cwd)
     if label is not None and not isinstance(label, str):
         raise ValueError("label must be a string")
-    requested_label = sv._clean_alias(label) if label is not None else None
+    requested_label = sv.api.clean_alias(label) if label is not None else None
     requested_collapsed = collapsed
     if requested_collapsed is not None and not isinstance(requested_collapsed, bool):
         raise ValueError("collapsed must be a boolean")
@@ -592,7 +592,7 @@ def cwd_group_set(
 
 def remember_recent_cwd(manager: Any, cwd: Any, *, ts: Any = None) -> bool:
     sv = _runtime(manager)
-    cleaned = sv._clean_recent_cwd(cwd)
+    cleaned = sv.api.clean_recent_cwd(cwd)
     if cleaned is None:
         return False
     if isinstance(ts, bool):
@@ -613,10 +613,10 @@ def remember_recent_cwd(manager: Any, cwd: Any, *, ts: Any = None) -> bool:
         if prev is not None and prev >= ts_value:
             return False
         recent[cleaned] = ts_value
-        if len(recent) > sv.RECENT_CWD_MAX * 2:
+        if len(recent) > sv.api.RECENT_CWD_MAX * 2:
             keep = dict(
                 sorted(recent.items(), key=lambda item: (-float(item[1]), item[0]))[
-                    : sv.RECENT_CWD_MAX
+                    : sv.api.RECENT_CWD_MAX
                 ]
             )
             recent.clear()
@@ -628,9 +628,9 @@ def backfill_recent_cwds_from_logs(manager: Any) -> None:
     sv = _runtime(manager)
     changed = False
     seen: set[str] = set()
-    for log_path in sv._iter_session_logs():
+    for log_path in sv.api.iter_session_logs():
         try:
-            row = sv._resume_candidate_from_log(log_path)
+            row = sv.api.resume_candidate_from_log(log_path)
         except Exception:
             continue
         if not isinstance(row, dict):
@@ -641,7 +641,7 @@ def backfill_recent_cwds_from_logs(manager: Any) -> None:
         seen.add(cwd)
         if remember_recent_cwd(manager, cwd, ts=row.get("updated_ts")):
             changed = True
-        if len(seen) >= sv.RECENT_CWD_MAX:
+        if len(seen) >= sv.api.RECENT_CWD_MAX:
             break
     if changed:
         manager._save_recent_cwds()
@@ -701,7 +701,7 @@ def queue_enqueue_local(manager: Any, session_id: str, text: str) -> dict[str, A
     touched_ts: float | None = None
     ref = manager._page_state_ref_for_session_id(session_id)
     runtime_id = manager._runtime_session_id_for_identifier(session_id)
-    durable_session_id = sv._clean_optional_text(session_id)
+    durable_session_id = sv.api.clean_optional_text(session_id)
     with manager._lock:
         if runtime_id is not None:
             s0 = manager._sessions.get(runtime_id)
@@ -723,17 +723,17 @@ def queue_enqueue_local(manager: Any, session_id: str, text: str) -> dict[str, A
         q.append(t)
         ql = len(q)
         if s is not None and s.backend == "pi":
-            touched_ts = sv._touch_session_file(s.session_path)
+            touched_ts = sv.api.touch_session_file(s.session_path)
             s.pi_idle_activity_ts = None
             s.pi_busy_activity_floor = touched_ts
     manager._save_queues()
     if durable_session_id is not None:
-        sv._publish_session_workspace_invalidate(
+        sv.api.publish_session_workspace_invalidate(
             durable_session_id,
             runtime_id=runtime_id,
             reason="queue_changed",
         )
-        sv._publish_session_live_invalidate(
+        sv.api.publish_session_live_invalidate(
             durable_session_id,
             runtime_id=runtime_id,
             reason="queue_changed",
@@ -764,12 +764,12 @@ def queue_delete_local(manager: Any, session_id: str, index: int) -> dict[str, A
             manager._queues.pop(runtime_id, None)
             manager._queues.pop(ref, None)
     manager._save_queues()
-    sv._publish_session_workspace_invalidate(
+    sv.api.publish_session_workspace_invalidate(
         durable_session_id,
         runtime_id=runtime_id,
         reason="queue_changed",
     )
-    sv._publish_session_live_invalidate(
+    sv.api.publish_session_live_invalidate(
         durable_session_id,
         runtime_id=runtime_id,
         reason="queue_changed",
@@ -802,7 +802,7 @@ def queue_update_local(
         q[int(index)] = t
         ql = len(q)
     manager._save_queues()
-    sv._publish_session_workspace_invalidate(
+    sv.api.publish_session_workspace_invalidate(
         durable_session_id,
         runtime_id=runtime_id,
         reason="queue_changed",
@@ -849,8 +849,8 @@ def files_add(manager: Any, session_id: str, path: str) -> list[str]:
         )
         cur = [x for x in cur if x != p]
         cur.insert(0, p)
-        if len(cur) > sv.FILE_HISTORY_MAX:
-            cur = cur[: sv.FILE_HISTORY_MAX]
+        if len(cur) > sv.api.FILE_HISTORY_MAX:
+            cur = cur[: sv.api.FILE_HISTORY_MAX]
         manager._files[runtime_id] = cur
     manager._save_files()
     return list(cur)
@@ -888,8 +888,8 @@ def harness_get(manager: Any, session_id: str) -> dict[str, Any]:
     request = cfg.get("request")
     if not isinstance(request, str):
         request = ""
-    cooldown_minutes = sv._clean_harness_cooldown_minutes(cfg.get("cooldown_minutes"))
-    remaining_injections = sv._clean_harness_remaining_injections(
+    cooldown_minutes = sv.api.clean_harness_cooldown_minutes(cfg.get("cooldown_minutes"))
+    remaining_injections = sv.api.clean_harness_remaining_injections(
         cfg.get("remaining_injections"), allow_zero=True
     )
     return {
@@ -924,17 +924,17 @@ def harness_set(
         if request is not None:
             cur["request"] = str(request)
         if cooldown_minutes is not None:
-            cur["cooldown_minutes"] = sv._clean_harness_cooldown_minutes(
+            cur["cooldown_minutes"] = sv.api.clean_harness_cooldown_minutes(
                 cooldown_minutes
             )
         if remaining_injections is not None:
-            cur["remaining_injections"] = sv._clean_harness_remaining_injections(
+            cur["remaining_injections"] = sv.api.clean_harness_remaining_injections(
                 remaining_injections, allow_zero=True
             )
-        cur["cooldown_minutes"] = sv._clean_harness_cooldown_minutes(
+        cur["cooldown_minutes"] = sv.api.clean_harness_cooldown_minutes(
             cur.get("cooldown_minutes")
         )
-        cur["remaining_injections"] = sv._clean_harness_remaining_injections(
+        cur["remaining_injections"] = sv.api.clean_harness_remaining_injections(
             cur.get("remaining_injections"), allow_zero=True
         )
         manager._harness[runtime_id] = cur

@@ -22,22 +22,22 @@ def get_ui_state(runtime: ServerRuntime, manager: Any, session_id: str) -> dict[
     try:
         resp = manager._sock_call(sock, {"cmd": "ui_state"}, timeout_s=1.5)
     except Exception:
-        if not sv._pid_alive(s.broker_pid) and not sv._pid_alive(s.codex_pid):
+        if not sv.api.pid_alive(s.broker_pid) and not sv.api.pid_alive(s.codex_pid):
             with manager._lock:
                 manager._sessions.pop(runtime_id, None)
             manager._clear_deleted_session_state(runtime_id)
-            sv._unlink_quiet(sock)
-            sv._unlink_quiet(sock.with_suffix(".json"))
+            sv.api.unlink_quiet(sock)
+            sv.api.unlink_quiet(sock.with_suffix(".json"))
             raise KeyError("unknown session")
         raise ValueError("broker unavailable")
     if resp.get("error") == "unknown cmd":
-        if sv._session_supports_live_pi_ui(s):
+        if sv.api.session_supports_live_pi_ui(s):
             raise ValueError("live ui interactions are unavailable for this pi session")
         return {"requests": []}
     error = resp.get("error")
     if isinstance(error, str) and error:
         raise ValueError(error)
-    return dict(sv._sanitize_pi_ui_state_payload(resp))
+    return dict(sv.api.sanitize_pi_ui_state_payload(resp))
 
 
 
@@ -59,7 +59,7 @@ def get_session_commands(runtime: ServerRuntime, manager: Any, session_id: str) 
         cached = cache.get(runtime_id) if isinstance(cache, dict) else None
         if isinstance(cached, dict):
             cached_ts = cached.get("ts")
-            if isinstance(cached_ts, (int, float)) and (now_ts - float(cached_ts)) < sv.PI_COMMANDS_CACHE_TTL_SECONDS:
+            if isinstance(cached_ts, (int, float)) and (now_ts - float(cached_ts)) < sv.api.PI_COMMANDS_CACHE_TTL_SECONDS:
                 if cached.get("thread_id") == s.thread_id and cached.get("session_path") == session_path_key:
                     commands = cached.get("commands")
                     if isinstance(commands, list):
@@ -69,12 +69,12 @@ def get_session_commands(runtime: ServerRuntime, manager: Any, session_id: str) 
     try:
         resp = manager._sock_call(sock, {"cmd": "commands"}, timeout_s=2.0)
     except Exception:
-        if not sv._pid_alive(s.broker_pid) and not sv._pid_alive(s.codex_pid):
+        if not sv.api.pid_alive(s.broker_pid) and not sv.api.pid_alive(s.codex_pid):
             with manager._lock:
                 manager._sessions.pop(runtime_id, None)
             manager._clear_deleted_session_state(runtime_id)
-            sv._unlink_quiet(sock)
-            sv._unlink_quiet(sock.with_suffix(".json"))
+            sv.api.unlink_quiet(sock)
+            sv.api.unlink_quiet(sock.with_suffix(".json"))
             raise KeyError("unknown session")
         raise ValueError("broker unavailable")
     if resp.get("error") == "unknown cmd":
@@ -82,7 +82,7 @@ def get_session_commands(runtime: ServerRuntime, manager: Any, session_id: str) 
     error = resp.get("error")
     if isinstance(error, str) and error:
         raise ValueError(error)
-    payload = sv._sanitize_pi_commands_payload(resp)
+    payload = sv.api.sanitize_pi_commands_payload(resp)
     with manager._lock:
         cache = getattr(manager, "_pi_commands_cache", None)
         if isinstance(cache, dict):
@@ -116,21 +116,21 @@ def submit_ui_response(runtime: ServerRuntime, manager: Any, session_id: str, pa
     try:
         resp = manager._sock_call(sock, forward, timeout_s=3.0)
     except Exception:
-        if not sv._pid_alive(s.broker_pid) and not sv._pid_alive(s.codex_pid):
+        if not sv.api.pid_alive(s.broker_pid) and not sv.api.pid_alive(s.codex_pid):
             with manager._lock:
                 manager._sessions.pop(runtime_id, None)
             manager._clear_deleted_session_state(runtime_id)
-            sv._unlink_quiet(sock)
-            sv._unlink_quiet(sock.with_suffix(".json"))
+            sv.api.unlink_quiet(sock)
+            sv.api.unlink_quiet(sock.with_suffix(".json"))
             raise KeyError("unknown session")
         raise ValueError("broker unavailable")
     if resp.get("error") == "unknown cmd":
-        if sv._session_supports_live_pi_ui(s):
+        if sv.api.session_supports_live_pi_ui(s):
             raise ValueError("live ui responses are unavailable for this pi session")
         if payload.get("cancelled") is True:
             manager.inject_keys(runtime_id, "\\x1b")
             return {"ok": True, "legacy_fallback": True}
-        text = sv._legacy_pi_ui_response_text(payload)
+        text = sv.api.legacy_pi_ui_response_text(payload)
         if text is None:
             raise ValueError("ui response value required")
         manager.send(runtime_id, text)

@@ -89,7 +89,7 @@ def search_walk_relative_files(
     limit: int,
 ) -> dict[str, Any]:
     sv = runtime
-    deadline = time.monotonic() + sv.FILE_SEARCH_TIMEOUT_SECONDS
+    deadline = time.monotonic() + sv.api.FILE_SEARCH_TIMEOUT_SECONDS
     heap: list[tuple[int, str]] = []
     scanned = 0
     truncated = False
@@ -97,16 +97,16 @@ def search_walk_relative_files(
     def _onerror(err: OSError) -> None:
         raise err
 
-    for current_root, dirnames, filenames in sv.os.walk(
+    for current_root, dirnames, filenames in sv.api.os.walk(
         root, topdown=True, onerror=_onerror, followlinks=False
     ):
         dirnames[:] = [
-            name for name in sorted(dirnames) if name not in sv.FILE_LIST_IGNORED_DIRS
+            name for name in sorted(dirnames) if name not in sv.api.FILE_LIST_IGNORED_DIRS
         ]
         current_path = Path(current_root)
         for name in sorted(filenames):
             scanned += 1
-            if scanned > sv.FILE_SEARCH_MAX_CANDIDATES or time.monotonic() > deadline:
+            if scanned > sv.api.FILE_SEARCH_MAX_CANDIDATES or time.monotonic() > deadline:
                 truncated = True
                 return _finish_file_search(
                     heap,
@@ -137,7 +137,7 @@ def search_git_relative_files(
     limit: int,
 ) -> dict[str, Any]:
     sv = runtime
-    deadline = time.monotonic() + sv.FILE_SEARCH_TIMEOUT_SECONDS
+    deadline = time.monotonic() + sv.api.FILE_SEARCH_TIMEOUT_SECONDS
     heap: list[tuple[int, str]] = []
     scanned = 0
     truncated = False
@@ -157,7 +157,7 @@ def search_git_relative_files(
             if not path:
                 continue
             scanned += 1
-            if scanned > sv.FILE_SEARCH_MAX_CANDIDATES or time.monotonic() > deadline:
+            if scanned > sv.api.FILE_SEARCH_MAX_CANDIDATES or time.monotonic() > deadline:
                 truncated = True
                 proc.kill()
                 break
@@ -192,7 +192,7 @@ def search_session_relative_files(
     limit: int,
 ) -> dict[str, Any]:
     sv = runtime
-    root = sv._safe_expanduser(base)
+    root = sv.api.safe_expanduser(base)
     if not root.is_absolute():
         root = root.resolve()
     if not root.exists():
@@ -202,8 +202,8 @@ def search_session_relative_files(
     raw_query = str(query).strip()
     if not raw_query:
         raise ValueError("query required")
-    clamped_limit = max(1, min(int(limit), sv.FILE_SEARCH_LIMIT))
-    repo_root = sv._git_repo_root(root)
+    clamped_limit = max(1, min(int(limit), sv.api.FILE_SEARCH_LIMIT))
+    repo_root = sv.api.git_repo_root(root)
     if repo_root is not None:
         return search_git_relative_files(runtime, root, query=raw_query, limit=clamped_limit)
     return search_walk_relative_files(runtime, root, query=raw_query, limit=clamped_limit)

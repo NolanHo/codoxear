@@ -127,7 +127,7 @@ def handle_post(runtime: ServerRuntime, handler: Any, path: str, u: Any) -> bool
                     try:
                         _current_text, _current_size, current_version = runtime.api.workspace_file_access.read_text_file_for_write(
                             path_obj,
-                            max_bytes=runtime.FILE_READ_MAX_BYTES,
+                            max_bytes=runtime.api.FILE_READ_MAX_BYTES,
                         )
                         payload["version"] = current_version
                     except (FileNotFoundError, PermissionError, ValueError):
@@ -163,14 +163,14 @@ def handle_post(runtime: ServerRuntime, handler: Any, path: str, u: Any) -> bool
             obj = _common.read_json_object(
                 runtime,
                 handler,
-                limit=runtime.ATTACH_UPLOAD_BODY_MAX_BYTES,
+                limit=runtime.api.ATTACH_UPLOAD_BODY_MAX_BYTES,
             )
         except ValueError as exc:
             if "content-length" in str(exc):
                 runtime.api.json_response(
                     handler,
                     413,
-                    {"error": f"file too large (max {runtime.ATTACH_UPLOAD_MAX_BYTES} bytes)"},
+                    {"error": f"file too large (max {runtime.api.ATTACH_UPLOAD_MAX_BYTES} bytes)"},
                 )
                 return True
             raise

@@ -54,20 +54,20 @@ class SessionManagerStateDelegates:
         db.save_cwd_groups(cwd_groups)
 
     def _reset_log_caches(self, s: Any, *, meta_log_off: int) -> None:
-        _sv(self)._session_lifecycle.service(self).reset_log_caches(s, meta_log_off=meta_log_off)
+        _sv(self).api.session_lifecycle.service(self).reset_log_caches(s, meta_log_off=meta_log_off)
 
     def _session_source_changed(self, s: Any, *, log_path: Any, session_path: Any) -> bool:
-        return _sv(self)._session_lifecycle.service(self).session_source_changed(
+        return _sv(self).api.session_lifecycle.service(self).session_source_changed(
             s,
             log_path=log_path,
             session_path=session_path,
         )
 
     def _claimed_pi_session_paths(self, *, exclude_sid: str = "") -> set[Any]:
-        return _sv(self)._session_lifecycle.service(self).claimed_pi_session_paths(exclude_sid=exclude_sid)
+        return _sv(self).api.session_lifecycle.service(self).claimed_pi_session_paths(exclude_sid=exclude_sid)
 
     def _apply_session_source(self, s: Any, *, log_path: Any, session_path: Any) -> None:
-        _sv(self)._session_lifecycle.service(self).apply_session_source(
+        _sv(self).api.session_lifecycle.service(self).apply_session_source(
             s,
             log_path=log_path,
             session_path=session_path,
@@ -81,7 +81,7 @@ class SessionManagerStateDelegates:
         backend: str | None = None,
         agent_backend: str | None = None,
     ) -> tuple[str | None, str | None, str | None, str | None]:
-        return _sv(self)._session_lifecycle.service(self).session_run_settings(
+        return _sv(self).api.session_lifecycle.service(self).session_run_settings(
             meta=meta,
             log_path=log_path,
             backend=backend,
@@ -89,18 +89,18 @@ class SessionManagerStateDelegates:
         )
 
     def _session_transport(self, *, meta: dict[str, Any]) -> tuple[str | None, str | None, str | None]:
-        transport = _sv(self)._clean_optional_text(meta.get("transport"))
-        tmux_session = _sv(self)._clean_optional_text(meta.get("tmux_session"))
-        tmux_window = _sv(self)._clean_optional_text(meta.get("tmux_window"))
+        transport = _sv(self).api.clean_optional_text(meta.get("transport"))
+        tmux_session = _sv(self).api.clean_optional_text(meta.get("tmux_session"))
+        tmux_window = _sv(self).api.clean_optional_text(meta.get("tmux_window"))
         if transport is None and (tmux_session is not None or tmux_window is not None):
             transport = "tmux"
         return transport, tmux_session, tmux_window
 
     def _discover_existing_if_stale(self, *, force: bool = False) -> None:
-        now = _sv(self).time.time()
+        now = _sv(self).api.time.time()
         with self._lock:
             last = float(getattr(self, "_last_discover_ts", 0.0))
-        if (not force) and ((now - last) < _sv(self).DISCOVER_MIN_INTERVAL_SECONDS):
+        if (not force) and ((now - last) < _sv(self).api.DISCOVER_MIN_INTERVAL_SECONDS):
             return
         try:
             self._discover_existing(force=force, skip_invalid_sidecars=True)
@@ -147,10 +147,10 @@ class SessionManagerStateDelegates:
             bad_sidecars = self._bad_sidecars
         bad_sidecars[str(sock)] = self._sidecar_quarantine_signature(sock)
         if log:
-            _sv(self).sys.stderr.write(
+            _sv(self).api.sys.stderr.write(
                 f"error: discover: quarantining {reason} for {sock}: {type(exc).__name__}: {exc}\\n"
             )
-            _sv(self).sys.stderr.flush()
+            _sv(self).api.sys.stderr.flush()
 
     def _clear_sidecar_quarantine(self, sock: Any) -> None:
         bad_sidecars = getattr(self, "_bad_sidecars", None)
@@ -158,10 +158,10 @@ class SessionManagerStateDelegates:
             bad_sidecars.pop(str(sock), None)
 
     def _load_harness(self) -> None:
-        _sv(self)._page_state.service(self).load_harness()
+        _sv(self).api.page_state.service(self).load_harness()
 
     def _save_harness(self) -> None:
-        _sv(self)._page_state.service(self).save_harness()
+        _sv(self).api.page_state.service(self).save_harness()
 
     def _load_aliases(self) -> None:
         self._sidebar_state_facade().load_aliases()
@@ -249,7 +249,7 @@ class SessionManagerStateDelegates:
 
     def alias_set(self, session_id: str, name: str) -> str:
         alias = self._sidebar_state_facade().alias_set(session_id, name)
-        _sv(self)._publish_sessions_invalidate(reason="alias_changed")
+        _sv(self).api.publish_sessions_invalidate(reason="alias_changed")
         return alias
 
     def alias_get(self, session_id: str) -> str:
@@ -257,7 +257,7 @@ class SessionManagerStateDelegates:
 
     def alias_clear(self, session_id: str) -> None:
         self._sidebar_state_facade().alias_clear(session_id)
-        _sv(self)._publish_sessions_invalidate(reason="alias_cleared")
+        _sv(self).api.publish_sessions_invalidate(reason="alias_cleared")
 
     def sidebar_meta_get(self, session_id: str) -> dict[str, Any]:
         return self._sidebar_state_facade().sidebar_meta_get(session_id)
@@ -276,12 +276,12 @@ class SessionManagerStateDelegates:
             snooze_until=snooze_until,
             dependency_session_id=dependency_session_id,
         )
-        _sv(self)._publish_sessions_invalidate(reason="sidebar_meta_changed")
+        _sv(self).api.publish_sessions_invalidate(reason="sidebar_meta_changed")
         return payload
 
     def focus_set(self, session_id: str, focused: Any) -> bool:
         value = self._sidebar_state_facade().focus_set(session_id, focused)
-        _sv(self)._publish_sessions_invalidate(reason="focus_changed")
+        _sv(self).api.publish_sessions_invalidate(reason="focus_changed")
         return value
 
     def edit_session(
@@ -300,44 +300,44 @@ class SessionManagerStateDelegates:
             snooze_until=snooze_until,
             dependency_session_id=dependency_session_id,
         )
-        _sv(self)._publish_sessions_invalidate(reason="session_edited")
+        _sv(self).api.publish_sessions_invalidate(reason="session_edited")
         return payload
 
     def _clear_deleted_session_state(self, session_id: str) -> None:
-        _sv(self)._page_state.service(self).clear_deleted_session_state(session_id)
+        _sv(self).api.page_state.service(self).clear_deleted_session_state(session_id)
 
     def _load_files(self) -> None:
-        _sv(self)._page_state.service(self).load_files()
+        _sv(self).api.page_state.service(self).load_files()
 
     def _save_files(self) -> None:
-        _sv(self)._page_state.service(self).save_files()
+        _sv(self).api.page_state.service(self).save_files()
 
     def _load_queues(self) -> None:
-        _sv(self)._page_state.service(self).load_queues()
+        _sv(self).api.page_state.service(self).load_queues()
 
     def _save_queues(self) -> None:
-        _sv(self)._page_state.service(self).save_queues()
+        _sv(self).api.page_state.service(self).save_queues()
 
     def _load_recent_cwds(self) -> None:
-        _sv(self)._page_state.service(self).load_recent_cwds()
+        _sv(self).api.page_state.service(self).load_recent_cwds()
 
     def _save_recent_cwds(self) -> None:
-        _sv(self)._page_state.service(self).save_recent_cwds()
+        _sv(self).api.page_state.service(self).save_recent_cwds()
 
     def _load_cwd_groups(self) -> None:
-        _sv(self)._page_state.service(self).load_cwd_groups()
+        _sv(self).api.page_state.service(self).load_cwd_groups()
 
     def _save_cwd_groups(self) -> None:
-        _sv(self)._page_state.service(self).save_cwd_groups()
+        _sv(self).api.page_state.service(self).save_cwd_groups()
 
     def cwd_groups_get(self) -> dict[str, dict[str, Any]]:
-        return _sv(self)._page_state.service(self).cwd_groups_get()
+        return _sv(self).api.page_state.service(self).cwd_groups_get()
 
     def _prune_stale_workspace_dirs(self) -> None:
-        _sv(self)._page_state.service(self).prune_stale_workspace_dirs()
+        _sv(self).api.page_state.service(self).prune_stale_workspace_dirs()
 
     def _known_cwd_group_keys(self) -> set[str]:
-        return _sv(self)._page_state.service(self).known_cwd_group_keys()
+        return _sv(self).api.page_state.service(self).known_cwd_group_keys()
 
     def cwd_group_set(
         self,
@@ -345,35 +345,35 @@ class SessionManagerStateDelegates:
         label: str | None = None,
         collapsed: bool | None = None,
     ) -> tuple[str, dict[str, Any]]:
-        return _sv(self)._page_state.service(self).cwd_group_set(
+        return _sv(self).api.page_state.service(self).cwd_group_set(
             cwd,
             label=label,
             collapsed=collapsed,
         )
 
     def _remember_recent_cwd(self, cwd: Any, *, ts: Any = None) -> bool:
-        return _sv(self)._page_state.service(self).remember_recent_cwd(cwd, ts=ts)
+        return _sv(self).api.page_state.service(self).remember_recent_cwd(cwd, ts=ts)
 
     def _backfill_recent_cwds_from_logs(self) -> None:
-        _sv(self)._page_state.service(self).backfill_recent_cwds_from_logs()
+        _sv(self).api.page_state.service(self).backfill_recent_cwds_from_logs()
 
     def recent_cwds(self, *, limit: int | None = None) -> list[str]:
         sv = _sv(self)
-        return sv._page_state.service(self).recent_cwds(
-            limit=sv.RECENT_CWD_MAX if limit is None else limit
+        return sv.api.page_state.service(self).recent_cwds(
+            limit=sv.api.RECENT_CWD_MAX if limit is None else limit
         )
 
     def _queue_len(self, session_id: str) -> int:
-        return _sv(self)._page_state.service(self).queue_len(session_id)
+        return _sv(self).api.page_state.service(self).queue_len(session_id)
 
     def _queue_list_local(self, session_id: str) -> list[str]:
-        return _sv(self)._page_state.service(self).queue_list_local(session_id)
+        return _sv(self).api.page_state.service(self).queue_list_local(session_id)
 
     def _queue_enqueue_local(self, session_id: str, text: str) -> dict[str, Any]:
-        return _sv(self)._page_state.service(self).queue_enqueue_local(session_id, text)
+        return _sv(self).api.page_state.service(self).queue_enqueue_local(session_id, text)
 
     def _queue_delete_local(self, session_id: str, index: int) -> dict[str, Any]:
-        return _sv(self)._page_state.service(self).queue_delete_local(session_id, index)
+        return _sv(self).api.page_state.service(self).queue_delete_local(session_id, index)
 
     def _queue_update_local(
         self,
@@ -381,26 +381,26 @@ class SessionManagerStateDelegates:
         index: int,
         text: str,
     ) -> dict[str, Any]:
-        return _sv(self)._page_state.service(self).queue_update_local(
+        return _sv(self).api.page_state.service(self).queue_update_local(
             session_id,
             index,
             text,
         )
 
     def _files_key_for_session(self, session_id: str) -> tuple[str, Any, Any]:
-        return _sv(self)._page_state.service(self).files_key_for_session(session_id)
+        return _sv(self).api.page_state.service(self).files_key_for_session(session_id)
 
     def files_get(self, session_id: str) -> list[str]:
-        return _sv(self)._page_state.service(self).files_get(session_id)
+        return _sv(self).api.page_state.service(self).files_get(session_id)
 
     def files_add(self, session_id: str, path: str) -> list[str]:
-        return _sv(self)._page_state.service(self).files_add(session_id, path)
+        return _sv(self).api.page_state.service(self).files_add(session_id, path)
 
     def files_clear(self, session_id: str) -> None:
-        _sv(self)._page_state.service(self).files_clear(session_id)
+        _sv(self).api.page_state.service(self).files_clear(session_id)
 
     def harness_get(self, session_id: str) -> dict[str, Any]:
-        return _sv(self)._page_state.service(self).harness_get(session_id)
+        return _sv(self).api.page_state.service(self).harness_get(session_id)
 
     def harness_set(
         self,
@@ -411,7 +411,7 @@ class SessionManagerStateDelegates:
         cooldown_minutes: int | None = None,
         remaining_injections: int | None = None,
     ) -> dict[str, Any]:
-        return _sv(self)._page_state.service(self).harness_set(
+        return _sv(self).api.page_state.service(self).harness_set(
             session_id,
             enabled=enabled,
             request=request,

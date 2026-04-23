@@ -55,9 +55,9 @@ def handle_get(runtime: ServerRuntime, handler: Any, path: str, u: Any) -> bool:
         if not query:
             runtime.api.json_response(handler, 400, {"error": "q required"})
             return True
-        limit_raw = (qs.get("limit") or [str(runtime.FILE_SEARCH_LIMIT)])[0]
+        limit_raw = (qs.get("limit") or [str(runtime.api.FILE_SEARCH_LIMIT)])[0]
         try:
-            limit = int(str(limit_raw).strip() or str(runtime.FILE_SEARCH_LIMIT))
+            limit = int(str(limit_raw).strip() or str(runtime.api.FILE_SEARCH_LIMIT))
         except ValueError:
             runtime.api.json_response(handler, 400, {"error": "limit must be an integer"})
             return True

@@ -27,11 +27,11 @@ def todo_snapshot_payload_for_session(runtime: Any, session: Any) -> dict[str, A
     if session.backend != "pi" or session.session_path is None:
         return empty
     try:
-        snapshot = runtime._pi_messages.read_latest_pi_todo_snapshot(session.session_path)
+        snapshot = runtime.api.pi_messages.read_latest_pi_todo_snapshot(session.session_path)
     except FileNotFoundError:
         return empty
     except OSError as exc:
-        if exc.errno == runtime.errno.ENOENT:
+        if exc.errno == runtime.api.errno.ENOENT:
             return empty
         return read_error
     if snapshot is None:

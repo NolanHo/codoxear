@@ -18,7 +18,7 @@ def handle_post(runtime: ServerRuntime, handler: Any, path: str) -> bool:
             runtime.api.json_response(handler, 400, {"error": "name required"})
             return True
         try:
-            alias, sidebar_meta = runtime.MANAGER.edit_session(
+            alias, sidebar_meta = runtime.manager.edit_session(
                 session_id,
                 name=name,
                 priority_offset=obj.get("priority_offset"),
@@ -48,7 +48,7 @@ def handle_post(runtime: ServerRuntime, handler: Any, path: str) -> bool:
             runtime.api.json_response(handler, 400, {"error": "name required"})
             return True
         try:
-            alias = runtime.MANAGER.alias_set(session_id, name)
+            alias = runtime.manager.alias_set(session_id, name)
         except KeyError:
             runtime.api.json_response(handler, 404, {"error": "unknown session"})
             return True
@@ -65,7 +65,7 @@ def handle_post(runtime: ServerRuntime, handler: Any, path: str) -> bool:
             return True
         obj = _common.read_json_object(runtime, handler)
         try:
-            focused = runtime.MANAGER.focus_set(session_id, obj.get("focused"))
+            focused = runtime.manager.focus_set(session_id, obj.get("focused"))
         except KeyError:
             runtime.api.json_response(handler, 404, {"error": "unknown session"})
             return True
@@ -89,7 +89,7 @@ def handle_post(runtime: ServerRuntime, handler: Any, path: str) -> bool:
             runtime.api.json_response(handler, 400, {"error": "text required"})
             return True
         try:
-            res = runtime.MANAGER.send(session_id, text)
+            res = runtime.manager.send(session_id, text)
         except KeyError:
             runtime.api.json_response(handler, 404, {"error": "unknown session"})
             return True
@@ -109,15 +109,15 @@ def handle_post(runtime: ServerRuntime, handler: Any, path: str) -> bool:
             return True
         obj = _common.read_json_object(runtime, handler)
         try:
-            runtime.MANAGER.submit_ui_response(session_id, obj)
+            runtime.manager.submit_ui_response(session_id, obj)
         except KeyError:
             runtime.api.json_response(handler, 404, {"error": "unknown session"})
             return True
         except ValueError as exc:
             runtime.api.json_response(handler, 502, {"error": str(exc)})
             return True
-        durable_session_id = runtime.MANAGER._durable_session_id_for_identifier(session_id) or session_id
-        runtime_id = runtime.MANAGER._runtime_session_id_for_identifier(session_id)
+        durable_session_id = runtime.manager._durable_session_id_for_identifier(session_id) or session_id
+        runtime_id = runtime.manager._runtime_session_id_for_identifier(session_id)
         runtime.api.publish_session_workspace_invalidate(
             durable_session_id,
             runtime_id=runtime_id,
@@ -140,7 +140,7 @@ def handle_post(runtime: ServerRuntime, handler: Any, path: str) -> bool:
             runtime.api.json_response(handler, 400, {"error": "text required"})
             return True
         try:
-            res = runtime.MANAGER.enqueue(session_id, text)
+            res = runtime.manager.enqueue(session_id, text)
         except KeyError:
             runtime.api.json_response(handler, 404, {"error": "unknown session"})
             return True
@@ -161,7 +161,7 @@ def handle_post(runtime: ServerRuntime, handler: Any, path: str) -> bool:
             runtime.api.json_response(handler, 400, {"error": "index required"})
             return True
         try:
-            res = runtime.MANAGER.queue_delete(session_id, idx)
+            res = runtime.manager.queue_delete(session_id, idx)
         except KeyError:
             runtime.api.json_response(handler, 404, {"error": "unknown session"})
             return True
@@ -186,7 +186,7 @@ def handle_post(runtime: ServerRuntime, handler: Any, path: str) -> bool:
             runtime.api.json_response(handler, 400, {"error": "text required"})
             return True
         try:
-            res = runtime.MANAGER.queue_update(session_id, idx, text)
+            res = runtime.manager.queue_update(session_id, idx, text)
         except KeyError:
             runtime.api.json_response(handler, 404, {"error": "unknown session"})
             return True

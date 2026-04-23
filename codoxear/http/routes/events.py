@@ -48,7 +48,7 @@ def handle_get(runtime: ServerRuntime, handler: Any, path: str, u: Any) -> bool:
     sv = runtime
     if path != "/api/events":
         return False
-    if not sv._require_auth(handler):
+    if not sv.api.require_auth(handler):
         handler._unauthorized()
         return True
 
@@ -65,7 +65,7 @@ def handle_get(runtime: ServerRuntime, handler: Any, path: str, u: Any) -> bool:
         handler.wfile.write(f"retry: {SSE_RETRY_MS}\n\n".encode("utf-8"))
         handler.wfile.flush()
         while True:
-            result = sv.EVENT_HUB.poll(after_seq, timeout_s=SSE_HEARTBEAT_SECONDS)
+            result = sv.api.EVENT_HUB.poll(after_seq, timeout_s=SSE_HEARTBEAT_SECONDS)
             if result.closed:
                 return True
             if result.cursor_expired:

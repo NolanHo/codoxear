@@ -142,41 +142,41 @@ def service(manager: Any) -> SessionLifecycleService:
 def catalog_record_for_ref(manager: Any, ref: Any):
     sv = _runtime(manager)
     backend, durable_session_id = ref
-    source_path = sv._find_session_log_for_session_id(
+    source_path = sv.api.find_session_log_for_session_id(
         durable_session_id, agent_backend=backend
     )
     if source_path is None or (not source_path.exists()):
         return None
     if backend == "pi":
-        row = sv._pi_resume_candidate_from_session_file(source_path)
+        row = sv.api.pi_resume_candidate_from_session_file(source_path)
         if not isinstance(row, dict):
             return None
-        title = sv._clean_optional_text(row.get("title")) or ""
-        first_user_message = sv._clean_optional_text(
+        title = sv.api.clean_optional_text(row.get("title")) or ""
+        first_user_message = sv.api.clean_optional_text(
             _session_listing.first_user_message_preview_from_pi_session(
                 sv,
                 source_path,
             )
         )
     else:
-        row = sv._resume_candidate_from_log(source_path, agent_backend=backend)
+        row = sv.api.resume_candidate_from_log(source_path, agent_backend=backend)
         if not isinstance(row, dict):
             return None
-        title = sv._clean_optional_text(row.get("title")) or ""
-        first_user_message = sv._clean_optional_text(
+        title = sv.api.clean_optional_text(row.get("title")) or ""
+        first_user_message = sv.api.clean_optional_text(
             _session_listing.first_user_message_preview_from_log(
                 sv,
                 source_path,
             )
         )
-    cwd = sv._clean_optional_text(row.get("cwd"))
+    cwd = sv.api.clean_optional_text(row.get("cwd"))
     updated_ts = row.get("updated_ts")
     updated_at = (
         float(updated_ts)
         if isinstance(updated_ts, (int, float))
-        else sv._safe_path_mtime(source_path)
+        else sv.api.safe_path_mtime(source_path)
     )
-    return sv.DurableSessionRecord(
+    return sv.api.DurableSessionRecord(
         backend=backend,
         session_id=durable_session_id,
         cwd=cwd,
@@ -191,9 +191,9 @@ def catalog_record_for_ref(manager: Any, ref: Any):
 def refresh_durable_session_catalog(manager: Any, *, force: bool = False) -> None:
     sv = _runtime(manager)
     db = getattr(manager, "_page_state_db", None)
-    if not isinstance(db, sv.PageStateDB):
+    if not isinstance(db, sv.api.PageStateDB):
         return
-    now = sv.time.time()
+    now = sv.api.time.time()
     last_refresh = float(getattr(manager, "_last_session_catalog_refresh_ts", 0.0) or 0.0)
     if (not force) and (now - last_refresh) < 5.0:
         return
@@ -222,8 +222,8 @@ def wait_for_live_session(
     timeout_s: float = 8.0,
 ):
     sv = _runtime(manager)
-    deadline = sv.time.time() + max(timeout_s, 0.1)
-    while sv.time.time() < deadline:
+    deadline = sv.api.time.time() + max(timeout_s, 0.1)
+    while sv.api.time.time() < deadline:
         manager._discover_existing(force=True, skip_invalid_sidecars=True)
         runtime_id = manager._runtime_session_id_for_identifier(durable_session_id)
         if runtime_id is not None:
@@ -231,7 +231,7 @@ def wait_for_live_session(
                 session = manager._sessions.get(runtime_id)
             if session is not None:
                 return session
-        sv.time.sleep(0.05)
+        sv.api.time.sleep(0.05)
     raise RuntimeError(
         f"spawned session is not yet discoverable: {durable_session_id}"
     )
@@ -244,7 +244,7 @@ def copy_session_ui_identity(
     target_session_id: str,
 ) -> str | None:
     sv = _runtime(manager)
-    alias = sv._clean_optional_text(manager.alias_get(source_session_id))
+    alias = sv.api.clean_optional_text(manager.alias_get(source_session_id))
     meta = manager.sidebar_meta_get(source_session_id)
     if alias is not None:
         alias = manager.alias_set(target_session_id, alias)
@@ -397,10 +397,10 @@ def finalize_pending_pi_spawn(
     ref = ("pi", durable_session_id)
     try:
         if proc is not None:
-            sv._wait_or_raise(proc, label="pi broker", timeout_s=0.25)
-            sv._start_proc_stderr_drain(proc)
-        meta = sv._wait_for_spawned_broker_meta(spawn_nonce)
-        live_session_id = sv._clean_optional_text(meta.get("session_id")) or durable_session_id
+            sv.api.wait_or_raise(proc, label="pi broker", timeout_s=0.25)
+            sv.api.start_proc_stderr_drain(proc)
+        meta = sv.api.wait_for_spawned_broker_meta(spawn_nonce)
+        live_session_id = sv.api.clean_optional_text(meta.get("session_id")) or durable_session_id
         if live_session_id != durable_session_id:
             raise RuntimeError(
                 f"pi session id mismatch: expected {durable_session_id}, got {live_session_id}"
@@ -408,32 +408,32 @@ def finalize_pending_pi_spawn(
         manager._discover_existing(force=True, skip_invalid_sidecars=True)
         manager._refresh_durable_session_catalog(force=True)
         db = getattr(manager, "_page_state_db", None)
-        current = db.load_sessions().get(ref) if isinstance(db, sv.PageStateDB) else None
+        current = db.load_sessions().get(ref) if isinstance(db, sv.api.PageStateDB) else None
         manager._persist_durable_session_record(
-            sv.DurableSessionRecord(
+            sv.api.DurableSessionRecord(
                 backend="pi",
                 session_id=durable_session_id,
                 cwd=(current.cwd if current is not None else cwd),
                 source_path=(current.source_path if current is not None else str(session_path)),
                 title=current.title if current is not None else None,
                 first_user_message=current.first_user_message if current is not None else None,
-                created_at=(current.created_at if current is not None else sv._safe_path_mtime(session_path)),
-                updated_at=(current.updated_at if current is not None else sv._safe_path_mtime(session_path)),
+                created_at=(current.created_at if current is not None else sv.api.safe_path_mtime(session_path)),
+                updated_at=(current.updated_at if current is not None else sv.api.safe_path_mtime(session_path)),
                 pending_startup=False,
             )
         )
-        sv._publish_sessions_invalidate(reason="session_created")
+        sv.api.publish_sessions_invalidate(reason="session_created")
     except Exception:
         if delete_on_failure:
             manager._delete_durable_session_record(ref)
             manager._clear_deleted_session_state(durable_session_id)
-            sv._publish_sessions_invalidate(reason="session_removed")
+            sv.api.publish_sessions_invalidate(reason="session_removed")
             return
         if restore_record_on_failure is not None:
             manager._persist_durable_session_record(restore_record_on_failure)
         else:
             manager._refresh_durable_session_catalog(force=True)
-        sv._publish_sessions_invalidate(reason="session_created")
+        sv.api.publish_sessions_invalidate(reason="session_created")
 
 
 def reset_log_caches(manager: Any, session: Any, *, meta_log_off: int) -> None:
@@ -515,22 +515,22 @@ def session_run_settings(
     agent_backend: str | None = None,
 ) -> tuple[str | None, str | None, str | None, str | None]:
     sv = _runtime(manager)
-    backend_name = sv.normalize_agent_backend(
+    backend_name = sv.api.normalize_agent_backend(
         backend if backend is not None else agent_backend,
         default="codex",
     )
-    model_provider = sv._clean_optional_text(meta.get("model_provider"))
-    preferred_auth_method = sv._normalize_requested_preferred_auth_method(
+    model_provider = sv.api.clean_optional_text(meta.get("model_provider"))
+    preferred_auth_method = sv.api.normalize_requested_preferred_auth_method(
         meta.get("preferred_auth_method")
     )
-    model = sv._clean_optional_text(meta.get("model"))
+    model = sv.api.clean_optional_text(meta.get("model"))
     reasoning_effort = (
-        sv._display_reasoning_effort(meta.get("reasoning_effort"))
+        sv.api.display_reasoning_effort(meta.get("reasoning_effort"))
         if backend_name == "codex"
-        else sv._display_pi_reasoning_effort(meta.get("reasoning_effort"))
+        else sv.api.display_pi_reasoning_effort(meta.get("reasoning_effort"))
     )
     if log_path is not None and log_path.exists():
-        log_provider, log_model, log_effort = sv._read_run_settings_from_log(
+        log_provider, log_model, log_effort = sv.api.read_run_settings_from_log(
             log_path,
             agent_backend=backend_name,
         )

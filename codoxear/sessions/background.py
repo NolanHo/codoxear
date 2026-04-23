@@ -106,7 +106,7 @@ def set_bridge_transport_state(
         session = manager._sessions.get(runtime_id)
         if session is None:
             return
-        next_error = sv._clean_optional_text(error)
+        next_error = sv.api.clean_optional_text(error)
         publish = (
             session.bridge_transport_state != state
             or session.bridge_transport_error != next_error
@@ -114,16 +114,16 @@ def set_bridge_transport_state(
         session.bridge_transport_state = state
         session.bridge_transport_error = next_error
         session.bridge_transport_checked_ts = float(
-            checked_ts if checked_ts is not None else sv.time.time()
+            checked_ts if checked_ts is not None else sv.api.time.time()
         )
         durable_session_id = manager._durable_session_id_for_session(session)
     if publish and durable_session_id is not None:
-        sv._publish_session_transport_invalidate(
+        sv.api.publish_session_transport_invalidate(
             durable_session_id,
             runtime_id=runtime_id,
             reason="transport_state",
         )
-        sv._publish_session_live_invalidate(
+        sv.api.publish_session_live_invalidate(
             durable_session_id,
             runtime_id=runtime_id,
             reason="transport_state",
@@ -141,22 +141,22 @@ def probe_bridge_transport(
         session = manager._sessions.get(runtime_id)
     if session is None:
         return "dead", "unknown session"
-    processes_dead = (not sv._pid_alive(session.broker_pid)) and (
-        not sv._pid_alive(session.codex_pid)
+    processes_dead = (not sv.api.pid_alive(session.broker_pid)) and (
+        not sv.api.pid_alive(session.codex_pid)
     )
-    now = sv.time.time()
+    now = sv.api.time.time()
     last_checked = float(session.bridge_transport_checked_ts or 0.0)
     if (
         not force_rpc
         and session.bridge_transport_state in {"alive", "degraded"}
-        and (now - last_checked) < sv.BRIDGE_TRANSPORT_PROBE_STALE_SECONDS
+        and (now - last_checked) < sv.api.BRIDGE_TRANSPORT_PROBE_STALE_SECONDS
     ):
         return session.bridge_transport_state, session.bridge_transport_error
     try:
         resp = manager._sock_call(
             session.sock_path,
             {"cmd": "state"},
-            timeout_s=sv.BRIDGE_TRANSPORT_RPC_TIMEOUT_SECONDS,
+            timeout_s=sv.api.BRIDGE_TRANSPORT_RPC_TIMEOUT_SECONDS,
         )
         if not isinstance(resp, dict):
             raise ValueError("invalid state probe response")
@@ -197,12 +197,12 @@ def enqueue_outbound_request(manager: Any, runtime_id: str, text: str):
         if not isinstance(requests_by_runtime, dict):
             manager._outbound_requests = {}
             requests_by_runtime = manager._outbound_requests
-        request = sv.BridgeOutboundRequest(
-            request_id=f"bridge-send-{sv.uuid.uuid4().hex}",
+        request = sv.api.BridgeOutboundRequest(
+            request_id=f"bridge-send-{sv.api.uuid.uuid4().hex}",
             runtime_id=runtime_id,
             durable_session_id=durable_session_id,
             text=str(text),
-            created_ts=sv.time.time(),
+            created_ts=sv.api.time.time(),
         )
         requests_by_runtime.setdefault(runtime_id, []).append(request)
     queue_wakeup = getattr(manager, "_queue_wakeup", None)
@@ -221,7 +221,7 @@ def fail_outbound_request(manager: Any, request: Any, error: str) -> None:
         "request_id": request.request_id,
         "request_state": "failed",
         "pending_text": request.text,
-        "ts": sv.time.time(),
+        "ts": sv.api.time.time(),
     }
     manager._append_bridge_event(request.durable_session_id, event)
 
@@ -239,7 +239,7 @@ def mark_outbound_request_buffered_for_compaction(manager: Any, request: Any) ->
         "request_id": request.request_id,
         "request_state": "buffered",
         "pending_text": request.text,
-        "ts": sv.time.time(),
+        "ts": sv.api.time.time(),
     }
     manager._append_bridge_event(request.durable_session_id, event)
 
@@ -278,11 +278,11 @@ def maybe_drain_outbound_request(manager: Any, runtime_id: str) -> bool:
         st = manager.get_state(runtime_id)
     except Exception as exc:
         request.attempts += 1
-        request.last_attempt_ts = sv.time.time()
+        request.last_attempt_ts = sv.api.time.time()
         request.last_error = str(exc).strip() or type(exc).__name__
-        if request.attempts >= sv.BRIDGE_OUTBOUND_FAILURE_MAX_ATTEMPTS or (
-            sv.time.time() - request.created_ts
-        ) >= sv.BRIDGE_OUTBOUND_FAILURE_MAX_AGE_SECONDS:
+        if request.attempts >= sv.api.BRIDGE_OUTBOUND_FAILURE_MAX_ATTEMPTS or (
+            sv.api.time.time() - request.created_ts
+        ) >= sv.api.BRIDGE_OUTBOUND_FAILURE_MAX_AGE_SECONDS:
             with manager._lock:
                 queue2 = manager._outbound_requests.get(runtime_id)
                 if isinstance(queue2, list) and queue2 and queue2[0] is request:
@@ -301,7 +301,7 @@ def maybe_drain_outbound_request(manager: Any, runtime_id: str) -> bool:
         return False
     request.state = "sending"
     request.attempts += 1
-    request.last_attempt_ts = sv.time.time()
+    request.last_attempt_ts = sv.api.time.time()
     try:
         resp = manager._sock_call(
             session.sock_path,
@@ -313,9 +313,9 @@ def maybe_drain_outbound_request(manager: Any, runtime_id: str) -> bool:
         state2, transport_error2 = manager._probe_bridge_transport(
             runtime_id, force_rpc=True
         )
-        if state2 == "dead" or request.attempts >= sv.BRIDGE_OUTBOUND_FAILURE_MAX_ATTEMPTS or (
-            sv.time.time() - request.created_ts
-        ) >= sv.BRIDGE_OUTBOUND_FAILURE_MAX_AGE_SECONDS:
+        if state2 == "dead" or request.attempts >= sv.api.BRIDGE_OUTBOUND_FAILURE_MAX_ATTEMPTS or (
+            sv.api.time.time() - request.created_ts
+        ) >= sv.api.BRIDGE_OUTBOUND_FAILURE_MAX_AGE_SECONDS:
             with manager._lock:
                 queue2 = manager._outbound_requests.get(runtime_id)
                 if isinstance(queue2, list) and queue2 and queue2[0] is request:
@@ -344,14 +344,14 @@ def maybe_drain_outbound_request(manager: Any, runtime_id: str) -> bool:
         session2 = manager._sessions.get(runtime_id)
         if session2 is not None:
             if isinstance(resp, dict) and isinstance(resp.get("busy"), bool):
-                session2.busy = sv._state_busy_value(resp)
+                session2.busy = sv.api.state_busy_value(resp)
             if isinstance(resp, dict):
                 queue_len_raw = resp.get("queue_len")
                 if type(queue_len_raw) is int and int(queue_len_raw) >= 0:
-                    session2.queue_len = sv._state_queue_len_value(resp)
+                    session2.queue_len = sv.api.state_queue_len_value(resp)
             session2.pi_idle_activity_ts = None
             if session2.backend == "pi":
-                activity_ts = sv._touch_session_file(session2.session_path)
+                activity_ts = sv.api.touch_session_file(session2.session_path)
                 session2.pi_busy_activity_floor = activity_ts if session2.busy else None
             else:
                 session2.pi_busy_activity_floor = None
@@ -393,7 +393,7 @@ def observe_rollout_delta(
     with manager._lock:
         session0 = manager._sessions.get(session_id)
         resume_muted = bool(session0 and session0.resume_session_id)
-    messages = sv._extract_delivery_messages(objs)
+    messages = sv.api.extract_delivery_messages(objs)
     if (not messages) or resume_muted:
         with manager._lock:
             session = manager._sessions.get(session_id)
@@ -423,7 +423,7 @@ def voice_push_scan_loop(manager: Any) -> None:
             )
             traceback.print_exc(file=sys.stderr)
             sys.stderr.flush()
-        manager._stop.wait(sv.VOICE_PUSH_SWEEP_SECONDS)
+        manager._stop.wait(sv.api.VOICE_PUSH_SWEEP_SECONDS)
 
 
 def voice_push_scan_sweep(manager: Any) -> None:
@@ -452,7 +452,7 @@ def voice_push_scan_sweep(manager: Any) -> None:
         off = 0 if size < delivery_off else int(delivery_off)
         loops = 0
         while off < size and loops < 16:
-            objs, new_off = sv._read_jsonl_from_offset(log_path, off, max_bytes=256 * 1024)
+            objs, new_off = sv.api.read_jsonl_from_offset(log_path, off, max_bytes=256 * 1024)
             if new_off <= off:
                 break
             manager._observe_rollout_delta(sid, objs=objs, new_off=new_off)
@@ -471,12 +471,12 @@ def harness_loop(manager: Any) -> None:
             )
             traceback.print_exc(file=sys.stderr)
             sys.stderr.flush()
-        manager._stop.wait(sv.HARNESS_SWEEP_SECONDS)
+        manager._stop.wait(sv.api.HARNESS_SWEEP_SECONDS)
 
 
 def harness_sweep(manager: Any) -> None:
     sv = _runtime(manager)
-    now = sv.time.time()
+    now = sv.api.time.time()
     manager._discover_existing_if_stale()
     manager._prune_dead_sessions()
     with manager._lock:
@@ -490,11 +490,11 @@ def harness_sweep(manager: Any) -> None:
         if not bool(cfg.get("enabled")):
             continue
         try:
-            cooldown_minutes = sv._clean_harness_cooldown_minutes(
+            cooldown_minutes = sv.api.clean_harness_cooldown_minutes(
                 cfg.get("cooldown_minutes")
             )
             cooldown_seconds = float(cooldown_minutes * 60)
-            remaining_injections = sv._clean_harness_remaining_injections(
+            remaining_injections = sv.api.clean_harness_remaining_injections(
                 cfg.get("remaining_injections"), allow_zero=True
             )
             if remaining_injections <= 0:
@@ -510,7 +510,7 @@ def harness_sweep(manager: Any) -> None:
             request = cfg.get("request")
             if not isinstance(request, str):
                 request = ""
-            prompt = sv._render_harness_prompt(request)
+            prompt = sv.api.render_harness_prompt(request)
             log_path = session.log_path
             if log_path is None or (not log_path.exists()):
                 continue
@@ -532,12 +532,12 @@ def harness_sweep(manager: Any) -> None:
                 raise ValueError("invalid broker state response")
             if "busy" not in st or "queue_len" not in st:
                 raise ValueError("invalid broker state response")
-            busy = sv._state_busy_value(st)
-            ql = sv._state_queue_len_value(st)
+            busy = sv.api.state_busy_value(st)
+            ql = sv.api.state_queue_len_value(st)
             if busy or ql > 0 or manager._queue_len(sid) > 0:
                 continue
-            last = sv._last_chat_role_ts_from_tail(
-                log_path, max_scan_bytes=sv.HARNESS_MAX_SCAN_BYTES
+            last = sv.api.last_chat_role_ts_from_tail(
+                log_path, max_scan_bytes=sv.api.HARNESS_MAX_SCAN_BYTES
             )
             if not last:
                 continue
@@ -584,10 +584,10 @@ def queue_loop(manager: Any) -> None:
             sys.stderr.flush()
         queue_wakeup = getattr(manager, "_queue_wakeup", None)
         if isinstance(queue_wakeup, threading.Event):
-            queue_wakeup.wait(sv.QUEUE_SWEEP_SECONDS)
+            queue_wakeup.wait(sv.api.QUEUE_SWEEP_SECONDS)
             queue_wakeup.clear()
         else:
-            manager._stop.wait(sv.QUEUE_SWEEP_SECONDS)
+            manager._stop.wait(sv.api.QUEUE_SWEEP_SECONDS)
 
 
 def maybe_drain_session_queue(
@@ -595,7 +595,7 @@ def maybe_drain_session_queue(
 ) -> bool:
     sv = _runtime(manager)
     if now_ts is None:
-        now_ts = sv.time.time()
+        now_ts = sv.api.time.time()
     with manager._lock:
         session0 = manager._sessions.get(session_id)
         if not session0:
@@ -627,7 +627,7 @@ def maybe_drain_session_queue(
             if session0:
                 session0.queue_idle_since = None
         return False
-    if sv._state_busy_value(st) or int(queue_len_raw) > 0:
+    if sv.api.state_busy_value(st) or int(queue_len_raw) > 0:
         with manager._lock:
             session0 = manager._sessions.get(session_id)
             if session0:
@@ -654,7 +654,7 @@ def maybe_drain_session_queue(
         if idle_since is None:
             session0.queue_idle_since = float(now_ts)
             return False
-        if (float(now_ts) - idle_since) < sv.QUEUE_IDLE_GRACE_SECONDS:
+        if (float(now_ts) - idle_since) < sv.api.QUEUE_IDLE_GRACE_SECONDS:
             return False
     try:
         manager.send(session_id, text)
@@ -744,10 +744,10 @@ def update_meta_counters(manager: Any) -> None:
         latest_token: dict[str, Any] | None = None
         loops = 0
         while off < size and loops < 16:
-            objs, new_off = sv._read_jsonl_from_offset(log_path, off, max_bytes=256 * 1024)
+            objs, new_off = sv.api.read_jsonl_from_offset(log_path, off, max_bytes=256 * 1024)
             if new_off <= off:
                 break
-            d_th, d_tools, d_sys, chunk_chat_ts, token_update, _chat_events = sv._analyze_log_chunk(objs)
+            d_th, d_tools, d_sys, chunk_chat_ts, token_update, _chat_events = sv.api.analyze_log_chunk(objs)
             total_th += d_th
             total_tools += d_tools
             total_sys += d_sys
@@ -762,7 +762,7 @@ def update_meta_counters(manager: Any) -> None:
             off = new_off
             loops += 1
         if latest_token is None and session.token is None:
-            latest_token = sv._rollout_log._find_latest_token_update(log_path)
+            latest_token = sv.api.rollout_log._find_latest_token_update(log_path)
         with manager._lock:
             session2 = manager._sessions.get(sid)
             if not session2:

@@ -1,3 +1,4 @@
+import ast
 import unittest
 from pathlib import Path
 
@@ -81,15 +82,15 @@ class TestBackendSeamsSource(unittest.TestCase):
         delegates = _manager_delegate_sources()
         combined = source + "\n" + delegates
         self.assertIn("from .sessions import session_catalog as _session_catalog", source)
-        self.assertIn("_session_catalog.service(self).runtime_session_id_for_identifier(session_id)", combined)
-        self.assertIn("_session_catalog.service(self).durable_session_id_for_identifier(session_id)", combined)
-        self.assertIn("_session_catalog.service(self).page_state_ref_for_session_id(session_id)", combined)
-        self.assertIn("_session_catalog.service(self).get_session(session_id)", combined)
-        self.assertIn("_session_catalog.service(self).list_sessions()", combined)
-        self.assertIn("_session_catalog.service(self).refresh_session_meta(", combined)
-        self.assertIn("_session_catalog.service(self).discover_existing(", combined)
-        self.assertIn("_session_catalog.service(self).refresh_session_state(", combined)
-        self.assertIn("_session_catalog.service(self).prune_dead_sessions()", combined)
+        self.assertIn("api.session_catalog.service(self).runtime_session_id_for_identifier(session_id)", combined)
+        self.assertIn("api.session_catalog.service(self).durable_session_id_for_identifier(session_id)", combined)
+        self.assertIn("api.session_catalog.service(self).page_state_ref_for_session_id(session_id)", combined)
+        self.assertIn("api.session_catalog.service(self).get_session(session_id)", combined)
+        self.assertIn("api.session_catalog.service(self).list_sessions()", combined)
+        self.assertIn("api.session_catalog.service(self).refresh_session_meta(", combined)
+        self.assertIn("api.session_catalog.service(self).discover_existing(", combined)
+        self.assertIn("api.session_catalog.service(self).refresh_session_state(", combined)
+        self.assertIn("api.session_catalog.service(self).prune_dead_sessions()", combined)
 
     def test_server_delegates_session_control_send_and_queue_flows(self) -> None:
         source = SERVER.read_text(encoding="utf-8")
@@ -98,37 +99,37 @@ class TestBackendSeamsSource(unittest.TestCase):
         self.assertIn("from .sessions import manager_delegates as _manager_delegates", source)
         self.assertIn("class SessionManager(_manager_delegates.SessionManagerDelegates)", source)
         for fragment in [
-            "_session_control.service(self).send(session_id, text)",
-            "_session_control.service(self).enqueue(session_id, text)",
-            "_session_control.service(self).queue_list(session_id)",
-            "_session_control.service(self).queue_delete(session_id, int(index))",
-            "_session_control.service(self).queue_update(",
-            "_session_control.service(self).spawn_web_session(",
-            "_message_history.service(self).get_messages_page(",
-            "_message_history.service(self).ensure_chat_index(",
-            "_message_history.service(self).ensure_pi_chat_index(",
-            "_message_history.service(self).mark_log_delta(",
-            "_page_state.service(self).queue_len(session_id)",
-            "_page_state.service(self).queue_enqueue_local(session_id, text)",
-            "_page_state.service(self).files_get(session_id)",
-            "_page_state.service(self).harness_get(session_id)",
-            "_page_state.service(self).cwd_group_set(",
-            "_session_background.service(self).probe_bridge_transport(",
-            "_session_background.service(self).session_display_name(session_id)",
-            "_session_background.service(self).observe_rollout_delta(",
-            "_session_background.service(self).harness_sweep()",
-            "_session_background.service(self).queue_sweep()",
-            "_session_background.service(self).update_meta_counters()",
-            "_session_lifecycle.service(self).catalog_record_for_ref(ref)",
-            "_session_lifecycle.service(self).refresh_durable_session_catalog(force=force)",
-            "_session_lifecycle.service(self).wait_for_live_session(",
-            "_session_lifecycle.service(self).capture_runtime_bound_restart_state(",
-            "_session_lifecycle.service(self).stage_runtime_bound_restart_state(",
-            "_session_lifecycle.service(self).restore_runtime_bound_restart_state(",
-            "_session_transport.service(self).get_state(session_id)",
-            "_session_transport.service(self).get_tail(session_id)",
-            "_session_transport.service(self).inject_keys(session_id, seq)",
-            "_session_transport.service(self).kill_session(session_id)",
+            "api.session_control.service(self).send(session_id, text)",
+            "api.session_control.service(self).enqueue(session_id, text)",
+            "api.session_control.service(self).queue_list(session_id)",
+            "api.session_control.service(self).queue_delete(session_id, int(index))",
+            "api.session_control.service(self).queue_update(",
+            "api.session_control.service(self).spawn_web_session(",
+            "api.message_history.service(self).get_messages_page(",
+            "api.message_history.service(self).ensure_chat_index(",
+            "api.message_history.service(self).ensure_pi_chat_index(",
+            "api.message_history.service(self).mark_log_delta(",
+            "api.page_state.service(self).queue_len(session_id)",
+            "api.page_state.service(self).queue_enqueue_local(session_id, text)",
+            "api.page_state.service(self).files_get(session_id)",
+            "api.page_state.service(self).harness_get(session_id)",
+            "api.page_state.service(self).cwd_group_set(",
+            "api.session_background.service(self).probe_bridge_transport(",
+            "api.session_background.service(self).session_display_name(session_id)",
+            "api.session_background.service(self).observe_rollout_delta(",
+            "api.session_background.service(self).harness_sweep()",
+            "api.session_background.service(self).queue_sweep()",
+            "api.session_background.service(self).update_meta_counters()",
+            "api.session_lifecycle.service(self).catalog_record_for_ref(ref)",
+            "api.session_lifecycle.service(self).refresh_durable_session_catalog(force=force)",
+            "api.session_lifecycle.service(self).wait_for_live_session(",
+            "api.session_lifecycle.service(self).capture_runtime_bound_restart_state(",
+            "api.session_lifecycle.service(self).stage_runtime_bound_restart_state(",
+            "api.session_lifecycle.service(self).restore_runtime_bound_restart_state(",
+            "api.session_transport.service(self).get_state(session_id)",
+            "api.session_transport.service(self).get_tail(session_id)",
+            "api.session_transport.service(self).inject_keys(session_id, seq)",
+            "api.session_transport.service(self).kill_session(session_id)",
             "_session_payloads.service(RUNTIME, manager).session_details_payload(session_id)",
             "_session_payloads.service(RUNTIME).session_context_usage_payload(s, token_val)",
             "_session_payloads.service(RUNTIME).session_turn_timing_payload(",
@@ -163,6 +164,21 @@ class TestBackendSeamsSource(unittest.TestCase):
     def test_server_runtime_exposes_pi_context_window_helper(self) -> None:
         source = SERVER.read_text(encoding="utf-8")
         self.assertIn("_pi_model_context_window_impl", source)
+
+    def test_server_runtime_disables_dynamic_module_passthrough(self) -> None:
+        runtime_source = (ROOT / "runtime.py").read_text(encoding="utf-8")
+        tree = ast.parse(runtime_source)
+        server_runtime_methods: set[str] = set()
+        for node in tree.body:
+            if isinstance(node, ast.ClassDef) and node.name == "ServerRuntime":
+                server_runtime_methods = {
+                    item.name
+                    for item in node.body
+                    if isinstance(item, ast.FunctionDef)
+                }
+                break
+        self.assertNotIn("__getattr__", server_runtime_methods)
+        self.assertIn("class RuntimeApi", runtime_source)
 
     def test_voice_push_uses_attention_namespace(self) -> None:
         source = VOICE_PUSH.read_text(encoding="utf-8")

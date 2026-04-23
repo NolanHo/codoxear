@@ -8,8 +8,8 @@ def turn_context_run_settings(runtime: Any, payload: Any) -> tuple[str | None, s
     if not isinstance(payload, dict):
         return None, None
     return (
-        runtime._clean_optional_text(payload.get("model")),
-        runtime._display_reasoning_effort(payload.get("reasoning_effort") or payload.get("effort")),
+        runtime.api.clean_optional_text(payload.get("model")),
+        runtime.api.display_reasoning_effort(payload.get("reasoning_effort") or payload.get("effort")),
     )
 
 
@@ -21,13 +21,13 @@ def read_session_meta(
 ) -> dict[str, Any]:
     if agent_backend is None:
         try:
-            log_path.resolve().relative_to(runtime.PI_SESSIONS_DIR.resolve())
+            log_path.resolve().relative_to(runtime.api.PI_SESSIONS_DIR.resolve())
             backend_name = "pi"
         except Exception:
             backend_name = "codex"
     else:
-        backend_name = runtime.normalize_agent_backend(agent_backend)
-    payload = runtime._read_session_meta_payload_impl(
+        backend_name = runtime.api.normalize_agent_backend(agent_backend)
+    payload = runtime.api.read_session_meta_payload_impl(
         log_path,
         agent_backend=backend_name,
         timeout_s=0.0,
@@ -43,17 +43,17 @@ def read_run_settings_from_log(
     *,
     agent_backend: str = "codex",
 ) -> tuple[str | None, str | None, str | None]:
-    backend_name = runtime.normalize_agent_backend(agent_backend)
+    backend_name = runtime.api.normalize_agent_backend(agent_backend)
     if backend_name == "pi":
-        return runtime._read_pi_run_settings(log_path)
+        return runtime.api.read_pi_run_settings(log_path)
     meta = read_session_meta(runtime, log_path, agent_backend="codex")
-    model_provider = runtime._clean_optional_text(meta.get("model_provider"))
-    model = runtime._clean_optional_text(meta.get("model"))
-    reasoning_effort = runtime._display_reasoning_effort(meta.get("reasoning_effort"))
+    model_provider = runtime.api.clean_optional_text(meta.get("model_provider"))
+    model = runtime.api.clean_optional_text(meta.get("model"))
+    reasoning_effort = runtime.api.display_reasoning_effort(meta.get("reasoning_effort"))
     if model is None or reasoning_effort is None:
         ctx_model, ctx_effort = turn_context_run_settings(
             runtime,
-            runtime._rollout_log._find_latest_turn_context(
+            runtime.api.rollout_log._find_latest_turn_context(
                 log_path,
                 max_scan_bytes=8 * 1024 * 1024,
             ),
@@ -71,7 +71,7 @@ def normalize_requested_model_provider(
     *,
     allowed: set[str] | None = None,
 ) -> str | None:
-    provider = runtime._clean_optional_text(value)
+    provider = runtime.api.clean_optional_text(value)
     if provider is None:
         return None
     if allowed is not None and provider not in allowed:
@@ -81,7 +81,7 @@ def normalize_requested_model_provider(
 
 
 def normalize_requested_service_tier(runtime: Any, value: Any) -> str | None:
-    tier = runtime._clean_optional_text(value)
+    tier = runtime.api.clean_optional_text(value)
     if tier is None:
         return None
     if tier not in {"fast", "flex"}:
@@ -90,7 +90,7 @@ def normalize_requested_service_tier(runtime: Any, value: Any) -> str | None:
 
 
 def normalize_requested_preferred_auth_method(runtime: Any, value: Any) -> str | None:
-    method = runtime._clean_optional_text(value)
+    method = runtime.api.clean_optional_text(value)
     if method is None:
         return None
     if method not in {"chatgpt", "apikey"}:
@@ -157,7 +157,7 @@ def metadata_session_path(*, meta: dict[str, Any], backend: str, sock: Path) -> 
 
 
 def normalize_requested_reasoning_effort(runtime: Any, value: Any) -> str | None:
-    normalized = runtime._display_reasoning_effort(value)
+    normalized = runtime.api.display_reasoning_effort(value)
     if normalized is None:
         return None
     if normalized not in {"high", "medium", "low"}:
@@ -166,7 +166,7 @@ def normalize_requested_reasoning_effort(runtime: Any, value: Any) -> str | None
 
 
 def normalize_requested_pi_reasoning_effort(runtime: Any, value: Any) -> str | None:
-    normalized = runtime._display_pi_reasoning_effort(value)
+    normalized = runtime.api.display_pi_reasoning_effort(value)
     if normalized is None:
         return None
     if normalized not in {"high", "medium", "low"}:

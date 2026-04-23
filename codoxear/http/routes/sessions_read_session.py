@@ -31,7 +31,7 @@ def handle_get(runtime: ServerRuntime, handler: Any, path: str, u: Any) -> bool:
         )
         try:
             payload = runtime.api.session_live_payload(
-                runtime.MANAGER,
+                runtime.manager,
                 session_id,
                 offset=offset,
                 live_offset=live_offset,
@@ -56,7 +56,7 @@ def handle_get(runtime: ServerRuntime, handler: Any, path: str, u: Any) -> bool:
             handler.send_error(404)
             return True
         try:
-            payload = runtime.api.session_workspace_payload(runtime.MANAGER, session_id)
+            payload = runtime.api.session_workspace_payload(runtime.manager, session_id)
         except KeyError:
             runtime.api.json_response(handler, 404, {"error": "unknown session"})
             return True
@@ -75,7 +75,7 @@ def handle_get(runtime: ServerRuntime, handler: Any, path: str, u: Any) -> bool:
             handler.send_error(404)
             return True
         try:
-            payload = runtime.api.session_details_payload(runtime.MANAGER, session_id)
+            payload = runtime.api.session_details_payload(runtime.manager, session_id)
         except KeyError:
             runtime.api.json_response(handler, 404, {"error": "unknown session"})
             return True
@@ -90,13 +90,13 @@ def handle_get(runtime: ServerRuntime, handler: Any, path: str, u: Any) -> bool:
         if not session_id:
             handler.send_error(404)
             return True
-        runtime.MANAGER.refresh_session_meta(session_id, strict=False)
-        s = runtime.MANAGER.get_session(session_id)
+        runtime.manager.refresh_session_meta(session_id, strict=False)
+        s = runtime.manager.get_session(session_id)
         if not s:
             runtime.api.json_response(handler, 404, {"error": "unknown session"})
             return True
         try:
-            state = runtime.api.validated_session_state(runtime.MANAGER.get_state(session_id))
+            state = runtime.api.validated_session_state(runtime.manager.get_state(session_id))
         except ValueError as exc:
             runtime.api.json_response(handler, 502, {"error": str(exc)})
             return True
@@ -124,7 +124,7 @@ def handle_get(runtime: ServerRuntime, handler: Any, path: str, u: Any) -> bool:
                 model = log_model
             if reasoning_effort is None:
                 reasoning_effort = log_effort
-        sidebar_meta = runtime.MANAGER.sidebar_meta_get(session_id)
+        sidebar_meta = runtime.manager.sidebar_meta_get(session_id)
         cwd_path = runtime.api.safe_expanduser(Path(s.cwd))
         if not cwd_path.is_absolute():
             cwd_path = cwd_path.resolve()
@@ -142,7 +142,7 @@ def handle_get(runtime: ServerRuntime, handler: Any, path: str, u: Any) -> bool:
         broker_busy = runtime.api.state_busy_value(state)
         busy = runtime.api.display_pi_busy(s, broker_busy=broker_busy) if s.backend == "pi" else broker_busy
         if s.backend != "pi" and s.log_path is not None and s.log_path.exists():
-            idle_val = runtime.MANAGER.idle_from_log(session_id)
+            idle_val = runtime.manager.idle_from_log(session_id)
             busy = broker_busy or (not bool(idle_val))
         runtime.api.json_response(
             handler,
@@ -164,7 +164,7 @@ def handle_get(runtime: ServerRuntime, handler: Any, path: str, u: Any) -> bool:
                 "codex_pid": int(s.codex_pid),
                 "busy": bool(busy),
                 "broker_busy": broker_busy,
-                "queue_len": runtime.MANAGER._queue_len(session_id),
+                "queue_len": runtime.manager._queue_len(session_id),
                 "token": token_val,
                 "model_provider": model_provider,
                 "preferred_auth_method": preferred_auth_method,
@@ -199,7 +199,7 @@ def handle_get(runtime: ServerRuntime, handler: Any, path: str, u: Any) -> bool:
             handler.send_error(404)
             return True
         try:
-            q = runtime.MANAGER.queue_list(session_id)
+            q = runtime.manager.queue_list(session_id)
         except KeyError:
             runtime.api.json_response(handler, 404, {"error": "unknown session"})
             return True
@@ -218,7 +218,7 @@ def handle_get(runtime: ServerRuntime, handler: Any, path: str, u: Any) -> bool:
             handler.send_error(404)
             return True
         try:
-            payload = runtime.MANAGER.get_ui_state(session_id)
+            payload = runtime.manager.get_ui_state(session_id)
         except KeyError:
             runtime.api.json_response(handler, 404, {"error": "unknown session"})
             return True
@@ -234,7 +234,7 @@ def handle_get(runtime: ServerRuntime, handler: Any, path: str, u: Any) -> bool:
             handler._unauthorized()
             return True
         try:
-            payload = runtime.MANAGER.get_session_commands(session_id)
+            payload = runtime.manager.get_session_commands(session_id)
         except KeyError:
             runtime.api.json_response(handler, 404, {"error": "unknown session"})
             return True
@@ -255,9 +255,9 @@ def handle_get(runtime: ServerRuntime, handler: Any, path: str, u: Any) -> bool:
             return True
         session_id = parts[3]
         t0_meta = time.perf_counter()
-        runtime.MANAGER.refresh_session_meta(session_id, strict=False)
+        runtime.manager.refresh_session_meta(session_id, strict=False)
         dt_meta_ms = (time.perf_counter() - t0_meta) * 1000.0
-        s = runtime.MANAGER.get_session(session_id)
+        s = runtime.manager.get_session(session_id)
         historical_row = runtime.api.historical_session_row(session_id)
         if (not s) and historical_row is None:
             runtime.api.json_response(handler, 404, {"error": "unknown session"})
@@ -273,9 +273,9 @@ def handle_get(runtime: ServerRuntime, handler: Any, path: str, u: Any) -> bool:
         before = 0 if before_q is None else int(before_q[0])
         before = max(0, before)
         limit_q = qs.get("limit")
-        limit = runtime.SESSION_HISTORY_PAGE_SIZE if limit_q is None else int(limit_q[0])
-        limit = max(20, min(runtime.SESSION_HISTORY_PAGE_SIZE, limit))
-        payload = runtime.MANAGER.get_messages_page(
+        limit = runtime.api.SESSION_HISTORY_PAGE_SIZE if limit_q is None else int(limit_q[0])
+        limit = max(20, min(runtime.api.SESSION_HISTORY_PAGE_SIZE, limit))
+        payload = runtime.manager.get_messages_page(
             session_id,
             offset=offset,
             init=init,
@@ -295,7 +295,7 @@ def handle_get(runtime: ServerRuntime, handler: Any, path: str, u: Any) -> bool:
             return True
         session_id = _common.session_id_from_path(path)
         try:
-            tail = runtime.MANAGER.get_tail(session_id)
+            tail = runtime.manager.get_tail(session_id)
         except KeyError:
             runtime.api.json_response(handler, 404, {"error": "unknown session"})
             return True
@@ -312,7 +312,7 @@ def handle_get(runtime: ServerRuntime, handler: Any, path: str, u: Any) -> bool:
             return True
         session_id = parts[3]
         try:
-            cfg = runtime.MANAGER.harness_get(session_id)
+            cfg = runtime.manager.harness_get(session_id)
         except KeyError:
             runtime.api.json_response(handler, 404, {"error": "unknown session"})
             return True

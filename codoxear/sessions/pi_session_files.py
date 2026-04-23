@@ -107,20 +107,20 @@ def service(runtime: ServerRuntime) -> PiSessionFilesService:
 
 def pi_native_session_dir_for_cwd(runtime: ServerRuntime, cwd: str | Path) -> Path:
     sv = runtime
-    cwd_path = sv._safe_expanduser(Path(cwd)).resolve()
+    cwd_path = sv.api.safe_expanduser(Path(cwd)).resolve()
     slug = str(cwd_path).strip("/").replace("/", "-")
-    return sv.PI_NATIVE_SESSIONS_DIR / f"--{slug}--"
+    return sv.api.PI_NATIVE_SESSIONS_DIR / f"--{slug}--"
 
 
 def pi_new_session_file_for_cwd(runtime: ServerRuntime, cwd: str | Path) -> Path:
     sv = runtime
-    now = float(sv._now())
-    millis = int(round((now - sv.math.floor(now)) * 1000))
+    now = float(sv.api.now())
+    millis = int(round((now - sv.api.math.floor(now)) * 1000))
     if millis >= 1000:
-        now = sv.math.floor(now) + 1.0
+        now = sv.api.math.floor(now) + 1.0
         millis = 0
-    stamp = sv.time.strftime("%Y-%m-%dT%H-%M-%S", sv.time.gmtime(now))
-    name = f"{stamp}-{millis:03d}Z_{sv.uuid.uuid4()}.jsonl"
+    stamp = sv.api.time.strftime("%Y-%m-%dT%H-%M-%S", sv.api.time.gmtime(now))
+    name = f"{stamp}-{millis:03d}Z_{sv.api.uuid.uuid4()}.jsonl"
     return pi_native_session_dir_for_cwd(runtime, cwd) / name
 
 
@@ -137,12 +137,12 @@ def write_pi_session_header(
 ) -> None:
     sv = runtime
     session_path.parent.mkdir(parents=True, exist_ok=True)
-    now = float(sv._now())
-    millis = int(round((now - sv.math.floor(now)) * 1000))
+    now = float(sv.api.now())
+    millis = int(round((now - sv.api.math.floor(now)) * 1000))
     if millis >= 1000:
-        now = sv.math.floor(now) + 1.0
+        now = sv.api.math.floor(now) + 1.0
         millis = 0
-    timestamp = f"{sv.time.strftime('%Y-%m-%dT%H:%M:%S', sv.time.gmtime(now))}.{millis:03d}Z"
+    timestamp = f"{sv.api.time.strftime('%Y-%m-%dT%H:%M:%S', sv.api.time.gmtime(now))}.{millis:03d}Z"
     header: dict[str, Any] = {
         "type": "session",
         "version": 3,
@@ -192,17 +192,17 @@ def copy_file_atomic(runtime: ServerRuntime, source_path: Path, target_path: Pat
     if target_path.exists():
         raise FileExistsError(f"target already exists: {target_path}")
     tmp_path = target_path.with_name(
-        f".{target_path.name}.codoxear-tmp-{sv.secrets.token_hex(6)}"
+        f".{target_path.name}.codoxear-tmp-{sv.api.secrets.token_hex(6)}"
     )
     try:
         with source_path.open("rb") as src, tmp_path.open("xb") as dst:
-            sv.shutil.copyfileobj(src, dst)
+            sv.api.shutil.copyfileobj(src, dst)
         try:
             st = source_path.stat()
-            sv.os.chmod(tmp_path, st.st_mode & 0o777)
+            sv.api.os.chmod(tmp_path, st.st_mode & 0o777)
         except OSError:
             pass
-        sv.os.replace(tmp_path, target_path)
+        sv.api.os.replace(tmp_path, target_path)
     finally:
         try:
             if tmp_path.exists():
@@ -218,7 +218,7 @@ def append_pi_user_message(
     text: str,
 ) -> None:
     sv = runtime
-    now = float(sv._now())
+    now = float(sv.api.now())
     millis = int(round(now * 1000))
     entry = {
         "type": "message",
@@ -287,7 +287,7 @@ def pi_session_name_from_session_file(
     max_scan_bytes: int = 512 * 1024,
 ) -> str:
     try:
-        objs = runtime._read_jsonl_tail(session_path, max_scan_bytes)
+        objs = runtime.api.read_jsonl_tail(session_path, max_scan_bytes)
     except Exception:
         return ""
     for obj in reversed(objs):

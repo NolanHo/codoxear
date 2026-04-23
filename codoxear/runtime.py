@@ -15,18 +15,28 @@ class RuntimeApi:
     def __getattr__(self, name: str) -> Any:
         if name not in self._exports:
             raise AttributeError(name)
-        return getattr(self._module, f"_{name}")
+        if hasattr(self._module, name):
+            return getattr(self._module, name)
+        prefixed = f"_{name}"
+        if hasattr(self._module, prefixed):
+            return getattr(self._module, prefixed)
+        raise AttributeError(name)
 
 
 @dataclass(slots=True)
 class ServerRuntime:
     module: ModuleType
-    manager: Any
+    _manager: Any
     event_hub: Any
     api: RuntimeApi | None = None
 
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self.module, name)
+    @property
+    def manager(self) -> Any:
+        return getattr(self.module, "MANAGER", self._manager)
+
+    @manager.setter
+    def manager(self, value: Any) -> None:
+        self._manager = value
 
 
 def build_server_runtime(
@@ -43,7 +53,7 @@ def build_server_runtime(
             resolved_api = api_factory()
     return ServerRuntime(
         module=module,
-        manager=manager,
+        _manager=manager,
         event_hub=event_hub,
         api=resolved_api,
     )

@@ -48,16 +48,16 @@ def make_handler(runtime: Any):
             self.wfile.write(data)
 
         def _send_path(self, path: Path) -> None:
-            data = runtime._read_static_bytes(path)
+            data = runtime.api.read_static_bytes(path)
             self._send_bytes(
                 data,
-                runtime._content_type_for_path(path),
-                cache_control=runtime._cache_control_for_path(path),
+                runtime.api.content_type_for_path(path),
+                cache_control=runtime.api.cache_control_for_path(path),
             )
 
         def _send_static(self, rel: str) -> None:
-            path = (runtime.STATIC_DIR / rel.lstrip("/")).resolve()
-            if not runtime._is_path_within(runtime.STATIC_DIR.resolve(), path):
+            path = (runtime.api.STATIC_DIR / rel.lstrip("/")).resolve()
+            if not runtime.api.is_path_within(runtime.api.STATIC_DIR.resolve(), path):
                 self.send_error(404)
                 return
             if not path.exists() or not path.is_file():
@@ -66,40 +66,40 @@ def make_handler(runtime: Any):
             self._send_path(path)
 
         def _unauthorized(self) -> None:
-            runtime._json_response(self, 401, {"error": "unauthorized"})
+            runtime.api.json_response(self, 401, {"error": "unauthorized"})
 
         def do_GET(self) -> None:
             try:
                 u = urllib.parse.urlparse(self.path)
                 path = u.path
-                if runtime.URL_PREFIX:
-                    if path == runtime.URL_PREFIX:
-                        loc = runtime.URL_PREFIX + "/"
+                if runtime.api.URL_PREFIX:
+                    if path == runtime.api.URL_PREFIX:
+                        loc = runtime.api.URL_PREFIX + "/"
                         if u.query:
                             loc = loc + "?" + u.query
                         self.send_response(308)
                         self.send_header("Location", loc)
                         self.end_headers()
                         return
-                    stripped = runtime._strip_url_prefix(runtime.URL_PREFIX, path)
+                    stripped = runtime.api.strip_url_prefix(runtime.api.URL_PREFIX, path)
                     if stripped is None:
                         self.send_error(404)
                         return
                     path = stripped
                 for route_module in (
-                    runtime._http_assets_routes,
-                    runtime._http_auth_routes,
-                    runtime._http_events_routes,
-                    runtime._http_notification_routes,
-                    runtime._http_session_read_routes,
-                    runtime._http_file_routes,
+                    runtime.api.http_assets_routes,
+                    runtime.api.http_auth_routes,
+                    runtime.api.http_events_routes,
+                    runtime.api.http_notification_routes,
+                    runtime.api.http_session_read_routes,
+                    runtime.api.http_file_routes,
                 ):
                     if route_module.handle_get(runtime, self, path, u):
                         return
                 self.send_error(404)
             except Exception as exc:
                 traceback.print_exc()
-                runtime._json_response(
+                runtime.api.json_response(
                     self,
                     500,
                     {"error": str(exc), "trace": traceback.format_exc()},
@@ -109,34 +109,34 @@ def make_handler(runtime: Any):
             try:
                 u = urllib.parse.urlparse(self.path)
                 path = u.path
-                if runtime.URL_PREFIX:
-                    if path == runtime.URL_PREFIX:
-                        loc = runtime.URL_PREFIX + "/"
+                if runtime.api.URL_PREFIX:
+                    if path == runtime.api.URL_PREFIX:
+                        loc = runtime.api.URL_PREFIX + "/"
                         if u.query:
                             loc = loc + "?" + u.query
                         self.send_response(308)
                         self.send_header("Location", loc)
                         self.end_headers()
                         return
-                    stripped = runtime._strip_url_prefix(runtime.URL_PREFIX, path)
+                    stripped = runtime.api.strip_url_prefix(runtime.api.URL_PREFIX, path)
                     if stripped is None:
                         self.send_error(404)
                         return
                     path = stripped
                 for route_module in (
-                    runtime._http_auth_routes,
-                    runtime._http_notification_routes,
-                    runtime._http_session_write_routes,
-                    runtime._http_file_routes,
+                    runtime.api.http_auth_routes,
+                    runtime.api.http_notification_routes,
+                    runtime.api.http_session_write_routes,
+                    runtime.api.http_file_routes,
                 ):
                     if route_module.handle_post(runtime, self, path, u):
                         return
                 self.send_error(404)
             except KeyError:
-                runtime._json_response(self, 404, {"error": "unknown session"})
+                runtime.api.json_response(self, 404, {"error": "unknown session"})
             except Exception as exc:
                 traceback.print_exc()
-                runtime._json_response(
+                runtime.api.json_response(
                     self,
                     500,
                     {"error": str(exc), "trace": traceback.format_exc()},
@@ -149,23 +149,23 @@ def make_handler(runtime: Any):
 
 
 def main(runtime: Any, handler_cls: type[http.server.BaseHTTPRequestHandler]) -> None:
-    os.makedirs(runtime.APP_DIR, exist_ok=True)
-    os.makedirs(runtime.UPLOAD_DIR, exist_ok=True)
+    os.makedirs(runtime.api.APP_DIR, exist_ok=True)
+    os.makedirs(runtime.api.UPLOAD_DIR, exist_ok=True)
     try:
-        runtime._require_password()
+        runtime.api.require_password()
     except Exception as exc:
-        runtime.sys.stderr.write(f"error: {exc}\n")
+        runtime.api.sys.stderr.write(f"error: {exc}\n")
         raise SystemExit(2)
 
-    host = runtime.DEFAULT_HOST
+    host = runtime.api.DEFAULT_HOST
     server: ThreadingHTTPServer
     if ":" in host:
-        server = ThreadingHTTPServerV6((host, runtime.DEFAULT_PORT), handler_cls)
+        server = ThreadingHTTPServerV6((host, runtime.api.DEFAULT_PORT), handler_cls)
     else:
-        server = ThreadingHTTPServer((host, runtime.DEFAULT_PORT), handler_cls)
+        server = ThreadingHTTPServer((host, runtime.api.DEFAULT_PORT), handler_cls)
 
     def _sigterm(_signo: int, _frame: Any) -> None:
-        runtime.MANAGER.stop()
+        runtime.manager.stop()
         threading.Thread(target=server.shutdown, daemon=True).start()
 
     signal.signal(signal.SIGTERM, _sigterm)

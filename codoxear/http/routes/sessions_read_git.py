@@ -15,7 +15,7 @@ def _normalize_list(runtime: ServerRuntime, rows: list[str]) -> list[str]:
         if not text:
             continue
         out.append(text)
-        if len(out) >= runtime.GIT_CHANGED_FILES_MAX:
+        if len(out) >= runtime.api.GIT_CHANGED_FILES_MAX:
             break
     return out
 
@@ -29,8 +29,8 @@ def handle_get(runtime: ServerRuntime, handler: Any, path: str, u: Any) -> bool:
         if not session_id:
             handler.send_error(404)
             return True
-        runtime.MANAGER.refresh_session_meta(session_id, strict=False)
-        s = runtime.MANAGER.get_session(session_id)
+        runtime.manager.refresh_session_meta(session_id, strict=False)
+        s = runtime.manager.get_session(session_id)
         if not s:
             runtime.api.json_response(handler, 404, {"error": "unknown session"})
             return True
@@ -45,25 +45,25 @@ def handle_get(runtime: ServerRuntime, handler: Any, path: str, u: Any) -> bool:
         unstaged = runtime.api.run_git(
             cwd,
             ["diff", "--name-only"],
-            timeout_s=runtime.GIT_DIFF_TIMEOUT_SECONDS,
+            timeout_s=runtime.api.GIT_DIFF_TIMEOUT_SECONDS,
             max_bytes=64 * 1024,
         ).splitlines()
         staged = runtime.api.run_git(
             cwd,
             ["diff", "--name-only", "--cached"],
-            timeout_s=runtime.GIT_DIFF_TIMEOUT_SECONDS,
+            timeout_s=runtime.api.GIT_DIFF_TIMEOUT_SECONDS,
             max_bytes=64 * 1024,
         ).splitlines()
         unstaged_numstat = runtime.api.run_git(
             cwd,
             ["diff", "--numstat"],
-            timeout_s=runtime.GIT_DIFF_TIMEOUT_SECONDS,
+            timeout_s=runtime.api.GIT_DIFF_TIMEOUT_SECONDS,
             max_bytes=128 * 1024,
         )
         staged_numstat = runtime.api.run_git(
             cwd,
             ["diff", "--numstat", "--cached"],
-            timeout_s=runtime.GIT_DIFF_TIMEOUT_SECONDS,
+            timeout_s=runtime.api.GIT_DIFF_TIMEOUT_SECONDS,
             max_bytes=128 * 1024,
         )
         unstaged2 = _normalize_list(runtime, unstaged)
@@ -124,8 +124,8 @@ def handle_get(runtime: ServerRuntime, handler: Any, path: str, u: Any) -> bool:
         if not session_id:
             handler.send_error(404)
             return True
-        runtime.MANAGER.refresh_session_meta(session_id, strict=False)
-        s = runtime.MANAGER.get_session(session_id)
+        runtime.manager.refresh_session_meta(session_id, strict=False)
+        s = runtime.manager.get_session(session_id)
         if not s:
             runtime.api.json_response(handler, 404, {"error": "unknown session"})
             return True
@@ -157,8 +157,8 @@ def handle_get(runtime: ServerRuntime, handler: Any, path: str, u: Any) -> bool:
         diff = runtime.api.run_git(
             cwd,
             args,
-            timeout_s=runtime.GIT_DIFF_TIMEOUT_SECONDS,
-            max_bytes=runtime.GIT_DIFF_MAX_BYTES,
+            timeout_s=runtime.api.GIT_DIFF_TIMEOUT_SECONDS,
+            max_bytes=runtime.api.GIT_DIFF_MAX_BYTES,
         )
         runtime.api.json_response(
             handler,
@@ -181,8 +181,8 @@ def handle_get(runtime: ServerRuntime, handler: Any, path: str, u: Any) -> bool:
         if not session_id:
             handler.send_error(404)
             return True
-        runtime.MANAGER.refresh_session_meta(session_id, strict=False)
-        s = runtime.MANAGER.get_session(session_id)
+        runtime.manager.refresh_session_meta(session_id, strict=False)
+        s = runtime.manager.get_session(session_id)
         if not s:
             runtime.api.json_response(handler, 404, {"error": "unknown session"})
             return True
@@ -211,10 +211,10 @@ def handle_get(runtime: ServerRuntime, handler: Any, path: str, u: Any) -> bool:
         if current_exists:
             current_text, current_size = runtime.api.read_text_file_strict(
                 p,
-                max_bytes=runtime.FILE_READ_MAX_BYTES,
+                max_bytes=runtime.api.FILE_READ_MAX_BYTES,
             )
         try:
-            runtime.MANAGER.files_add(session_id, str(p))
+            runtime.manager.files_add(session_id, str(p))
         except KeyError:
             pass
         base_exists = False
@@ -223,8 +223,8 @@ def handle_get(runtime: ServerRuntime, handler: Any, path: str, u: Any) -> bool:
             base_text = runtime.api.run_git(
                 cwd,
                 ["show", f"HEAD:{rel}"],
-                timeout_s=runtime.GIT_DIFF_TIMEOUT_SECONDS,
-                max_bytes=runtime.FILE_READ_MAX_BYTES,
+                timeout_s=runtime.api.GIT_DIFF_TIMEOUT_SECONDS,
+                max_bytes=runtime.api.FILE_READ_MAX_BYTES,
             )
             base_exists = True
         except RuntimeError:

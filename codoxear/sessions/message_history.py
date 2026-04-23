@@ -146,7 +146,7 @@ def set_chat_index_snapshot(
         session = manager._sessions.get(session_id)
         if not session:
             return
-        tail = list(events[-sv.CHAT_INDEX_MAX_EVENTS :])
+        tail = list(events[-sv.api.CHAT_INDEX_MAX_EVENTS :])
         uniq_rev: list[dict[str, Any]] = []
         seen_exact: set[tuple[str, int, str]] = set()
         seen_assistant_stretch: set[str] = set()
@@ -168,7 +168,7 @@ def set_chat_index_snapshot(
             uniq_rev.append(ev)
         session.chat_index_events = list(reversed(uniq_rev))
         session.chat_index_scan_bytes = int(scan_bytes)
-        session.chat_index_scan_complete = bool(scan_complete) and (len(events) <= sv.CHAT_INDEX_MAX_EVENTS)
+        session.chat_index_scan_complete = bool(scan_complete) and (len(events) <= sv.api.CHAT_INDEX_MAX_EVENTS)
         session.chat_index_log_off = int(log_off)
         if token_update is not None:
             session.token = token_update
@@ -238,8 +238,8 @@ def append_chat_events(
                         assistant_stretch.add(text)
                 merged.append(ev)
             sv = _runtime(manager)
-            if len(merged) > sv.CHAT_INDEX_MAX_EVENTS:
-                merged = merged[-sv.CHAT_INDEX_MAX_EVENTS :]
+            if len(merged) > sv.api.CHAT_INDEX_MAX_EVENTS:
+                merged = merged[-sv.api.CHAT_INDEX_MAX_EVENTS :]
                 session.chat_index_scan_complete = False
             session.chat_index_events = merged
         session.chat_index_log_off = int(new_off)
@@ -283,11 +283,11 @@ def update_pi_last_chat_ts(
     sv = _runtime(manager)
     if not events:
         return
-    if not any(sv._is_attention_worthy_session_event(event) for event in events):
+    if not any(sv.api.is_attention_worthy_session_event(event) for event in events):
         return
-    latest_chat_ts = sv._session_file_activity_ts(session_path)
+    latest_chat_ts = sv.api.session_file_activity_ts(session_path)
     if latest_chat_ts is None:
-        latest_chat_ts = sv._attention_updated_ts_from_events(events)
+        latest_chat_ts = sv.api.attention_updated_ts_from_events(events)
     if latest_chat_ts is None:
         return
     with manager._lock:
@@ -329,7 +329,7 @@ def ensure_pi_chat_index(manager: Any, session_id: str, *, min_events: int, befo
     target_events = max(0, int(min_events) + max(0, int(before)))
     seed_diag: dict[str, Any] = {"tool_names": [], "last_tool": None}
     if (not ready) or ((target_events > cached_count) and (not scan_complete)):
-        events, token_update, new_off, used_scan, complete, diag = _runtime(manager)._pi_messages.read_pi_message_tail_snapshot(
+        events, token_update, new_off, used_scan, complete, diag = _runtime(manager).api.pi_messages.read_pi_message_tail_snapshot(
             session_path,
             min_events=max(20, target_events),
             initial_scan_bytes=max(256 * 1024, scan_bytes),
@@ -357,7 +357,7 @@ def ensure_pi_chat_index(manager: Any, session_id: str, *, min_events: int, befo
     size2 = int(session_path2.stat().st_size)
     latest_diag = seed_diag
     if size2 > off2:
-        events_delta, new_off, _meta_delta, _flags, latest_diag = _runtime(manager)._pi_messages.read_pi_message_delta(
+        events_delta, new_off, _meta_delta, _flags, latest_diag = _runtime(manager).api.pi_messages.read_pi_message_delta(
             session_path2,
             offset=off2,
         )
@@ -395,7 +395,7 @@ def ensure_chat_index(manager: Any, session_id: str, *, min_events: int, before:
         if not session:
             return [], 0, False, 0, None
         log_path = session.log_path
-        scan_bytes = int(session.chat_index_scan_bytes) if session.chat_index_scan_bytes > 0 else sv.CHAT_INIT_SEED_SCAN_BYTES
+        scan_bytes = int(session.chat_index_scan_bytes) if session.chat_index_scan_bytes > 0 else sv.api.CHAT_INIT_SEED_SCAN_BYTES
         idx_off = int(session.chat_index_log_off)
     if log_path is None or (not log_path.exists()):
         return [], 0, False, 0, None
@@ -408,7 +408,7 @@ def ensure_chat_index(manager: Any, session_id: str, *, min_events: int, before:
             session_id=session_id,
             events=[],
             token_update=None,
-            scan_bytes=sv.CHAT_INIT_SEED_SCAN_BYTES,
+            scan_bytes=sv.api.CHAT_INIT_SEED_SCAN_BYTES,
             scan_complete=False,
             log_off=0,
         )
@@ -421,11 +421,11 @@ def ensure_chat_index(manager: Any, session_id: str, *, min_events: int, before:
 
     target_events = max(0, int(min_events) + max(0, int(before)))
     if (not ready) or ((target_events > cached_count) and (not scan_complete)):
-        events, token_update, used_scan, complete, log_size = sv._read_chat_tail_snapshot(
+        events, token_update, used_scan, complete, log_size = sv.api.read_chat_tail_snapshot(
             log_path,
             min_events=max(20, target_events),
-            initial_scan_bytes=max(sv.CHAT_INIT_SEED_SCAN_BYTES, scan_bytes),
-            max_scan_bytes=sv.CHAT_INIT_MAX_SCAN_BYTES,
+            initial_scan_bytes=max(sv.api.CHAT_INIT_SEED_SCAN_BYTES, scan_bytes),
+            max_scan_bytes=sv.api.CHAT_INIT_MAX_SCAN_BYTES,
         )
         set_chat_index_snapshot(
             manager,
@@ -449,12 +449,12 @@ def ensure_chat_index(manager: Any, session_id: str, *, min_events: int, before:
     size2 = int(log_path2.stat().st_size)
     if size2 > off2:
         delta = size2 - off2
-        if delta >= sv.CHAT_INDEX_RESEED_THRESHOLD_BYTES:
-            events, token_update, used_scan, complete, log_size = sv._read_chat_tail_snapshot(
+        if delta >= sv.api.CHAT_INDEX_RESEED_THRESHOLD_BYTES:
+            events, token_update, used_scan, complete, log_size = sv.api.read_chat_tail_snapshot(
                 log_path2,
                 min_events=max(20, target_events),
-                initial_scan_bytes=max(sv.CHAT_INIT_SEED_SCAN_BYTES, scan_bytes),
-                max_scan_bytes=sv.CHAT_INIT_MAX_SCAN_BYTES,
+                initial_scan_bytes=max(sv.api.CHAT_INIT_SEED_SCAN_BYTES, scan_bytes),
+                max_scan_bytes=sv.api.CHAT_INIT_MAX_SCAN_BYTES,
             )
             set_chat_index_snapshot(
                 manager,
@@ -471,10 +471,10 @@ def ensure_chat_index(manager: Any, session_id: str, *, min_events: int, before:
             latest_token: dict[str, Any] | None = None
             aggregated_events: list[dict[str, Any]] = []
             while cur < size2 and loops < 16:
-                objs, new_off = sv._read_jsonl_from_offset(log_path2, cur, max_bytes=sv.CHAT_INDEX_INCREMENT_BYTES)
+                objs, new_off = sv.api.read_jsonl_from_offset(log_path2, cur, max_bytes=sv.api.CHAT_INDEX_INCREMENT_BYTES)
                 if new_off <= cur:
                     break
-                _th, _tools, _sys, _last_ts, token_update, new_events = sv._analyze_log_chunk(objs)
+                _th, _tools, _sys, _last_ts, token_update, new_events = sv.api.analyze_log_chunk(objs)
                 if token_update is not None:
                     latest_token = token_update
                 if new_events:
@@ -506,13 +506,13 @@ def mark_log_delta(
     manager: Any, session_id: str, *, objs: list[dict[str, Any]], new_off: int
 ) -> None:
     sv = _runtime(manager)
-    _th, _tools, _sys, last_ts, token_update, new_events = sv._analyze_log_chunk(objs)
+    _th, _tools, _sys, last_ts, token_update, new_events = sv.api.analyze_log_chunk(objs)
     model = None
     reasoning_effort = None
     for obj in reversed(objs):
         if not isinstance(obj, dict) or obj.get("type") != "turn_context":
             continue
-        model, reasoning_effort = sv._turn_context_run_settings(obj.get("payload"))
+        model, reasoning_effort = sv.api.turn_context_run_settings(obj.get("payload"))
         break
     append_chat_events(manager, session_id, new_events, new_off=new_off, latest_token=token_update)
     durable_session_id: str | None = None
@@ -529,10 +529,10 @@ def mark_log_delta(
                 session.reasoning_effort = reasoning_effort
             session.idle_cache_log_off = -1
     if durable_session_id is not None and (new_events or token_update is not None or model is not None or reasoning_effort is not None):
-        sv._publish_session_live_invalidate(durable_session_id, runtime_id=session_id, reason="log_delta")
-        sv._publish_session_workspace_invalidate(durable_session_id, runtime_id=session_id, reason="log_delta")
-        if any(sv._is_attention_worthy_session_event(event) for event in new_events):
-            sv._publish_sessions_invalidate(reason="conversation_changed")
+        sv.api.publish_session_live_invalidate(durable_session_id, runtime_id=session_id, reason="log_delta")
+        sv.api.publish_session_workspace_invalidate(durable_session_id, runtime_id=session_id, reason="log_delta")
+        if any(sv.api.is_attention_worthy_session_event(event) for event in new_events):
+            sv.api.publish_sessions_invalidate(reason="conversation_changed")
 
 
 def idle_from_log(manager: Any, session_id: str) -> bool:
@@ -549,7 +549,7 @@ def idle_from_log(manager: Any, session_id: str) -> bool:
     size = int(log_path.stat().st_size)
     if (size >= 0) and (cached_off == size) and isinstance(cached_idle, bool):
         return bool(cached_idle)
-    idle = sv._compute_idle_from_log(log_path)
+    idle = sv.api.compute_idle_from_log(log_path)
     with manager._lock:
         session = manager._sessions.get(session_id)
         if session:
@@ -571,9 +571,9 @@ def get_messages_page(
     view: str = "conversation",
 ) -> dict[str, Any]:
     sv = _runtime(manager)
-    historical_row = sv._historical_session_row(session_id)
+    historical_row = sv.api.historical_session_row(session_id)
     if historical_row is not None:
-        historical_backend = normalize_agent_backend(
+        historical_backend = sv.api.normalize_agent_backend(
             historical_row.get("agent_backend", historical_row.get("backend")),
             default="codex",
         )
@@ -599,7 +599,7 @@ def get_messages_page(
                 "next_before": 0,
             }
         if init and offset == 0:
-            historical_events, new_off, has_older, next_before, diag = sv._pi_messages.read_pi_message_page(
+            historical_events, new_off, has_older, next_before, diag = sv.api.pi_messages.read_pi_message_page(
                 session_path,
                 limit=limit,
                 before=before,
@@ -607,7 +607,7 @@ def get_messages_page(
             meta_delta = {"thinking": 0, "tool": 0, "system": 0}
             flags = {"turn_start": False, "turn_end": False, "turn_aborted": False}
         else:
-            historical_events, new_off, meta_delta, flags, diag = sv._pi_messages.read_pi_message_delta(
+            historical_events, new_off, meta_delta, flags, diag = sv.api.pi_messages.read_pi_message_delta(
                 session_path,
                 offset=offset,
             )
@@ -659,7 +659,7 @@ def get_messages_page(
         next_before = 0
         if session.session_path is None and session.cwd:
             claimed = manager._claimed_pi_session_paths(exclude_sid=session_id)
-            discovered, discovered_source = sv._resolve_pi_session_path(
+            discovered, discovered_source = sv.api.resolve_pi_session_path(
                 thread_id=session.thread_id,
                 cwd=session.cwd,
                 start_ts=session.start_ts,
@@ -670,7 +670,7 @@ def get_messages_page(
                 session.session_path = discovered
                 if discovered_source in {"exact", "discovered"}:
                     session.pi_session_path_discovered = True
-                sv._patch_metadata_session_path(session.sock_path, discovered)
+                sv.api.patch_metadata_session_path(session.sock_path, discovered)
         if session.session_path is not None and session.session_path.exists():
             if init and offset == 0:
                 events, new_off, has_older, next_before, diag = ensure_pi_chat_index(
@@ -680,7 +680,7 @@ def get_messages_page(
                     before=before,
                 )
             else:
-                events, new_off, meta_delta, flags, diag = sv._pi_messages.read_pi_message_delta(
+                events, new_off, meta_delta, flags, diag = sv.api.pi_messages.read_pi_message_delta(
                     session.session_path,
                     offset=offset,
                 )
@@ -688,24 +688,24 @@ def get_messages_page(
                     append_chat_events(manager, session_id, events, new_off=new_off, latest_token=None)
             update_pi_last_chat_ts(manager, session_id, events, session_path=session.session_path)
         if session.pi_session_path_discovered and session.session_path is not None and session.cwd and not events:
-            sp_mtime = sv._safe_path_mtime(session.session_path)
-            if sp_mtime is not None and (sv.time.time() - sp_mtime) > 2.0:
+            sp_mtime = sv.api.safe_path_mtime(session.session_path)
+            if sp_mtime is not None and (sv.api.time.time() - sp_mtime) > 2.0:
                 old_sp = session.session_path
                 claimed = manager._claimed_pi_session_paths(exclude_sid=session_id)
                 claimed.add(old_sp)
-                newer_sp, newer_sp_source = sv._resolve_pi_session_path(
+                newer_sp, newer_sp_source = sv.api.resolve_pi_session_path(
                     thread_id=session.thread_id,
                     cwd=session.cwd,
                     start_ts=session.start_ts,
                     preferred=None,
                     exclude=claimed,
                 )
-                newer_sp_mtime = sv._safe_path_mtime(newer_sp) if newer_sp is not None else None
+                newer_sp_mtime = sv.api.safe_path_mtime(newer_sp) if newer_sp is not None else None
                 if newer_sp is not None and newer_sp != old_sp and (
                     newer_sp_source == "exact" or (newer_sp_mtime is not None and newer_sp_mtime > sp_mtime)
                 ):
                     session.session_path = newer_sp
-                    sv._patch_metadata_session_path(session.sock_path, newer_sp, force=True)
+                    sv.api.patch_metadata_session_path(session.sock_path, newer_sp, force=True)
                     manager._reset_log_caches(session, meta_log_off=0)
                     events, new_off, has_older, next_before, diag = ensure_pi_chat_index(
                         manager,
@@ -714,7 +714,7 @@ def get_messages_page(
                         before=0,
                     )
                     update_pi_last_chat_ts(manager, session_id, events, session_path=session.session_path)
-        pi_busy = sv._display_pi_busy(session, broker_busy=sv._state_busy_value(state))
+        pi_busy = sv.api.display_pi_busy(session, broker_busy=sv.api.state_busy_value(state))
         return {
             "thread_id": session.thread_id,
             "log_path": str(session.session_path) if session.session_path is not None else None,
@@ -763,16 +763,16 @@ def get_messages_page(
     else:
         has_older = False
         next_before = 0
-        objs, new_off = sv._read_jsonl_from_offset(session.log_path, offset)
-        events, meta_delta, flags, diag = sv._extract_chat_events(objs)
-        token_update = sv._extract_token_update(objs)
+        objs, new_off = sv.api.read_jsonl_from_offset(session.log_path, offset)
+        events, meta_delta, flags, diag = sv.api.extract_chat_events(objs)
+        token_update = sv.api.extract_token_update(objs)
         mark_log_delta(manager, session_id, objs=objs, new_off=new_off)
 
     session2 = manager.get_session(session_id)
     if token_update is not None and session2 is not None:
         session2.token = token_update
     idle_val = idle_from_log(manager, session_id)
-    busy_val = sv._state_busy_value(state) or (not bool(idle_val))
+    busy_val = sv.api.state_busy_value(state) or (not bool(idle_val))
     token_val = state_token if state_token is not None else token_update if isinstance(token_update, dict) else None
     return {
         "thread_id": session.thread_id,

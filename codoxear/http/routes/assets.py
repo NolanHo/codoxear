@@ -6,21 +6,21 @@ from ...runtime import ServerRuntime
 def handle_get(runtime: ServerRuntime, handler: Any, path: str, u: Any) -> bool:
     sv = runtime
     if path == "/favicon.ico":
-        resolved = sv._resolve_public_web_asset("favicon.ico")
+        resolved = sv.api.resolve_public_web_asset("favicon.ico")
         if resolved is not None:
             handler._send_path(resolved)
             return True
         handler._send_static("favicon.png")
         return True
     if path == "/manifest.webmanifest":
-        resolved = sv._resolve_public_web_asset("manifest.webmanifest")
+        resolved = sv.api.resolve_public_web_asset("manifest.webmanifest")
         if resolved is None:
             handler.send_error(404)
             return True
         handler._send_path(resolved)
         return True
     if path == "/service-worker.js":
-        resolved = sv._resolve_public_web_asset("service-worker.js")
+        resolved = sv.api.resolve_public_web_asset("service-worker.js")
         if resolved is None:
             handler.send_error(404)
             return True
@@ -33,32 +33,32 @@ def handle_get(runtime: ServerRuntime, handler: Any, path: str, u: Any) -> bool:
         handler._send_static("app.css")
         return True
     if path == "/favicon.png":
-        resolved = sv._resolve_public_web_asset("favicon.png")
+        resolved = sv.api.resolve_public_web_asset("favicon.png")
         if resolved is not None:
             handler._send_path(resolved)
             return True
         handler._send_static("favicon.png")
         return True
     if path == "/":
-        body, ctype = sv._read_web_index()
+        body, ctype = sv.api.read_web_index()
         handler._send_bytes(body.encode("utf-8"), ctype)
         return True
-    if path.startswith("/assets/") and not sv.USE_LEGACY_WEB:
-        served_dist_dir = sv._served_web_dist_dir()
+    if path.startswith("/assets/") and not sv.api.USE_LEGACY_WEB:
+        served_dist_dir = sv.api.served_web_dist_dir()
         if served_dist_dir is not None:
             candidate = (served_dist_dir / path.lstrip("/")).resolve()
-            if sv._is_path_within(served_dist_dir.resolve(), candidate) and candidate.is_file():
+            if sv.api.is_path_within(served_dist_dir.resolve(), candidate) and candidate.is_file():
                 handler._send_path(candidate)
                 return True
         handler.send_error(404)
         return True
     if (
-        not sv.USE_LEGACY_WEB
+        not sv.api.USE_LEGACY_WEB
         and path.startswith("/")
         and "/" not in path[1:]
         and not path.startswith("/api/")
     ):
-        resolved = sv._resolve_public_web_asset(path)
+        resolved = sv.api.resolve_public_web_asset(path)
         if resolved is not None:
             handler._send_path(resolved)
             return True

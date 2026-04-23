@@ -16,10 +16,10 @@ def is_path_within(root: Path, candidate: Path) -> bool:
 
 
 def static_asset_version(runtime: Any, *, static_dir: Path | None = None) -> str:
-    base_dir = runtime.STATIC_DIR if static_dir is None else static_dir
+    base_dir = runtime.api.STATIC_DIR if static_dir is None else static_dir
     base = base_dir.resolve()
     digest = hashlib.sha256()
-    for rel in runtime.STATIC_ASSET_VERSION_FILES:
+    for rel in runtime.api.STATIC_ASSET_VERSION_FILES:
         path = (base / rel).resolve()
         if not str(path).startswith(str(base)):
             raise ValueError(f"static asset escaped static dir: {path}")
@@ -37,12 +37,12 @@ def read_static_bytes(runtime: Any, path: Path) -> bytes:
     if path.suffix != ".html":
         return data
     replacements = {
-        runtime.STATIC_ASSET_VERSION_PLACEHOLDER.encode("ascii"): static_asset_version(
+        runtime.api.STATIC_ASSET_VERSION_PLACEHOLDER.encode("ascii"): static_asset_version(
             runtime,
             static_dir=path.parent,
         ).encode("ascii"),
-        runtime.STATIC_ATTACH_MAX_BYTES_PLACEHOLDER.encode("ascii"): str(
-            runtime.ATTACH_UPLOAD_MAX_BYTES
+        runtime.api.STATIC_ATTACH_MAX_BYTES_PLACEHOLDER.encode("ascii"): str(
+            runtime.api.ATTACH_UPLOAD_MAX_BYTES
         ).encode("ascii"),
     }
     for placeholder, value in replacements.items():
@@ -53,7 +53,7 @@ def read_static_bytes(runtime: Any, path: Path) -> bytes:
 
 def candidate_web_dist_dirs(runtime: Any) -> list[Path]:
     out: list[Path] = []
-    for candidate in (runtime.WEB_DIST_DIR, runtime.PACKAGED_WEB_DIST_DIR):
+    for candidate in (runtime.api.WEB_DIST_DIR, runtime.api.PACKAGED_WEB_DIST_DIR):
         if candidate not in out:
             out.append(candidate)
     return out
@@ -111,11 +111,11 @@ def asset_version_from_manifest(manifest: dict[str, object]) -> str:
 
 
 def rewrite_web_index_html(runtime: Any, data: str) -> str:
-    if not runtime.URL_PREFIX:
+    if not runtime.api.URL_PREFIX:
         return data
-    prefix_body = re.escape(runtime.URL_PREFIX.lstrip("/"))
+    prefix_body = re.escape(runtime.api.URL_PREFIX.lstrip("/"))
     pattern = rf'((?:href|src|content)=["\'])/(?!/|{prefix_body}/)'
-    return re.sub(pattern, rf"\1{runtime.URL_PREFIX}/", data)
+    return re.sub(pattern, rf"\1{runtime.api.URL_PREFIX}/", data)
 
 
 def read_web_index(runtime: Any) -> tuple[str, str]:
@@ -126,7 +126,7 @@ def read_web_index(runtime: Any) -> tuple[str, str]:
             runtime,
             dist_index.read_text(encoding="utf-8"),
         ), "text/html; charset=utf-8"
-    legacy_index = runtime.LEGACY_STATIC_DIR / "index.html"
+    legacy_index = runtime.api.LEGACY_STATIC_DIR / "index.html"
     return read_static_bytes(runtime, legacy_index).decode("utf-8"), "text/html; charset=utf-8"
 
 
@@ -137,8 +137,8 @@ def resolve_public_web_asset(runtime: Any, rel: str) -> Path | None:
         dist_candidate = (active_dist_dir / rel_path).resolve()
         if is_path_within(active_dist_dir.resolve(), dist_candidate) and dist_candidate.is_file():
             return dist_candidate
-    legacy_candidate = (runtime.LEGACY_STATIC_DIR / rel_path).resolve()
-    if is_path_within(runtime.LEGACY_STATIC_DIR.resolve(), legacy_candidate) and legacy_candidate.is_file():
+    legacy_candidate = (runtime.api.LEGACY_STATIC_DIR / rel_path).resolve()
+    if is_path_within(runtime.api.LEGACY_STATIC_DIR.resolve(), legacy_candidate) and legacy_candidate.is_file():
         return legacy_candidate
     return None
 

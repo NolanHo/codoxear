@@ -58,17 +58,17 @@ class SidebarStateFacade:
         name: Any,
     ) -> str:
         sv = self._rt()
-        alias = str(sv._clean_alias(name) or "")
+        alias = str(sv.api.clean_alias(name) or "")
         if not alias:
             return ""
-        session_id_clean = sv._clean_optional_text(session_id)
-        runtime_id_clean = sv._clean_optional_text(runtime_id)
+        session_id_clean = sv.api.clean_optional_text(session_id)
+        runtime_id_clean = sv.api.clean_optional_text(runtime_id)
         ref = None
         if session_id_clean is not None:
             ref = self.manager._page_state_ref_for_session_id(session_id_clean)
         if ref is None and runtime_id_clean is not None:
             ref = self.manager._page_state_ref_for_session_id(runtime_id_clean)
-        backend_clean = sv.normalize_agent_backend(backend, default="codex") if backend is not None else None
+        backend_clean = sv.api.normalize_agent_backend(backend, default="codex") if backend is not None else None
         target = ref
         if target is None and session_id_clean is not None and backend_clean is not None:
             target = (backend_clean, session_id_clean)
@@ -87,7 +87,7 @@ class SidebarStateFacade:
 
     def alias_set(self, session_id: str, name: str) -> str:
         sv = self._rt()
-        alias = str(sv._clean_alias(name) or "")
+        alias = str(sv.api.clean_alias(name) or "")
         ref = self.manager._page_state_ref_for_session_id(session_id)
         runtime_id = self.manager._runtime_session_id_for_identifier(session_id)
         if ref is None:
@@ -140,9 +140,9 @@ class SidebarStateFacade:
                 "focused": False,
             }
         return {
-            "priority_offset": sv._clean_priority_offset(entry.get("priority_offset")),
-            "snooze_until": sv._clean_snooze_until(entry.get("snooze_until")),
-            "dependency_session_id": sv._clean_dependency_session_id(entry.get("dependency_session_id")),
+            "priority_offset": sv.api.clean_priority_offset(entry.get("priority_offset")),
+            "snooze_until": sv.api.clean_snooze_until(entry.get("snooze_until")),
+            "dependency_session_id": sv.api.clean_dependency_session_id(entry.get("dependency_session_id")),
             "focused": bool(entry.get("focused")),
         }
 
@@ -155,9 +155,9 @@ class SidebarStateFacade:
         dependency_session_id: Any,
     ) -> dict[str, Any]:
         sv = self._rt()
-        offset = sv._clean_priority_offset(priority_offset)
-        snooze_until_clean = sv._clean_snooze_until(snooze_until)
-        dependency_clean = sv._clean_dependency_session_id(dependency_session_id)
+        offset = sv.api.clean_priority_offset(priority_offset)
+        snooze_until_clean = sv.api.clean_snooze_until(snooze_until)
+        dependency_clean = sv.api.clean_dependency_session_id(dependency_session_id)
         ref = self.manager._page_state_ref_for_session_id(session_id)
         if ref is None:
             raise KeyError("unknown session")
@@ -188,7 +188,7 @@ class SidebarStateFacade:
 
     def focus_set(self, session_id: str, focused: Any) -> bool:
         sv = self._rt()
-        focused_clean_raw = sv._clean_optional_bool(focused)
+        focused_clean_raw = sv.api.clean_optional_bool(focused)
         if focused_clean_raw is None:
             raise ValueError("focused must be a boolean")
         focused_clean = bool(focused_clean_raw)
@@ -202,9 +202,9 @@ class SidebarStateFacade:
                 next_entry["focused"] = True
             else:
                 next_entry.pop("focused", None)
-            next_entry["priority_offset"] = sv._clean_priority_offset(next_entry.get("priority_offset"))
-            next_entry["snooze_until"] = sv._clean_snooze_until(next_entry.get("snooze_until"))
-            next_entry["dependency_session_id"] = sv._clean_dependency_session_id(next_entry.get("dependency_session_id"))
+            next_entry["priority_offset"] = sv.api.clean_priority_offset(next_entry.get("priority_offset"))
+            next_entry["snooze_until"] = sv.api.clean_snooze_until(next_entry.get("snooze_until"))
+            next_entry["dependency_session_id"] = sv.api.clean_dependency_session_id(next_entry.get("dependency_session_id"))
             if (
                 not next_entry.get("focused")
                 and not next_entry.get("priority_offset")
@@ -234,10 +234,10 @@ class SidebarStateFacade:
         dependency_session_id: Any,
     ) -> tuple[str, dict[str, Any]]:
         sv = self._rt()
-        alias = str(sv._clean_alias(name) or "")
-        offset = sv._clean_priority_offset(priority_offset)
-        snooze_until_clean = sv._clean_snooze_until(snooze_until)
-        dependency_clean = sv._clean_dependency_session_id(dependency_session_id)
+        alias = str(sv.api.clean_alias(name) or "")
+        offset = sv.api.clean_priority_offset(priority_offset)
+        snooze_until_clean = sv.api.clean_snooze_until(snooze_until)
+        dependency_clean = sv.api.clean_dependency_session_id(dependency_session_id)
         ref = self.manager._page_state_ref_for_session_id(session_id)
         runtime_id = self.manager._runtime_session_id_for_identifier(session_id)
         if ref is None:
@@ -282,10 +282,10 @@ class SidebarStateFacade:
     ) -> set[str]:
         sv = self._rt()
         keys: set[str] = set()
-        session_clean = sv._clean_optional_text(session_id)
-        thread_clean = sv._clean_optional_text(thread_id)
-        resume_clean = sv._clean_optional_text(resume_session_id)
-        backend_clean = sv.normalize_agent_backend(backend, default="codex")
+        session_clean = sv.api.clean_optional_text(session_id)
+        thread_clean = sv.api.clean_optional_text(thread_id)
+        resume_clean = sv.api.clean_optional_text(resume_session_id)
+        backend_clean = sv.api.normalize_agent_backend(backend, default="codex")
         if session_clean:
             keys.add(session_clean)
             keys.add(f"session:{session_clean}")
@@ -293,7 +293,7 @@ class SidebarStateFacade:
             keys.add(f"thread:{backend_clean}:{thread_clean}")
         if resume_clean:
             keys.add(f"resume:{backend_clean}:{resume_clean}")
-            keys.add(sv._historical_session_id(backend_clean, resume_clean))
+            keys.add(sv.api.historical_session_id(backend_clean, resume_clean))
         return keys
 
     def session_is_hidden(

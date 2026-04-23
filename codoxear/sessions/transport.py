@@ -67,25 +67,25 @@ def sock_call(
 
 def kill_session_via_pids(manager: Any, session: Any) -> bool:
     sv = _runtime(manager)
-    group_alive = sv._process_group_alive(int(session.codex_pid))
-    broker_alive = sv._pid_alive(int(session.broker_pid))
+    group_alive = sv.api.process_group_alive(int(session.codex_pid))
+    broker_alive = sv.api.pid_alive(int(session.broker_pid))
     if not group_alive and not broker_alive:
-        sv._unlink_quiet(session.sock_path)
-        sv._unlink_quiet(session.sock_path.with_suffix(".json"))
+        sv.api.unlink_quiet(session.sock_path)
+        sv.api.unlink_quiet(session.sock_path.with_suffix(".json"))
         return True
     if group_alive and (
-        not sv._terminate_process_group(int(session.codex_pid), wait_seconds=1.0)
+        not sv.api.terminate_process_group(int(session.codex_pid), wait_seconds=1.0)
     ):
         return False
-    if sv._pid_alive(int(session.broker_pid)) and (
-        not sv._terminate_process(int(session.broker_pid), wait_seconds=1.0)
+    if sv.api.pid_alive(int(session.broker_pid)) and (
+        not sv.api.terminate_process(int(session.broker_pid), wait_seconds=1.0)
     ):
         return False
-    group_dead = not sv._process_group_alive(int(session.codex_pid))
-    broker_dead = not sv._pid_alive(int(session.broker_pid))
+    group_dead = not sv.api.process_group_alive(int(session.codex_pid))
+    broker_dead = not sv.api.pid_alive(int(session.broker_pid))
     if group_dead and broker_dead:
-        sv._unlink_quiet(session.sock_path)
-        sv._unlink_quiet(session.sock_path.with_suffix(".json"))
+        sv.api.unlink_quiet(session.sock_path)
+        sv.api.unlink_quiet(session.sock_path.with_suffix(".json"))
         return True
     return False
 
@@ -124,21 +124,21 @@ def get_state(manager: Any, session_id: str) -> dict[str, Any]:
     }
     try:
         resp = manager._sock_call(sock, {"cmd": "state"}, timeout_s=1.5)
-        sv._validated_session_state(resp)
+        sv.api.validated_session_state(resp)
     except Exception:
-        if not sv._pid_alive(session.broker_pid) and not sv._pid_alive(session.codex_pid):
+        if not sv.api.pid_alive(session.broker_pid) and not sv.api.pid_alive(session.codex_pid):
             with manager._lock:
                 manager._sessions.pop(runtime_id, None)
             manager._clear_deleted_session_state(runtime_id)
-            sv._unlink_quiet(sock)
-            sv._unlink_quiet(sock.with_suffix(".json"))
+            sv.api.unlink_quiet(sock)
+            sv.api.unlink_quiet(sock.with_suffix(".json"))
             raise KeyError("unknown session")
         return cached_state
     with manager._lock:
         session2 = manager._sessions.get(runtime_id)
         if session2:
-            session2.busy = sv._state_busy_value(resp)
-            session2.queue_len = sv._state_queue_len_value(resp)
+            session2.busy = sv.api.state_busy_value(resp)
+            session2.queue_len = sv.api.state_queue_len_value(resp)
             if "token" in resp:
                 tok = resp.get("token")
                 if isinstance(tok, dict):
@@ -160,11 +160,11 @@ def get_tail(manager: Any, session_id: str) -> str:
     try:
         resp = manager._sock_call(sock, {"cmd": "tail"}, timeout_s=1.5)
     except Exception:
-        if not sv._pid_alive(session.broker_pid) and not sv._pid_alive(session.codex_pid):
+        if not sv.api.pid_alive(session.broker_pid) and not sv.api.pid_alive(session.codex_pid):
             with manager._lock:
                 manager._sessions.pop(runtime_id, None)
-            sv._unlink_quiet(sock)
-            sv._unlink_quiet(sock.with_suffix(".json"))
+            sv.api.unlink_quiet(sock)
+            sv.api.unlink_quiet(sock.with_suffix(".json"))
             raise KeyError("unknown session")
         raise
     if "tail" not in resp:
@@ -188,11 +188,11 @@ def inject_keys(manager: Any, session_id: str, seq: str) -> dict[str, Any]:
     try:
         resp = manager._sock_call(sock, {"cmd": "keys", "seq": seq}, timeout_s=2.0)
     except Exception:
-        if not sv._pid_alive(session.broker_pid) and not sv._pid_alive(session.codex_pid):
+        if not sv.api.pid_alive(session.broker_pid) and not sv.api.pid_alive(session.codex_pid):
             with manager._lock:
                 manager._sessions.pop(runtime_id, None)
-            sv._unlink_quiet(sock)
-            sv._unlink_quiet(sock.with_suffix(".json"))
+            sv.api.unlink_quiet(sock)
+            sv.api.unlink_quiet(sock.with_suffix(".json"))
             raise KeyError("unknown session")
         raise
     err = resp.get("error")

@@ -179,18 +179,18 @@ def refresh_session_meta(manager: Any, session_id: str, *, strict: bool = True) 
         supports_live_ui = meta.get("supports_live_ui") if isinstance(meta.get("supports_live_ui"), bool) else None
         ui_protocol_version_raw = meta.get("ui_protocol_version")
         ui_protocol_version = ui_protocol_version_raw if type(ui_protocol_version_raw) is int else None
-        log_path = sv._metadata_log_path(meta=meta, backend=backend, sock=sock)
+        log_path = sv.api.metadata_log_path(meta=meta, backend=backend, sock=sock)
         session_path_discovered = False
         if backend == "pi":
             preferred_session_path: Path | None = session.session_path
             if strict or ("session_path" in meta):
-                preferred_session_path = sv._metadata_session_path(meta=meta, backend=backend, sock=sock)
+                preferred_session_path = sv.api.metadata_session_path(meta=meta, backend=backend, sock=sock)
             claimed: set[Path] | None = (
                 manager._claimed_pi_session_paths(exclude_sid=session_id)
                 if preferred_session_path is None
                 else None
             )
-            session_path, session_path_source = sv._resolve_pi_session_path(
+            session_path, session_path_source = sv.api.resolve_pi_session_path(
                 thread_id=thread_id,
                 cwd=str(meta.get("cwd") or session.cwd),
                 start_ts=float(meta.get("start_ts") or session.start_ts),
@@ -199,15 +199,15 @@ def refresh_session_meta(manager: Any, session_id: str, *, strict: bool = True) 
             )
             if session_path is not None and session_path_source in {"exact", "discovered"}:
                 session_path_discovered = True
-                sv._patch_metadata_session_path(
+                sv.api.patch_metadata_session_path(
                     sock,
                     session_path,
                     force=preferred_session_path is not None and preferred_session_path != session_path,
                 )
         else:
-            session_path = sv._metadata_session_path(meta=meta, backend=backend, sock=sock)
+            session_path = sv.api.metadata_session_path(meta=meta, backend=backend, sock=sock)
         if log_path is not None and log_path.exists():
-            thread_id, log_path = sv._coerce_main_thread_log(thread_id=thread_id, log_path=log_path)
+            thread_id, log_path = sv.api.coerce_main_thread_log(thread_id=thread_id, log_path=log_path)
 
         cwd_raw = meta.get("cwd")
         if not isinstance(cwd_raw, str) or (not cwd_raw.strip()):
@@ -222,7 +222,7 @@ def refresh_session_meta(manager: Any, session_id: str, *, strict: bool = True) 
             meta=meta,
             log_path=log_path,
         )
-        service_tier = sv._normalize_requested_service_tier(meta.get("service_tier"))
+        service_tier = sv.api.normalize_requested_service_tier(meta.get("service_tier"))
     except Exception as exc:
         if strict:
             raise
@@ -248,7 +248,7 @@ def refresh_session_meta(manager: Any, session_id: str, *, strict: bool = True) 
     if pi_session_switched and old_session_path is not None:
         claimed = manager._claimed_pi_session_paths(exclude_sid=session_id)
         claimed.add(old_session_path)
-        new_sp, new_sp_source = sv._resolve_pi_session_path(
+        new_sp, new_sp_source = sv.api.resolve_pi_session_path(
             thread_id=thread_id,
             cwd=cwd,
             start_ts=start_ts,
@@ -259,7 +259,7 @@ def refresh_session_meta(manager: Any, session_id: str, *, strict: bool = True) 
             session_path = new_sp
             if new_sp_source in {"exact", "discovered"}:
                 session_path_discovered = True
-            sv._patch_metadata_session_path(sock, new_sp, force=True)
+            sv.api.patch_metadata_session_path(sock, new_sp, force=True)
 
     with manager._lock:
         current = manager._sessions.get(session_id)
@@ -325,21 +325,21 @@ def list_sessions(manager: Any) -> list[dict[str, Any]]:
             cfg0 = manager._harness.get(s.session_id)
             h_enabled = bool(cfg0.get("enabled")) if isinstance(cfg0, dict) else False
             h_cooldown_minutes = (
-                sv._clean_harness_cooldown_minutes(cfg0.get("cooldown_minutes"))
+                sv.api.clean_harness_cooldown_minutes(cfg0.get("cooldown_minutes"))
                 if isinstance(cfg0, dict)
-                else sv.HARNESS_DEFAULT_IDLE_MINUTES
+                else sv.api.HARNESS_DEFAULT_IDLE_MINUTES
             )
             h_remaining_injections = (
-                sv._clean_harness_remaining_injections(cfg0.get("remaining_injections"), allow_zero=True)
+                sv.api.clean_harness_remaining_injections(cfg0.get("remaining_injections"), allow_zero=True)
                 if isinstance(cfg0, dict)
-                else sv.HARNESS_DEFAULT_MAX_INJECTIONS
+                else sv.api.HARNESS_DEFAULT_MAX_INJECTIONS
             )
             log_exists = bool(s.log_path is not None and s.log_path.exists())
             if log_exists and s.log_path is not None and (
                 s.model_provider is None or s.model is None or s.reasoning_effort is None
             ):
                 try:
-                    log_provider, log_model, log_effort = sv._read_run_settings_from_log(
+                    log_provider, log_model, log_effort = sv.api.read_run_settings_from_log(
                         s.log_path, agent_backend=s.agent_backend
                     )
                 except (FileNotFoundError, ValueError):
@@ -351,12 +351,12 @@ def list_sessions(manager: Any) -> list[dict[str, Any]]:
                 if s.reasoning_effort is None:
                     s.reasoning_effort = log_effort
             if s.last_chat_ts is None and log_exists and s.log_path is not None and (not s.last_chat_history_scanned):
-                conv_ts = sv._last_conversation_ts_from_tail(s.log_path)
+                conv_ts = sv.api.last_conversation_ts_from_tail(s.log_path)
                 s.last_chat_history_scanned = True
                 if isinstance(conv_ts, (int, float)):
                     s.last_chat_ts = float(conv_ts)
             if s.backend == "pi" and s.session_path is not None and s.session_path.exists():
-                activity_ts = sv._session_file_activity_ts(s.session_path)
+                activity_ts = sv.api.session_file_activity_ts(s.session_path)
                 scanned_activity_ts = s.pi_attention_scan_activity_ts
                 should_refresh_attention = bool(
                     activity_ts is not None
@@ -366,7 +366,7 @@ def list_sessions(manager: Any) -> list[dict[str, Any]]:
                     )
                 )
                 if should_refresh_attention or (s.last_chat_ts is None and (not s.last_chat_history_scanned)):
-                    conv_ts = sv._last_attention_ts_from_pi_tail(s.session_path)
+                    conv_ts = sv.api.last_attention_ts_from_pi_tail(s.session_path)
                     s.last_chat_history_scanned = True
                     s.pi_attention_scan_activity_ts = activity_ts
                     if isinstance(conv_ts, (int, float)):
@@ -375,9 +375,9 @@ def list_sessions(manager: Any) -> list[dict[str, Any]]:
                             if s.last_chat_ts is None
                             else max(float(s.last_chat_ts), float(conv_ts))
                         )
-            updated_ts = sv._display_updated_ts(s)
-            canonical_cwd = sv._canonical_session_cwd(s.cwd)
-            cwd_recent = sv._clean_recent_cwd(canonical_cwd)
+            updated_ts = sv.api.display_updated_ts(s)
+            canonical_cwd = sv.api.canonical_session_cwd(s.cwd)
+            cwd_recent = sv.api.clean_recent_cwd(canonical_cwd)
             recent_map = getattr(manager, "_recent_cwds", None)
             if cwd_recent is not None:
                 if not isinstance(recent_map, dict):
@@ -401,9 +401,9 @@ def list_sessions(manager: Any) -> list[dict[str, Any]]:
                     meta0 = meta_map.get(ref)
             if not isinstance(meta0, dict):
                 meta0 = {}
-            priority_offset = sv._clean_priority_offset(meta0.get("priority_offset"))
-            snooze_until = sv._clean_snooze_until(meta0.get("snooze_until"))
-            dependency_session_id = sv._clean_dependency_session_id(meta0.get("dependency_session_id"))
+            priority_offset = sv.api.clean_priority_offset(meta0.get("priority_offset"))
+            snooze_until = sv.api.clean_snooze_until(meta0.get("snooze_until"))
+            dependency_session_id = sv.api.clean_dependency_session_id(meta0.get("dependency_session_id"))
             active_durable_ids = {
                 (_clean_optional_text(v.thread_id) or _clean_optional_text(v.session_id) or "")
                 for v in manager._sessions.values()
@@ -421,19 +421,19 @@ def list_sessions(manager: Any) -> list[dict[str, Any]]:
                     meta0.pop("snooze_until", None)
                     sidebar_dirty = True
             elapsed_s = max(0.0, now_ts - updated_ts)
-            time_priority = sv._priority_from_elapsed_seconds(elapsed_s)
-            base_priority = sv._clip01(time_priority + priority_offset)
+            time_priority = sv.api.priority_from_elapsed_seconds(elapsed_s)
+            base_priority = sv.api.clip01(time_priority + priority_offset)
             blocked = dependency_session_id is not None
             snoozed = snooze_until is not None and snooze_until > now_ts
             final_priority = 0.0 if (snoozed or blocked) else base_priority
-            cwd_path = sv._safe_expanduser(Path(canonical_cwd or s.cwd))
+            cwd_path = sv.api.safe_expanduser(Path(canonical_cwd or s.cwd))
             if not cwd_path.is_absolute():
                 cwd_path = cwd_path.resolve()
-            git_branch = sv._current_git_branch(cwd_path)
+            git_branch = sv.api.current_git_branch(cwd_path)
             if s.title is None:
                 try:
                     if s.backend == "pi" and s.session_path is not None and s.session_path.exists():
-                        title = sv._pi_session_name_from_session_file(s.session_path)
+                        title = sv.api.pi_session_name_from_session_file(s.session_path)
                         if title:
                             s.title = title
                 except Exception:
@@ -442,9 +442,9 @@ def list_sessions(manager: Any) -> list[dict[str, Any]]:
                 try:
                     preview = ""
                     if s.backend == "pi" and s.session_path is not None and s.session_path.exists():
-                        preview = sv._first_user_message_preview_from_pi_session(s.session_path)
+                        preview = sv.api.first_user_message_preview_from_pi_session(s.session_path)
                     elif log_exists and s.log_path is not None:
-                        preview = sv._first_user_message_preview_from_log(s.log_path)
+                        preview = sv.api.first_user_message_preview_from_log(s.log_path)
                     if preview:
                         s.first_user_message = preview
                 except Exception:
@@ -490,7 +490,7 @@ def list_sessions(manager: Any) -> list[dict[str, Any]]:
                     "git_branch": git_branch,
                     "model_provider": s.model_provider,
                     "preferred_auth_method": s.preferred_auth_method,
-                    "provider_choice": sv._provider_choice_for_backend(
+                    "provider_choice": sv.api.provider_choice_for_backend(
                         backend=s.backend,
                         model_provider=s.model_provider,
                         preferred_auth_method=s.preferred_auth_method,
@@ -518,7 +518,7 @@ def list_sessions(manager: Any) -> list[dict[str, Any]]:
                 continue
             if (backend, durable_session_id) in live_resume_keys:
                 continue
-            session_row_id = durable_session_id if record.pending_startup else sv._historical_session_id(backend, durable_session_id)
+            session_row_id = durable_session_id if record.pending_startup else sv.api.historical_session_id(backend, durable_session_id)
             if hidden_sessions.intersection(
                 manager._hidden_session_keys(
                     session_row_id,
@@ -531,9 +531,9 @@ def list_sessions(manager: Any) -> list[dict[str, Any]]:
             meta0 = meta_map.get(ref) if isinstance(meta_map, dict) else None
             if not isinstance(meta0, dict):
                 meta0 = {}
-            priority_offset = sv._clean_priority_offset(meta0.get("priority_offset"))
-            snooze_until = sv._clean_snooze_until(meta0.get("snooze_until"))
-            dependency_session_id = sv._clean_dependency_session_id(meta0.get("dependency_session_id"))
+            priority_offset = sv.api.clean_priority_offset(meta0.get("priority_offset"))
+            snooze_until = sv.api.clean_snooze_until(meta0.get("snooze_until"))
+            dependency_session_id = sv.api.clean_dependency_session_id(meta0.get("dependency_session_id"))
             if dependency_session_id is not None and dependency_session_id not in active_durable_ids:
                 dependency_session_id = None
                 if isinstance(meta_map, dict):
@@ -546,8 +546,8 @@ def list_sessions(manager: Any) -> list[dict[str, Any]]:
                     sidebar_dirty = True
             updated_ts = float(record.updated_at or record.created_at or now_ts)
             elapsed_s = max(0.0, now_ts - updated_ts)
-            time_priority = sv._priority_from_elapsed_seconds(elapsed_s)
-            base_priority = sv._clip01(time_priority + priority_offset)
+            time_priority = sv.api.priority_from_elapsed_seconds(elapsed_s)
+            base_priority = sv.api.clip01(time_priority + priority_offset)
             blocked = dependency_session_id is not None
             snoozed = snooze_until is not None and snooze_until > now_ts
             final_priority = 0.0 if (snoozed or blocked) else base_priority
@@ -555,8 +555,8 @@ def list_sessions(manager: Any) -> list[dict[str, Any]]:
             queue_rows = manager._queues.get(ref, []) if isinstance(manager._queues, dict) else []
             file_rows = manager._files.get(ref, []) if isinstance(manager._files, dict) else []
             cwd = record.cwd or ""
-            history_cwd_path: Path | None = sv._safe_expanduser(Path(cwd)).resolve() if cwd else None
-            git_branch = sv._current_git_branch(history_cwd_path) if history_cwd_path is not None else None
+            history_cwd_path: Path | None = sv.api.safe_expanduser(Path(cwd)).resolve() if cwd else None
+            git_branch = sv.api.current_git_branch(history_cwd_path) if history_cwd_path is not None else None
             items.append(
                 {
                     "session_id": session_row_id,
@@ -579,8 +579,8 @@ def list_sessions(manager: Any) -> list[dict[str, Any]]:
                     "tools": 0,
                     "system": 0,
                     "harness_enabled": False,
-                    "harness_cooldown_minutes": sv.HARNESS_DEFAULT_IDLE_MINUTES,
-                    "harness_remaining_injections": sv.HARNESS_DEFAULT_MAX_INJECTIONS,
+                    "harness_cooldown_minutes": sv.api.HARNESS_DEFAULT_IDLE_MINUTES,
+                    "harness_remaining_injections": sv.api.HARNESS_DEFAULT_MAX_INJECTIONS,
                     "alias": alias,
                     "title": record.title or "",
                     "first_user_message": record.first_user_message or "",
@@ -611,7 +611,7 @@ def list_sessions(manager: Any) -> list[dict[str, Any]]:
             )
 
         if bool(getattr(manager, "_include_historical_sessions", False)):
-            for hist in sv._historical_sidebar_items(live_resume_keys=live_resume_keys, now_ts=now_ts):
+            for hist in sv.api.historical_sidebar_items(live_resume_keys=live_resume_keys, now_ts=now_ts):
                 if hidden_sessions.intersection(
                     manager._hidden_session_keys(
                         hist.get("session_id"),
@@ -628,13 +628,13 @@ def list_sessions(manager: Any) -> list[dict[str, Any]]:
         sid = str(it["session_id"])
         agent_backend = normalize_agent_backend(it.get("agent_backend"), default="codex")
         if it.get("historical"):
-            out.append(sv._normalize_session_cwd_row(dict(it)))
+            out.append(sv.api.normalize_session_cwd_row(dict(it)))
             continue
         log_exists = bool(it.get("log_exists"))
         state_busy = bool(it.get("state_busy"))
         if not log_exists and it.get("backend") == "pi":
             s_obj = manager._sessions.get(sid)
-            busy_out = sv._display_pi_busy(s_obj, broker_busy=state_busy) if s_obj is not None else state_busy
+            busy_out = sv.api.display_pi_busy(s_obj, broker_busy=state_busy) if s_obj is not None else state_busy
         elif not log_exists:
             busy_out = False
         else:
@@ -647,7 +647,7 @@ def list_sessions(manager: Any) -> list[dict[str, Any]]:
         it2.pop("log_exists", None)
         it2.pop("state_busy", None)
         it2["busy"] = bool(busy_out)
-        out.append(sv._normalize_session_cwd_row(it2))
+        out.append(sv.api.normalize_session_cwd_row(it2))
     for item in out:
         if item.get("busy") or int(item.get("queue_len", 0)) <= 0:
             continue
@@ -668,7 +668,7 @@ def list_sessions(manager: Any) -> list[dict[str, Any]]:
     deduped: list[dict[str, Any]] = []
     seen_row_keys: set[str] = set()
     for item in out:
-        row_key = sv._session_row_dedupe_key(item)
+        row_key = sv.api.session_row_dedupe_key(item)
         if row_key in seen_row_keys:
             continue
         seen_row_keys.add(row_key)
@@ -684,10 +684,10 @@ def discover_existing(
         now = time.time()
         with manager._lock:
             last = float(manager._last_discover_ts)
-        if (now - last) < sv.DISCOVER_MIN_INTERVAL_SECONDS:
+        if (now - last) < sv.api.DISCOVER_MIN_INTERVAL_SECONDS:
             return
-    sv.SOCK_DIR.mkdir(parents=True, exist_ok=True)
-    for sock in sorted(sv.SOCK_DIR.glob("*.sock")):
+    sv.api.SOCK_DIR.mkdir(parents=True, exist_ok=True)
+    for sock in sorted(sv.api.SOCK_DIR.glob("*.sock")):
         if skip_invalid_sidecars and manager._sidecar_is_quarantined(sock):
             continue
         session_id = sock.stem
@@ -718,7 +718,7 @@ def discover_existing(
             supports_live_ui = meta.get("supports_live_ui") if isinstance(meta.get("supports_live_ui"), bool) else None
             ui_protocol_version_raw = meta.get("ui_protocol_version")
             ui_protocol_version = ui_protocol_version_raw if type(ui_protocol_version_raw) is int else None
-            if backend == "pi" and transport is None and (owned or sv._supports_web_control(meta)):
+            if backend == "pi" and transport is None and (owned or sv.api.supports_web_control(meta)):
                 transport = "pi-rpc"
             if backend == "pi" and transport == "pi-rpc" and supports_live_ui is None:
                 supports_live_ui = True
@@ -743,14 +743,14 @@ def discover_existing(
                     if not isinstance(raw_path, str) or not raw_path.strip():
                         continue
                     candidate = Path(raw_path)
-                    if sv.infer_agent_backend_from_log_path(candidate) != "pi":
+                    if sv.api.infer_agent_backend_from_log_path(candidate) != "pi":
                         continue
                     inferred_pi_session_path = candidate
                     break
-                if inferred_pi_session_path is None and sv._pid_alive(codex_pid):
+                if inferred_pi_session_path is None and sv.api.pid_alive(codex_pid):
                     ignored_paths = manager._claimed_pi_session_paths(exclude_sid=session_id)
-                    inferred_pi_session_path = sv._proc_find_open_rollout_log(
-                        proc_root=sv.PROC_ROOT,
+                    inferred_pi_session_path = sv.api.proc_find_open_rollout_log(
+                        proc_root=sv.api.PROC_ROOT,
                         root_pid=codex_pid,
                         agent_backend="pi",
                         cwd=cwd,
@@ -760,13 +760,13 @@ def discover_existing(
                 backend = "pi"
                 agent_backend = "pi"
                 session_path_discovered = True
-                if transport is None and (owned or sv._supports_web_control(meta)):
+                if transport is None and (owned or sv.api.supports_web_control(meta)):
                     transport = "pi-rpc"
                 if supports_live_ui is None and transport == "pi-rpc":
                     supports_live_ui = True
                 if ui_protocol_version is None and supports_live_ui is True:
                     ui_protocol_version = 1
-                sv._patch_metadata_pi_binding(sock, inferred_pi_session_path)
+                sv.api.patch_metadata_pi_binding(sock, inferred_pi_session_path)
 
             if backend == "pi":
                 if transport != "pi-rpc":
@@ -775,17 +775,17 @@ def discover_existing(
                     continue
                 if not isinstance(ui_protocol_version, int) or ui_protocol_version < 1:
                     continue
-                if (not owned) and (not sv._supports_web_control(meta)):
+                if (not owned) and (not sv.api.supports_web_control(meta)):
                     continue
 
-            log_path = sv._metadata_log_path(meta=meta, backend=backend, sock=sock)
+            log_path = sv.api.metadata_log_path(meta=meta, backend=backend, sock=sock)
             if inferred_pi_session_path is not None:
                 session_path = inferred_pi_session_path
             else:
                 preferred_session_path: Path | None = None
                 if backend == "pi":
                     try:
-                        preferred_session_path = sv._metadata_session_path(meta=meta, backend=backend, sock=sock)
+                        preferred_session_path = sv.api.metadata_session_path(meta=meta, backend=backend, sock=sock)
                     except ValueError as exc:
                         if "missing session_path" not in str(exc):
                             raise
@@ -794,7 +794,7 @@ def discover_existing(
                         if preferred_session_path is None
                         else None
                     )
-                    session_path, session_path_source = sv._resolve_pi_session_path(
+                    session_path, session_path_source = sv.api.resolve_pi_session_path(
                         thread_id=thread_id,
                         cwd=cwd,
                         start_ts=start_ts,
@@ -803,15 +803,15 @@ def discover_existing(
                     )
                     if session_path is not None and session_path_source in {"exact", "discovered"}:
                         session_path_discovered = True
-                        sv._patch_metadata_session_path(
+                        sv.api.patch_metadata_session_path(
                             sock,
                             session_path,
                             force=preferred_session_path is not None and preferred_session_path != session_path,
                         )
                 else:
-                    session_path = sv._metadata_session_path(meta=meta, backend=backend, sock=sock)
+                    session_path = sv.api.metadata_session_path(meta=meta, backend=backend, sock=sock)
             if log_path is not None and log_path.exists():
-                thread_id, log_path = sv._coerce_main_thread_log(thread_id=thread_id, log_path=log_path)
+                thread_id, log_path = sv.api.coerce_main_thread_log(thread_id=thread_id, log_path=log_path)
             else:
                 log_path = None
         except Exception as exc:
@@ -821,24 +821,24 @@ def discover_existing(
             raise
         manager._clear_sidecar_quarantine(sock)
 
-        if (log_path is None) and (not sv._pid_alive(codex_pid)) and (not sv._pid_alive(broker_pid)):
+        if (log_path is None) and (not sv.api.pid_alive(codex_pid)) and (not sv.api.pid_alive(broker_pid)):
             manager._unhide_session(session_id)
-            sv._unlink_quiet(sock)
-            sv._unlink_quiet(meta_path)
+            sv.api.unlink_quiet(sock)
+            sv.api.unlink_quiet(meta_path)
             continue
         resume_session_id = _clean_optional_text(meta.get("resume_session_id"))
         if manager._session_is_hidden(session_id, thread_id, resume_session_id, agent_backend):
-            if (not sv._pid_alive(codex_pid)) and (not sv._pid_alive(broker_pid)):
+            if (not sv.api.pid_alive(codex_pid)) and (not sv.api.pid_alive(broker_pid)):
                 manager._unhide_session(session_id)
-                sv._unlink_quiet(sock)
-                sv._unlink_quiet(meta_path)
+                sv.api.unlink_quiet(sock)
+                sv.api.unlink_quiet(meta_path)
             continue
 
         try:
             model_provider, preferred_auth_method, model, reasoning_effort = manager._session_run_settings(
                 backend=backend, meta=meta, log_path=log_path
             )
-            service_tier = sv._normalize_requested_service_tier(meta.get("service_tier"))
+            service_tier = sv.api.normalize_requested_service_tier(meta.get("service_tier"))
         except Exception as exc:
             if skip_invalid_sidecars:
                 manager._quarantine_sidecar(sock, exc, log=False)
@@ -847,15 +847,15 @@ def discover_existing(
         try:
             resp = manager._sock_call(sock, {"cmd": "state"}, timeout_s=0.5)
         except Exception as exc:
-            if sv._probe_failure_safe_to_prune(broker_pid=broker_pid, codex_pid=codex_pid):
-                sv._unlink_quiet(sock)
-                sv._unlink_quiet(meta_path)
+            if sv.api.probe_failure_safe_to_prune(broker_pid=broker_pid, codex_pid=codex_pid):
+                sv.api.unlink_quiet(sock)
+                sv.api.unlink_quiet(meta_path)
                 continue
-            if (not sv._sock_error_definitely_stale(exc)) and (not skip_invalid_sidecars):
-                sv.sys.stderr.write(
+            if (not sv.api.sock_error_definitely_stale(exc)) and (not skip_invalid_sidecars):
+                sv.api.sys.stderr.write(
                     f"error: discover: sock state call failed for {sock}: {type(exc).__name__}: {exc}\n"
                 )
-                sv.sys.stderr.flush()
+                sv.api.sys.stderr.flush()
             resp = {"busy": False, "queue_len": 0, "token": None}
         queue_len_raw = resp.get("queue_len") if isinstance(resp, dict) else None
         if (
@@ -871,7 +871,7 @@ def discover_existing(
 
         meta_log_off = int(log_path.stat().st_size) if log_path is not None else 0
         queue_len = int(queue_len_raw) if type(queue_len_raw) is int and int(queue_len_raw) >= 0 else 0
-        session = sv.Session(
+        session = sv.api.Session(
             session_id=session_id,
             thread_id=thread_id,
             broker_pid=broker_pid,
@@ -887,7 +887,7 @@ def discover_existing(
             log_path=log_path,
             sock_path=sock,
             session_path=session_path,
-            busy=sv._state_busy_value(resp),
+            busy=sv.api.state_busy_value(resp),
             queue_len=queue_len,
             token=resp.get("token") if isinstance(resp.get("token"), (dict, type(None))) else None,
             meta_thinking=0,
@@ -950,7 +950,7 @@ def refresh_session_state(
     sv = manager._runtime
     try:
         resp = manager._sock_call(sock_path, {"cmd": "state"}, timeout_s=timeout_s)
-        sv._validated_session_state(resp)
+        sv.api.validated_session_state(resp)
     except Exception as exc:
         return False, exc
     publish_sessions = False
@@ -960,8 +960,8 @@ def refresh_session_state(
     with manager._lock:
         session = manager._sessions.get(session_id)
         if session:
-            next_busy = sv._state_busy_value(resp)
-            next_queue_len = sv._state_queue_len_value(resp)
+            next_busy = sv.api.state_busy_value(resp)
+            next_queue_len = sv.api.state_queue_len_value(resp)
             next_token = resp.get("token") if isinstance(resp.get("token"), dict) else session.token
             durable_session_id = manager._durable_session_id_for_session(session)
             publish_sessions = session.busy != next_busy
@@ -973,15 +973,15 @@ def refresh_session_state(
                 session.token = resp.get("token")
     if durable_session_id is not None:
         if publish_sessions:
-            sv._publish_sessions_invalidate(reason="session_state_changed")
+            sv.api.publish_sessions_invalidate(reason="session_state_changed")
         if publish_live:
-            sv._publish_session_live_invalidate(
+            sv.api.publish_session_live_invalidate(
                 durable_session_id,
                 runtime_id=session_id,
                 reason="session_state_changed",
             )
         if publish_workspace:
-            sv._publish_session_workspace_invalidate(
+            sv.api.publish_session_workspace_invalidate(
                 durable_session_id,
                 runtime_id=session_id,
                 reason="session_state_changed",
@@ -1001,7 +1001,7 @@ def prune_dead_sessions(manager: Any) -> None:
         ok, _ = refresh_session_state(manager, sid, session.sock_path, timeout_s=0.4)
         if ok:
             continue
-        if not sv._probe_failure_safe_to_prune(
+        if not sv.api.probe_failure_safe_to_prune(
             broker_pid=session.broker_pid, codex_pid=session.codex_pid
         ):
             continue
@@ -1016,16 +1016,16 @@ def prune_dead_sessions(manager: Any) -> None:
                 dead_events.append((manager._durable_session_id_for_session(session), sid))
     for sid, sock in dead:
         manager._clear_deleted_session_state(sid)
-        sv._unlink_quiet(sock)
-        sv._unlink_quiet(sock.with_suffix(".json"))
-    sv._publish_sessions_invalidate(reason="session_removed")
+        sv.api.unlink_quiet(sock)
+        sv.api.unlink_quiet(sock.with_suffix(".json"))
+    sv.api.publish_sessions_invalidate(reason="session_removed")
     for durable_session_id, runtime_id in dead_events:
-        sv._publish_session_live_invalidate(
+        sv.api.publish_session_live_invalidate(
             durable_session_id,
             runtime_id=runtime_id,
             reason="session_removed",
         )
-        sv._publish_session_workspace_invalidate(
+        sv.api.publish_session_workspace_invalidate(
             durable_session_id,
             runtime_id=runtime_id,
             reason="session_removed",

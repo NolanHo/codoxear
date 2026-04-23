@@ -68,9 +68,9 @@ def session_live_payload(
     manager.refresh_session_meta(session_id, strict=False)
     s = manager.get_session(session_id)
     if not s:
-        historical_row = sv._historical_session_row(session_id)
+        historical_row = sv.api.historical_session_row(session_id)
         if historical_row is None:
-            historical_row = sv._listed_session_row(manager, session_id)
+            historical_row = sv.api.listed_session_row(manager, session_id)
         if historical_row is None:
             raise KeyError("unknown session")
         try:
@@ -78,7 +78,7 @@ def session_live_payload(
                 session_id,
                 offset=max(0, int(offset)),
                 init=(offset <= 0),
-                limit=sv.SESSION_HISTORY_PAGE_SIZE,
+                limit=sv.api.SESSION_HISTORY_PAGE_SIZE,
                 before=0,
             )
         except KeyError:
@@ -89,7 +89,7 @@ def session_live_payload(
                 "next_before": 0,
             }
         durable_session_id = str(historical_row.get("session_id") or session_id)
-        bridge_session_key = sv._clean_optional_text(historical_row.get("resume_session_id")) or durable_session_id
+        bridge_session_key = sv.api.clean_optional_text(historical_row.get("resume_session_id")) or durable_session_id
         bridge_events, next_bridge_offset = manager._bridge_events_since(
             bridge_session_key,
             offset=bridge_offset,
@@ -117,13 +117,13 @@ def session_live_payload(
         session_id,
         offset=max(0, int(offset)),
         init=(offset <= 0),
-        limit=sv.SESSION_HISTORY_PAGE_SIZE,
+        limit=sv.api.SESSION_HISTORY_PAGE_SIZE,
         before=0,
     )
     state = manager.get_state(session_id)
-    busy, _broker_busy = sv._display_session_busy(manager, session_id, s, state)
+    busy, _broker_busy = sv.api.display_session_busy(manager, session_id, s, state)
     state_token = state.get("token") if isinstance(state, dict) else None
-    token_val = sv._resolved_session_token(
+    token_val = sv.api.resolved_session_token(
         s,
         state_token if isinstance(state_token, dict) else None,
     )
@@ -133,12 +133,12 @@ def session_live_payload(
         live_requests = requests_payload.get("requests")
         if isinstance(live_requests, list):
             requests = [item for item in live_requests if isinstance(item, dict)]
-    current_requests_version = sv._ui_requests_version(requests)
+    current_requests_version = sv.api.ui_requests_version(requests)
     events = page.get("events")
     merged_events = events if isinstance(events, list) else []
     next_live_offset = max(0, int(live_offset))
     next_bridge_offset = max(0, int(bridge_offset))
-    if sv._session_supports_live_pi_ui(s):
+    if sv.api.session_supports_live_pi_ui(s):
         streamed_payload = pi_live_messages_payload(runtime, manager, s, offset=live_offset)
         next_live_offset = int(streamed_payload.get("offset", max(0, int(live_offset))) or max(0, int(live_offset)))
         merged_events = merge_pi_live_message_events(
@@ -147,14 +147,14 @@ def session_live_payload(
             [item for item in (streamed_payload.get("events") or []) if isinstance(item, dict)],
         )
     bridge_events, next_bridge_offset = manager._bridge_events_since(
-        sv._durable_session_id_for_live_session(s),
+        sv.api.durable_session_id_for_live_session(s),
         offset=bridge_offset,
     )
     if bridge_events:
         merged_events = [*merged_events, *bridge_events]
     payload: dict[str, Any] = {
         "ok": True,
-        "session_id": sv._durable_session_id_for_live_session(s),
+        "session_id": sv.api.durable_session_id_for_live_session(s),
         "runtime_id": s.session_id,
         "offset": int(page.get("offset", max(0, int(offset))) or 0),
         "live_offset": next_live_offset,
@@ -165,8 +165,8 @@ def session_live_payload(
         "events": merged_events,
         "requests_version": current_requests_version,
         "token": token_val,
-        "context_usage": sv._session_context_usage_payload(s, token_val),
-        "turn_timing": sv._session_turn_timing_payload(s, merged_events, busy=bool(busy)),
+        "context_usage": sv.api.session_context_usage_payload(s, token_val),
+        "turn_timing": sv.api.session_turn_timing_payload(s, merged_events, busy=bool(busy)),
         "transport_state": s.bridge_transport_state,
         "transport_error": s.bridge_transport_error,
     }
@@ -178,7 +178,7 @@ def session_live_payload(
 
 def pi_live_messages_payload(runtime: ServerRuntime, manager: Any, session: Any, *, offset: int = 0) -> dict[str, Any]:
     sv = runtime
-    if not sv._session_supports_live_pi_ui(session):
+    if not sv.api.session_supports_live_pi_ui(session):
         return {"offset": max(0, int(offset)), "events": []}
     try:
         payload = manager._sock_call(

@@ -20,11 +20,11 @@ def handle_get(runtime: ServerRuntime, handler: Any, path: str, u: Any) -> bool:
             handler,
             200,
             {
-                "recent_cwds": runtime.MANAGER.recent_cwds(),
-                "cwd_groups": runtime.MANAGER.cwd_groups_get(),
+                "recent_cwds": runtime.manager.recent_cwds(),
+                "cwd_groups": runtime.manager.cwd_groups_get(),
                 "new_session_defaults": _session_creation.read_new_session_defaults(
                     runtime,
-                    page_state_db=getattr(runtime.MANAGER, "_page_state_db", None),
+                    page_state_db=getattr(runtime.manager, "_page_state_db", None),
                     refresh_pi_models=refresh_pi_models,
                 ),
                 "tmux_available": runtime.api.tmux_available(),
@@ -41,9 +41,9 @@ def handle_get(runtime: ServerRuntime, handler: Any, path: str, u: Any) -> bool:
         group_key_q = qs.get("group_key")
         group_key = group_key_q[0] if group_key_q else None
         offset = max(0, int(qs.get("offset", ["0"])[0] or "0"))
-        limit_default = runtime.SESSION_LIST_PAGE_SIZE
+        limit_default = runtime.api.SESSION_LIST_PAGE_SIZE
         if group_key is not None:
-            limit_default = runtime.SESSION_LIST_GROUP_PAGE_SIZE
+            limit_default = runtime.api.SESSION_LIST_GROUP_PAGE_SIZE
         limit = max(
             1,
             min(200, int(qs.get("limit", [str(limit_default)])[0] or str(limit_default))),
@@ -54,13 +54,13 @@ def handle_get(runtime: ServerRuntime, handler: Any, path: str, u: Any) -> bool:
             min(
                 20,
                 int(
-                    qs.get("group_limit", [str(runtime.SESSION_LIST_RECENT_GROUP_LIMIT)])[0]
-                    or str(runtime.SESSION_LIST_RECENT_GROUP_LIMIT)
+                    qs.get("group_limit", [str(runtime.api.SESSION_LIST_RECENT_GROUP_LIMIT)])[0]
+                    or str(runtime.api.SESSION_LIST_RECENT_GROUP_LIMIT)
                 ),
             ),
         )
         payload = runtime.api.session_list_payload(
-            runtime.MANAGER.list_sessions(),
+            runtime.manager.list_sessions(),
             group_key=group_key,
             offset=offset,
             limit=limit,
@@ -82,9 +82,9 @@ def handle_get(runtime: ServerRuntime, handler: Any, path: str, u: Any) -> bool:
         offset_raw = qs.get("offset", ["0"])[0]
         limit_raw = qs.get("limit", ["20"])[0]
         try:
-            agent_backend = runtime.normalize_agent_backend(
+            agent_backend = runtime.api.normalize_agent_backend(
                 qs.get("agent_backend", [""])[0],
-                default=runtime.DEFAULT_AGENT_BACKEND,
+                default=runtime.api.DEFAULT_AGENT_BACKEND,
             )
         except ValueError as exc:
             runtime.api.json_response(handler, 400, {"error": str(exc)})
@@ -127,7 +127,7 @@ def handle_get(runtime: ServerRuntime, handler: Any, path: str, u: Any) -> bool:
         remaining = max(0, len(all_rows) - (offset + len(rows)))
         for row in rows:
             sid = row.get("session_id")
-            alias = runtime.MANAGER.alias_get(sid) if isinstance(sid, str) and sid else ""
+            alias = runtime.manager.alias_get(sid) if isinstance(sid, str) and sid else ""
             preview = ""
             log_path_raw = row.get("log_path")
             session_path_raw = row.get("session_path")

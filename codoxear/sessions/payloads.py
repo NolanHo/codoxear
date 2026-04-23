@@ -60,10 +60,10 @@ def service(runtime: ServerRuntime, manager: Any | None = None) -> SessionPayloa
 
 def session_details_payload(runtime: ServerRuntime, manager: Any, session_id: str) -> dict[str, Any]:
     sv = runtime
-    row = sv._listed_session_row(manager, session_id)
+    row = sv.api.listed_session_row(manager, session_id)
     if row is not None:
         return {"ok": True, "session": _session_listing.normalize_session_cwd_row(sv, row)}
-    historical_row = sv._historical_session_row(session_id)
+    historical_row = sv.api.historical_session_row(session_id)
     if historical_row is not None:
         return {
             "ok": True,
@@ -81,9 +81,9 @@ def session_context_usage_payload(runtime: ServerRuntime, s: Any, token_val: dic
     if s.backend != "pi":
         return None
     context_window = None
-    model_provider, _preferred_auth_method, model, _reasoning_effort = sv._resolved_session_run_settings(s)
+    model_provider, _preferred_auth_method, model, _reasoning_effort = sv.api.resolved_session_run_settings(s)
     if model_provider is not None and model is not None:
-        context_window = sv._pi_model_context_window(model_provider, model)
+        context_window = sv.api.pi_model_context_window(model_provider, model)
     if (not isinstance(context_window, int) or context_window <= 0) and isinstance(token_val, dict):
         token_context_window = token_val.get("context_window")
         if isinstance(token_context_window, int) and token_context_window > 0:
@@ -112,7 +112,7 @@ def _turn_timing_from_events(
     sv = runtime
     return cast(
         tuple[float | None, float | None],
-        sv._pi_messages.latest_turn_bounds_from_events(events),
+        sv.api.pi_messages.latest_turn_bounds_from_events(events),
     )
 
 
@@ -128,7 +128,7 @@ def session_turn_timing_payload(
     start_ts, last_event_ts = _turn_timing_from_events(runtime, events)
     if start_ts is None and s.backend == "pi" and s.session_path is not None and s.session_path.exists():
         scan_bytes = int(getattr(s, "chat_index_scan_bytes", 0) or 0)
-        start_ts, last_event_ts = sv._pi_messages.read_pi_latest_turn_bounds(
+        start_ts, last_event_ts = sv.api.pi_messages.read_pi_latest_turn_bounds(
             s.session_path,
             initial_scan_bytes=max(256 * 1024, scan_bytes),
             max_scan_bytes=64 * 1024 * 1024,
@@ -146,28 +146,28 @@ def session_turn_timing_payload(
 
 def session_diagnostics_payload(runtime: ServerRuntime, manager: Any, session_id: str, s: Any, state: dict[str, Any]) -> dict[str, Any]:
     sv = runtime
-    state = sv._validated_session_state(state)
+    state = sv.api.validated_session_state(state)
     st_token = state.get("token")
-    token_val = sv._resolved_session_token(
+    token_val = sv.api.resolved_session_token(
         s,
         st_token if isinstance(st_token, dict) else None,
     )
-    model_provider, preferred_auth_method, model, reasoning_effort = sv._resolved_session_run_settings(s)
+    model_provider, preferred_auth_method, model, reasoning_effort = sv.api.resolved_session_run_settings(s)
     service_tier = s.service_tier
     sidebar_meta = manager.sidebar_meta_get(session_id)
-    cwd_path = sv._safe_expanduser(Path(s.cwd))
+    cwd_path = sv.api.safe_expanduser(Path(s.cwd))
     if not cwd_path.is_absolute():
         cwd_path = cwd_path.resolve()
-    git_branch = sv._current_git_branch(cwd_path)
-    updated_ts = sv._display_updated_ts(s)
+    git_branch = sv.api.current_git_branch(cwd_path)
+    updated_ts = sv.api.display_updated_ts(s)
     elapsed_s = max(0.0, time.time() - updated_ts)
-    time_priority = sv._priority_from_elapsed_seconds(elapsed_s)
-    base_priority = sv._clip01(time_priority + float(sidebar_meta["priority_offset"]))
+    time_priority = sv.api.priority_from_elapsed_seconds(elapsed_s)
+    base_priority = sv.api.clip01(time_priority + float(sidebar_meta["priority_offset"]))
     blocked = sidebar_meta["dependency_session_id"] is not None
     snoozed = sidebar_meta["snooze_until"] is not None and float(sidebar_meta["snooze_until"]) > time.time()
     final_priority = 0.0 if (snoozed or blocked) else base_priority
-    busy, broker_busy = sv._display_session_busy(manager, session_id, s, state)
-    durable_session_id = sv._durable_session_id_for_live_session(s)
+    busy, broker_busy = sv.api.display_session_busy(manager, session_id, s, state)
+    durable_session_id = sv.api.durable_session_id_for_live_session(s)
     turn_timing = session_turn_timing_payload(
         runtime,
         s,
@@ -186,7 +186,7 @@ def session_diagnostics_payload(runtime: ServerRuntime, manager: Any, session_id
         "start_ts": float(s.start_ts),
         "updated_ts": updated_ts,
         "log_path": str(s.log_path) if s.log_path is not None else None,
-        "session_file_path": sv._display_source_path(s),
+        "session_file_path": sv.api.display_source_path(s),
         "broker_pid": int(s.broker_pid),
         "codex_pid": int(s.codex_pid),
         "busy": bool(busy),
@@ -197,7 +197,7 @@ def session_diagnostics_payload(runtime: ServerRuntime, manager: Any, session_id
         "turn_timing": turn_timing,
         "model_provider": model_provider,
         "preferred_auth_method": preferred_auth_method,
-        "provider_choice": sv._provider_choice_for_backend(
+        "provider_choice": sv.api.provider_choice_for_backend(
             backend=s.backend,
             model_provider=model_provider,
             preferred_auth_method=preferred_auth_method,
@@ -214,7 +214,7 @@ def session_diagnostics_payload(runtime: ServerRuntime, manager: Any, session_id
         "priority_offset": sidebar_meta["priority_offset"],
         "snooze_until": sidebar_meta["snooze_until"],
         "dependency_session_id": sidebar_meta["dependency_session_id"],
-        "todo_snapshot": sv._todo_snapshot_payload_for_session(s),
+        "todo_snapshot": sv.api.todo_snapshot_payload_for_session(s),
     }
 
 
@@ -224,9 +224,9 @@ def session_workspace_payload(runtime: ServerRuntime, manager: Any, session_id: 
     manager.refresh_session_meta(session_id, strict=False)
     s = manager.get_session(session_id)
     if not s:
-        historical_row = sv._historical_session_row(session_id)
+        historical_row = sv.api.historical_session_row(session_id)
         if historical_row is None:
-            historical_row = sv._listed_session_row(manager, session_id)
+            historical_row = sv.api.listed_session_row(manager, session_id)
         if historical_row is None:
             raise KeyError("unknown session")
         return {
@@ -239,7 +239,7 @@ def session_workspace_payload(runtime: ServerRuntime, manager: Any, session_id: 
     diagnostics = session_diagnostics_payload(runtime, manager, session_id, s, manager.get_state(session_id))
     return {
         "ok": True,
-        "session_id": sv._durable_session_id_for_live_session(s),
+        "session_id": sv.api.durable_session_id_for_live_session(s),
         "runtime_id": s.session_id,
         "diagnostics": diagnostics,
         "queue": {"items": manager.queue_list(session_id)},
