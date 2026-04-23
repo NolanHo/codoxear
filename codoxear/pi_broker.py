@@ -824,44 +824,50 @@ class PiBroker:
                 pass
             self._stop.wait(1.0)
 
+    def _mark_prompt_pending_locked(self, st: State) -> str | None:
+        streaming_behavior: str | None = None
+        if self.state is st:
+            if st.busy:
+                streaming_behavior = "steer"
+            st.busy = True
+            st.prompt_sent_at = time.monotonic()
+            st.last_empty_output_event_key = None
+        return streaming_behavior
+
+    def _clear_prompt_pending_locked(self, st: State) -> None:
+        if self.state is st:
+            st.busy = False
+            st.prompt_sent_at = 0.0
+
+    def _apply_prompt_result_locked(self, st: State, result: dict[str, Any]) -> None:
+        if self.state is st:
+            st.last_turn_id = _extract_turn_id(result) or st.last_turn_id
+            st.busy = True
+            st.prompt_sent_at = time.monotonic()
+
     def _submit_terminal_prompt(self, text: str) -> dict[str, Any]:
         st = self._get_state_snapshot()
         if not st:
             raise RuntimeError("no state")
-        streaming_behavior: str | None = None
         with self._lock:
-            if self.state is st:
-                if st.busy:
-                    streaming_behavior = "steer"
-                st.busy = True
-                st.prompt_sent_at = time.monotonic()
-                st.last_empty_output_event_key = None
+            streaming_behavior = self._mark_prompt_pending_locked(st)
         try:
             result = st.rpc.prompt(text, streaming_behavior=streaming_behavior)
         except Exception:
             with self._lock:
-                if self.state is st:
-                    st.busy = False
-                    st.prompt_sent_at = 0.0
+                self._clear_prompt_pending_locked(st)
             raise
         if not isinstance(result, dict):
             with self._lock:
-                if self.state is st:
-                    st.busy = False
-                    st.prompt_sent_at = 0.0
+                self._clear_prompt_pending_locked(st)
             raise RuntimeError("invalid prompt response")
         error = result.get("error")
         if isinstance(error, str) and error:
             with self._lock:
-                if self.state is st:
-                    st.busy = False
-                    st.prompt_sent_at = 0.0
+                self._clear_prompt_pending_locked(st)
             raise RuntimeError(error)
         with self._lock:
-            if self.state is st:
-                st.last_turn_id = _extract_turn_id(result) or st.last_turn_id
-                st.busy = True
-                st.prompt_sent_at = time.monotonic()
+            self._apply_prompt_result_locked(st, result)
         return result
 
     def _interrupt_terminal_turn(self) -> dict[str, Any]:
@@ -1181,7 +1187,7 @@ class PiBroker:
         except Exception:
             pass
 
-    def run(self, *, foreground: bool = True) -> int:
+    def _init_runtime_state(self) -> tuple[Path | None, State]:
         SOCK_DIR.mkdir(parents=True, exist_ok=True)
         PI_SESSION_DIR.mkdir(parents=True, exist_ok=True)
         token = uuid.uuid4().hex
@@ -1190,10 +1196,12 @@ class PiBroker:
             session_path = PI_SESSION_DIR / f"{token}.jsonl"
         sock_path = SOCK_DIR / f"{token}.sock"
         rpc = self.rpc or PiRpcClient(
-            cwd=self.cwd, session_path=session_path, agent_args=self.agent_args
+            cwd=self.cwd,
+            session_path=session_path,
+            agent_args=self.agent_args,
         )
         rpc_pid = getattr(rpc, "pid", None)
-        self.state = State(
+        state = State(
             session_id=None,
             codex_pid=rpc_pid or os.getpid(),
             sock_path=sock_path,
@@ -1201,48 +1209,55 @@ class PiBroker:
             start_ts=time.time(),
             rpc=rpc,
         )
+        self.state = state
+        return session_path, state
+
+    def _start_runtime_threads(self, *, foreground: bool) -> threading.Thread:
         self._write_meta()
-        threading.Thread(
-            target=self._bg_sync_loop, name="pi-bg-sync", daemon=True
-        ).start()
+        threading.Thread(target=self._bg_sync_loop, name="pi-bg-sync", daemon=True).start()
         self._previous_sigint_handler = None
         if foreground and sys.stdin.isatty() and sys.stdout.isatty():
             self._previous_sigint_handler = signal.getsignal(signal.SIGINT)
             signal.signal(signal.SIGINT, self._handle_sigint)
-            threading.Thread(
-                target=self._stdin_loop, name="pi-stdin", daemon=True
-            ).start()
-            threading.Thread(
-                target=self._stdout_loop, name="pi-stdout", daemon=True
-            ).start()
-        sock_thread = threading.Thread(
-            target=self._sock_server, name="pi-sock-server", daemon=True
-        )
+            threading.Thread(target=self._stdin_loop, name="pi-stdin", daemon=True).start()
+            threading.Thread(target=self._stdout_loop, name="pi-stdout", daemon=True).start()
+        sock_thread = threading.Thread(target=self._sock_server, name="pi-sock-server", daemon=True)
         sock_thread.start()
+        return sock_thread
+
+    def _wait_runtime_exit(self, *, rpc: Any, sock_thread: threading.Thread) -> int:
         proc = getattr(rpc, "_proc", None)
+        if proc is None or not hasattr(proc, "poll"):
+            sock_thread.join()
+            return 0
         exit_code = 0
-        try:
-            if proc is None or not hasattr(proc, "poll"):
-                sock_thread.join()
-            else:
-                while not self._stop.is_set():
-                    code = proc.poll()
-                    if code is not None:
-                        exit_code = int(code)
-                        self._stop.set()
-                        break
-                    if not sock_thread.is_alive():
-                        self._stop.set()
-                        break
-                    time.sleep(0.1)
-        finally:
-            self._stop.set()
-            sock_thread.join(timeout=1.0)
-            if self._previous_sigint_handler is not None:
-                signal.signal(signal.SIGINT, self._previous_sigint_handler)
-                self._previous_sigint_handler = None
-            self._close()
+        while not self._stop.is_set():
+            code = proc.poll()
+            if code is not None:
+                exit_code = int(code)
+                self._stop.set()
+                break
+            if not sock_thread.is_alive():
+                self._stop.set()
+                break
+            time.sleep(0.1)
         return exit_code
+
+    def _finalize_runtime(self, *, sock_thread: threading.Thread) -> None:
+        self._stop.set()
+        sock_thread.join(timeout=1.0)
+        if self._previous_sigint_handler is not None:
+            signal.signal(signal.SIGINT, self._previous_sigint_handler)
+            self._previous_sigint_handler = None
+        self._close()
+
+    def run(self, *, foreground: bool = True) -> int:
+        _session_path, state = self._init_runtime_state()
+        sock_thread = self._start_runtime_threads(foreground=foreground)
+        try:
+            return self._wait_runtime_exit(rpc=state.rpc, sock_thread=sock_thread)
+        finally:
+            self._finalize_runtime(sock_thread=sock_thread)
 
 
 def main() -> None:
