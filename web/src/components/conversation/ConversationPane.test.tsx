@@ -961,6 +961,46 @@ describe("ConversationPane", () => {
     expect(kinds).toEqual(["tool", "pi_event", "tool_result", "reasoning"]);
   });
 
+  it("orders conversation rows by parsed event timestamp before grouping", () => {
+    const sessionsStore = createStaticStore(
+      { items: [], activeSessionId: "sess-row-order", loading: false, newSessionDefaults: null },
+      { refresh: () => Promise.resolve(), select: () => undefined },
+    );
+    const messagesStore = createStaticStore(
+      {
+        bySessionId: {
+          "sess-row-order": [
+            { role: "assistant", text: "late assistant", ts: 1761177605 },
+            { type: "pi_event", summary: "Turn finished without assistant output", text: "no assistant output", ts: 1761177604 },
+            { role: "assistant", text: "early assistant", ts: 1761177603 },
+          ],
+        },
+        offsetsBySessionId: { "sess-row-order": 3 },
+        loading: false,
+      },
+      { loadInitial: () => Promise.resolve(), poll: () => Promise.resolve() },
+    );
+
+    root = document.createElement("div");
+    document.body.appendChild(root);
+    render(
+      <AppProviders sessionsStore={sessionsStore as any} messagesStore={messagesStore as any}>
+        <ConversationPane />
+      </AppProviders>,
+      root,
+    );
+
+    const rowKinds = Array.from(root.querySelectorAll<HTMLElement>(".messageRow")).map((node) => {
+      if (node.classList.contains("machine_trace")) return "machine_trace";
+      if (node.classList.contains("assistant")) return "assistant";
+      return "other";
+    });
+
+    expect(rowKinds).toEqual(["assistant", "machine_trace", "assistant"]);
+    expect(root.textContent).toContain("early assistant");
+    expect(root.textContent).toContain("late assistant");
+  });
+
   it("marks the latest unfinished tool token as running while the session is busy", () => {
     const sessionsStore = createStaticStore(
       { items: [{ session_id: "sess-trace-running", busy: true }], activeSessionId: "sess-trace-running", loading: false, newSessionDefaults: null },

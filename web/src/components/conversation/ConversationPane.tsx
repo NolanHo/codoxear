@@ -646,7 +646,7 @@ function eventTimestampSeconds(event: MessageEvent): number | null {
   return null;
 }
 
-function sortMachineTraceEvents(events: MessageEvent[]): MessageEvent[] {
+function sortEventsByTimestamp<T extends MessageEvent>(events: T[]): T[] {
   if (events.length <= 1) {
     return events;
   }
@@ -666,6 +666,10 @@ function sortMachineTraceEvents(events: MessageEvent[]): MessageEvent[] {
     return a.index - b.index;
   });
   return rows.map((row) => row.event);
+}
+
+function sortMachineTraceEvents(events: MessageEvent[]): MessageEvent[] {
+  return sortEventsByTimestamp(events);
 }
 
 function formatMessageTimestamp(ts: number): string {
@@ -1597,7 +1601,7 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
   const pendingMessages = activeSessionId ? pendingBySessionId[activeSessionId] ?? [] : [];
   const hasLocalConversationState = persistedMessages.length > 0 || pendingMessages.length > 0;
   const rawMessages = [...persistedMessages, ...pendingMessages];
-  const messages = rawMessages.filter(shouldRenderInMainConversation);
+  const messages = sortEventsByTimestamp(rawMessages.filter(shouldRenderInMainConversation));
   const rows = messages.reduce<Array<{
     key: string;
     kind: string;
@@ -1612,7 +1616,7 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
     const traceKind = compactTraceKind(message);
     if (traceKind) {
       const last = out[out.length - 1];
-      const ts = typeof message.ts === "number" ? message.ts : null;
+      const ts = eventTimestampSeconds(message);
       if (last && last.kind === "machine_trace") {
         last.events.push(message);
         last.lastTs = ts;
@@ -1634,7 +1638,7 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
 
     const prevKind = index > 0 ? eventKind(messages[index - 1]) : null;
     const rowKey = messageRowKey(message, kind, index);
-    const ts = typeof message.ts === "number" ? message.ts : null;
+    const ts = eventTimestampSeconds(message);
     out.push({
       key: rowKey,
       kind,
