@@ -300,6 +300,57 @@ describe("ConversationPane", () => {
     expect(root.textContent).toContain("upstream returned zero visible tokens");
   });
 
+  it("renders turn-terminal pi events with a dedicated trace variant", () => {
+    const sessionsStore = createStaticStore(
+      { items: [], activeSessionId: "sess-turn-terminal", loading: false, newSessionDefaults: null },
+      { refresh: () => Promise.resolve(), select: () => undefined },
+    );
+    const messagesStore = createStaticStore(
+      {
+        bySessionId: {
+          "sess-turn-terminal": [
+            { role: "assistant", text: "before", ts: 100 },
+            {
+              type: "pi_event",
+              summary: "Turn finished without assistant output",
+              text: "Pi ended the turn after tool or reasoning activity without a final assistant message.",
+              details: {
+                source_event: "turn.completed",
+              },
+              is_error: true,
+              ts: 110,
+            },
+            { role: "assistant", text: "after", ts: 120 },
+          ],
+        },
+        offsetsBySessionId: { "sess-turn-terminal": 3 },
+        loading: false,
+      },
+      { loadInitial: () => Promise.resolve(), poll: () => Promise.resolve() },
+    );
+
+    root = document.createElement("div");
+    document.body.appendChild(root);
+    render(
+      <AppProviders sessionsStore={sessionsStore as any} messagesStore={messagesStore as any}>
+        <ConversationPane />
+      </AppProviders>,
+      root,
+    );
+
+    const token = root.querySelector(".machineTraceToken.pi_event.isTurnTerminal.isAlert[data-variant='turn_terminal']") as HTMLButtonElement | null;
+    expect(token).not.toBeNull();
+
+    act(() => {
+      token?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+
+    expect(root.textContent).toContain("Turn finished without assistant output");
+    expect(root.textContent).toContain("without a final assistant message");
+    expect(root.textContent).toContain("source_event");
+    expect(root.textContent).toContain("turn.completed");
+  });
+
   it("renders retry pi events as highlighted alert trace icons with expandable detail", () => {
     const sessionsStore = createStaticStore(
       { items: [], activeSessionId: "sess-retry", loading: false, newSessionDefaults: null },

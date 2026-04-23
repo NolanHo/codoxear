@@ -36,6 +36,7 @@ const MAIN_TIMELINE_KINDS = new Set([
 
 const MACHINE_TRACE_KINDS = new Set(["reasoning", "tool", "tool_result", "todo_snapshot"]);
 const PI_EVENT_COMPACT_VARIANTS = {
+  turn_terminal: "turn_terminal",
   empty_output: "empty_output",
   retry_error: "retry_error",
   compaction: "compaction",
@@ -552,7 +553,10 @@ function piEventCompactVariant(event: MessageEvent): (typeof PI_EVENT_COMPACT_VA
   if (!summary) {
     return null;
   }
-  if (summary.includes("without assistant output") || summary.includes("assistant returned empty message")) {
+  if (summary.includes("turn finished without assistant output")) {
+    return PI_EVENT_COMPACT_VARIANTS.turn_terminal;
+  }
+  if (summary.includes("assistant returned empty message")) {
     return PI_EVENT_COMPACT_VARIANTS.empty_output;
   }
   if (summary.includes("retry") || summary.includes("rate limit") || summary.includes("429")) {
@@ -1026,6 +1030,16 @@ function EmptyOutputIcon() {
   );
 }
 
+function TurnTerminalIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M7 5v14" />
+      <path d="M7 6h10l-3 3 3 3H7" />
+      <path d="M4 20h16" />
+    </svg>
+  );
+}
+
 function CompactionIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -1227,7 +1241,8 @@ function CompactMachineTrace({ events, options, isBusy }: { events: MessageEvent
                 isSelected && "isSelected",
                 isRunning && "isRunning",
                 event.is_error && "isError",
-                (piEventVariant === PI_EVENT_COMPACT_VARIANTS.empty_output || piEventVariant === PI_EVENT_COMPACT_VARIANTS.retry_error) && "isAlert",
+                (piEventVariant === PI_EVENT_COMPACT_VARIANTS.turn_terminal || piEventVariant === PI_EVENT_COMPACT_VARIANTS.empty_output || piEventVariant === PI_EVENT_COMPACT_VARIANTS.retry_error) && "isAlert",
+                piEventVariant === PI_EVENT_COMPACT_VARIANTS.turn_terminal && "isTurnTerminal",
                 piEventVariant === PI_EVENT_COMPACT_VARIANTS.compaction && "isCompaction",
               )}
               aria-expanded={isSelected ? "true" : "false"}
@@ -1246,7 +1261,9 @@ function CompactMachineTrace({ events, options, isBusy }: { events: MessageEvent
                         : kind === "pi_event"
                           ? piEventVariant === PI_EVENT_COMPACT_VARIANTS.compaction
                             ? <CompactionIcon />
-                            : <EmptyOutputIcon />
+                            : piEventVariant === PI_EVENT_COMPACT_VARIANTS.turn_terminal
+                              ? <TurnTerminalIcon />
+                              : <EmptyOutputIcon />
                           : <ReasoningIcon />}
               </span>
               {isRunning ? <span className="machineTraceTokenPulse" aria-hidden="true" /> : null}
@@ -1260,7 +1277,8 @@ function CompactMachineTrace({ events, options, isBusy }: { events: MessageEvent
             "machineTraceDetail",
             selectedKind,
             selectedEvent.is_error && "isError",
-            (selectedVariant === PI_EVENT_COMPACT_VARIANTS.empty_output || selectedVariant === PI_EVENT_COMPACT_VARIANTS.retry_error) && "isAlert",
+            (selectedVariant === PI_EVENT_COMPACT_VARIANTS.turn_terminal || selectedVariant === PI_EVENT_COMPACT_VARIANTS.empty_output || selectedVariant === PI_EVENT_COMPACT_VARIANTS.retry_error) && "isAlert",
+            selectedVariant === PI_EVENT_COMPACT_VARIANTS.turn_terminal && "isTurnTerminal",
             selectedVariant === PI_EVENT_COMPACT_VARIANTS.compaction && "isCompaction",
           )}
           data-testid="machine-trace-detail"
