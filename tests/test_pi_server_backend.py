@@ -20,13 +20,13 @@ from codoxear.server import (
     Session,
     SessionManager,
     _json_response,
-    _parse_create_session_request,
     _provider_choice_for_backend,
     _session_details_payload,
     _session_live_payload,
     _session_workspace_payload,
     _ui_requests_version,
 )
+from codoxear.sessions import creation as _session_creation
 
 from tests.pi_fixtures import pi_persisted_session_file, pi_runtime_session_file
 
@@ -59,6 +59,10 @@ def _write_jsonl(path: Path, entries: list[dict[str, object]]) -> None:
     path.write_text(
         "".join(json.dumps(entry) + "\n" for entry in entries), encoding="utf-8"
     )
+
+
+def _parse_create_session_request(obj: dict[str, object]) -> dict[str, object]:
+    return _session_creation.parse_create_session_request(server.RUNTIME, obj)
 
 
 def _make_manager() -> SessionManager:
@@ -4165,7 +4169,7 @@ class TestPiBackendRouting(unittest.TestCase):
             patch("codoxear.server._require_auth", return_value=True),
             patch("codoxear.server.MANAGER") as manager,
             patch(
-                "codoxear.server._read_new_session_defaults",
+                "codoxear.sessions.creation.read_new_session_defaults",
                 return_value={"default_backend": "pi"},
             ),
             patch("codoxear.server._tmux_available", return_value=True),

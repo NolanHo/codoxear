@@ -64,7 +64,6 @@ from .pi_log import read_pi_run_settings as _read_pi_run_settings
 from .pi_log import read_pi_session_id as _read_pi_session_id
 from .runtime import ServerRuntime, build_server_runtime
 from .sessions import background as _session_background
-from .sessions import creation as _session_creation
 from .sessions import lifecycle as _session_lifecycle
 from .sessions import listing as _session_listing
 from .sessions import live_payloads as _session_live_payloads
@@ -2246,38 +2245,6 @@ def _normalize_requested_backend(raw: Any) -> str:
     if backend not in {"codex", "pi"}:
         raise ValueError("backend must be one of codex, pi")
     return backend
-
-
-def _parse_create_session_request(obj: dict[str, Any]) -> dict[str, Any]:
-    return _session_creation.parse_create_session_request(RUNTIME, obj)
-
-
-def _read_codex_launch_defaults() -> dict[str, Any]:
-    return _session_creation.read_codex_launch_defaults(RUNTIME)
-
-
-def _read_pi_launch_defaults(
-    *,
-    page_state_db: PageStateDB | None = None,
-    force_refresh: bool = False,
-) -> dict[str, Any]:
-    return _session_creation.read_pi_launch_defaults(
-        RUNTIME,
-        page_state_db=page_state_db,
-        force_refresh=force_refresh,
-    )
-
-
-def _read_new_session_defaults(
-    *,
-    page_state_db: PageStateDB | None = None,
-    refresh_pi_models: bool = False,
-) -> dict[str, Any]:
-    return _session_creation.read_new_session_defaults(
-        RUNTIME,
-        page_state_db=page_state_db,
-        refresh_pi_models=refresh_pi_models,
-    )
 
 
 def _provider_choice_for_settings(

@@ -4,7 +4,9 @@ import time
 import urllib.parse
 from pathlib import Path
 from typing import Any
+
 from ...runtime import ServerRuntime
+from ...sessions import creation as _session_creation
 
 
 def handle_get(runtime: ServerRuntime, handler: Any, path: str, u: Any) -> bool:
@@ -21,7 +23,8 @@ def handle_get(runtime: ServerRuntime, handler: Any, path: str, u: Any) -> bool:
             {
                 "recent_cwds": sv.MANAGER.recent_cwds(),
                 "cwd_groups": sv.MANAGER.cwd_groups_get(),
-                "new_session_defaults": sv._read_new_session_defaults(
+                "new_session_defaults": _session_creation.read_new_session_defaults(
+                    sv,
                     page_state_db=getattr(sv.MANAGER, "_page_state_db", None),
                     refresh_pi_models=refresh_pi_models,
                 ),

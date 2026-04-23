@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 from typing import Any
+
 from ...runtime import ServerRuntime
+from ...sessions import creation as _session_creation
 
 
 def handle_post(runtime: ServerRuntime, handler: Any, path: str, _u: Any) -> bool:
@@ -41,7 +43,7 @@ def handle_post(runtime: ServerRuntime, handler: Any, path: str, _u: Any) -> boo
         if not isinstance(obj, dict):
             raise ValueError("invalid json body (expected object)")
         try:
-            payload = sv._parse_create_session_request(obj)
+            payload = _session_creation.parse_create_session_request(sv, obj)
         except ValueError as e:
             err = str(e)
             out = {"error": err}

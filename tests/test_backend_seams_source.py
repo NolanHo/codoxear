@@ -48,14 +48,16 @@ class TestBackendSeamsSource(unittest.TestCase):
         self.assertIn("_workspace_service.write_session_file", source)
         self.assertIn("_workspace_service.inject_session_attachment", source)
 
-    def test_session_routes_delegate_through_server_session_surfaces(self) -> None:
+    def test_session_routes_delegate_creation_to_owner_and_keep_server_listing_surfaces(self) -> None:
         read_source = (ROOT / "http" / "routes" / "sessions_read.py").read_text(encoding="utf-8")
         write_source = (ROOT / "http" / "routes" / "sessions_write.py").read_text(encoding="utf-8")
-        self.assertIn("sv._read_new_session_defaults(", read_source)
+        self.assertIn("from ...sessions import creation as _session_creation", read_source)
+        self.assertIn("_session_creation.read_new_session_defaults(", read_source)
         self.assertIn("sv._session_list_payload(", read_source)
         self.assertIn("sv._first_user_message_preview_from_log", read_source)
         self.assertIn("sv._first_user_message_preview_from_pi_session", read_source)
-        self.assertIn("sv._parse_create_session_request(obj)", write_source)
+        self.assertIn("from ...sessions import creation as _session_creation", write_source)
+        self.assertIn("_session_creation.parse_create_session_request(sv, obj)", write_source)
 
     def test_server_delegates_session_catalog_identity_lookups(self) -> None:
         source = SERVER.read_text(encoding="utf-8")
