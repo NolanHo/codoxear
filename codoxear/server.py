@@ -1087,20 +1087,6 @@ def _decode_text_view_for_client(
     return text, editable, _file_content_version(raw)
 
 
-def _read_text_file_for_client(
-    path: Path, *, max_bytes: int
-) -> tuple[str, int, bool, str]:
-    st = path.stat()
-    size = int(st.st_size)
-    if size > max_bytes:
-        raise ValueError(f"file too large (max {max_bytes} bytes)")
-    data = path.read_bytes()
-    if b"\x00" in data:
-        raise ValueError("binary file not supported")
-    text, editable = _decode_text_for_client(data)
-    return text, size, editable, _file_content_version(data)
-
-
 def _read_text_file_for_write(path: Path, *, max_bytes: int) -> tuple[str, int, str]:
     st = path.stat()
     size = int(st.st_size)
@@ -3936,22 +3922,6 @@ def _asset_version_from_manifest(manifest: dict[str, object]) -> str:
 
 def _pi_model_context_window(provider: str | None, model: str | None) -> int | None:
     return _pi_model_context_window_impl(provider, model)
-
-
-def _current_app_version() -> str:
-    served_dist_dir = _served_web_dist_dir()
-    if served_dist_dir is not None:
-        manifest_path = _vite_manifest_path(served_dist_dir)
-        try:
-            manifest_data = json.loads(manifest_path.read_text(encoding="utf-8"))
-        except (OSError, ValueError, TypeError):
-            manifest_data = {}
-        version = _asset_version_from_manifest(
-            manifest_data if isinstance(manifest_data, dict) else {}
-        )
-        if version != "dev":
-            return version
-    return _static_asset_version()
 
 
 def _rewrite_web_index_html(data: str) -> str:

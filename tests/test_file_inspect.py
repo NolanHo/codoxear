@@ -6,7 +6,6 @@ from pathlib import Path
 from codoxear import server
 from codoxear.server import _download_disposition
 from codoxear.server import _read_client_file_view
-from codoxear.server import _read_text_file_for_client
 from codoxear.server import _read_text_file_for_write
 from codoxear.server import _read_downloadable_file
 from codoxear.server import _write_new_text_file_atomic
@@ -110,23 +109,23 @@ class TestInspectOpenableFile(unittest.TestCase):
             path = Path(td) / "note.md"
             raw = b"hello\n"
             path.write_bytes(raw)
-            text, size, editable, version = _read_text_file_for_client(path, max_bytes=1024)
-            self.assertEqual(text, "hello\n")
-            self.assertEqual(size, len(raw))
-            self.assertTrue(editable)
-            self.assertEqual(version, hashlib.sha256(raw).hexdigest())
+            view = _read_client_file_view(path)
+            self.assertEqual(view.text, "hello\n")
+            self.assertEqual(view.size, len(raw))
+            self.assertTrue(view.editable)
+            self.assertEqual(view.version, hashlib.sha256(raw).hexdigest())
 
     def test_text_file_for_client_marks_invalid_utf8_as_read_only(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / "note.txt"
             raw = b"broken:\xff\n"
             path.write_bytes(raw)
-            text, size, editable, version = _read_text_file_for_client(path, max_bytes=1024)
-            self.assertEqual(size, len(raw))
-            self.assertFalse(editable)
-            self.assertIn("broken:", text)
-            self.assertIn("\ufffd", text)
-            self.assertEqual(version, hashlib.sha256(raw).hexdigest())
+            view = _read_client_file_view(path)
+            self.assertEqual(view.size, len(raw))
+            self.assertFalse(view.editable)
+            self.assertIn("broken:", str(view.text))
+            self.assertIn("\ufffd", str(view.text))
+            self.assertEqual(view.version, hashlib.sha256(raw).hexdigest())
 
     def test_text_file_for_write_rejects_invalid_utf8(self) -> None:
         with tempfile.TemporaryDirectory() as td:
