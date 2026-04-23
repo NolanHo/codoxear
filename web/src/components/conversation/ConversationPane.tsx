@@ -1160,12 +1160,7 @@ function todoStatusLabel(status: unknown): string {
   return status.trim().replace(/_/g, "-") || "unknown";
 }
 
-function todoItemsFromDetails(details: unknown): TodoSnapshotItem[] {
-  const record = asRecord(details);
-  const todos = record?.todos;
-  if (!Array.isArray(todos)) {
-    return [];
-  }
+function normalizeTodoItems(todos: unknown[]): TodoSnapshotItem[] {
   return todos
     .map((item) => asRecord(item))
     .filter((item): item is Record<string, unknown> => Boolean(item))
@@ -1175,6 +1170,63 @@ function todoItemsFromDetails(details: unknown): TodoSnapshotItem[] {
       description: typeof item.description === "string" ? item.description : undefined,
       status: todoStatusLabel(item.status),
     }));
+}
+
+function maybeParseJsonObject(value: string): unknown {
+  const text = value.trim();
+  if (!text || (text[0] !== "{" && text[0] !== "[")) {
+    return null;
+  }
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+function todoItemsFromUnknown(value: unknown): TodoSnapshotItem[] {
+  if (Array.isArray(value)) {
+    return normalizeTodoItems(value);
+  }
+  if (typeof value === "string") {
+    return todoItemsFromUnknown(maybeParseJsonObject(value));
+  }
+  const record = asRecord(value);
+  if (!record) {
+    return [];
+  }
+  if (Array.isArray(record.todos)) {
+    return normalizeTodoItems(record.todos);
+  }
+  if (typeof record.todos === "string") {
+    const parsed = maybeParseJsonObject(record.todos);
+    const fromTodos = todoItemsFromUnknown(parsed);
+    if (fromTodos.length > 0) {
+      return fromTodos;
+    }
+  }
+  if (record.details) {
+    const nested = todoItemsFromUnknown(record.details);
+    if (nested.length > 0) {
+      return nested;
+    }
+  }
+  return [];
+}
+
+function todoItemsFromEvent(event: MessageEvent): TodoSnapshotItem[] {
+  const fromDetails = todoItemsFromUnknown(event.details);
+  if (fromDetails.length > 0) {
+    return fromDetails;
+  }
+  return todoItemsFromUnknown(firstNonEmptyText(event.text));
+}
+
+function todoItemsFromText(value: string | null | undefined): TodoSnapshotItem[] {
+  if (!value) {
+    return [];
+  }
+  return todoItemsFromUnknown(value);
 }
 
 function renderCodeBlock(value: string) {
@@ -1520,11 +1572,13 @@ function renderMachineTraceDetail(event: MessageEvent, kind: CompactTraceKind, o
   const detailsText = !event.text && event.details ? JSON.stringify(event.details, null, 2) : "";
   const details = processDetails(event);
   const process = asRecord(details?.process);
-  const todoItems = todoItemsFromDetails(event.details);
+  const todoItems = todoItemsFromEvent(event);
   const structured = renderStructuredToolResult(event);
   const isProcessResult = event.name === "process";
   const isRawCode = isRawCodeToolOutput(event.name);
-  const isTodoToolResult = event.name === "manage_todo_list" && todoItems.length > 0;
+  const todoItemsFromBody = todoItemsFromText(body);
+  const isTodoToolResult = todoItems.length > 0;
+  const hideTodoJsonBody = isTodoToolResult && todoItemsFromBody.length > 0;
   return (
     <div className={cn("machineTraceDetailBody space-y-3", isProcessResult && "processToolDetail")}> 
       {renderCardHeader("tool_result", machineTraceTitle(event, kind), event.summary || undefined, event.ts)}
@@ -1552,7 +1606,7 @@ function renderMachineTraceDetail(event: MessageEvent, kind: CompactTraceKind, o
       ) : null}
       {structured}
       {isTodoToolResult ? renderTodoItemsList(todoItems) : null}
-      {body ? (isRawCode ? renderCodeBlock(body) : renderRichText(body, "messageBody", options)) : null}
+      {body && !hideTodoJsonBody ? (isRawCode ? renderCodeBlock(body) : renderRichText(body, "messageBody", options)) : null}
       {!isTodoToolResult && !structured && detailsText ? renderCodeBlock(detailsText) : null}
     </div>
   );
@@ -1752,14 +1806,16 @@ function renderSystemCard(event: MessageEvent, kind: string, options: MarkdownRe
   const isToolResult = kind === "tool_result";
   const isRawCode = (kind === "tool" || kind === "tool_result") && isRawCodeToolOutput(event.name);
   const structured = isToolResult ? renderStructuredToolResult(event) : null;
-  const todoItems = isToolResult && event.name === "manage_todo_list" ? todoItemsFromDetails(event.details) : [];
+  const todoItems = isToolResult ? todoItemsFromEvent(event) : [];
+  const todoItemsFromBody = isToolResult ? todoItemsFromText(body) : [];
+  const hideTodoJsonBody = todoItems.length > 0 && todoItemsFromBody.length > 0;
 
   return (
     <MessageSurface kind={kind}>
       {renderCardHeader(kind, title || undefined, undefined, event.ts)}
       {structured}
       {todoItems.length ? renderTodoItemsList(todoItems) : null}
-      {body ? (isRawCode ? renderCodeBlock(body) : renderRichText(body, "messageBody", options)) : null}
+      {body && !hideTodoJsonBody ? (isRawCode ? renderCodeBlock(body) : renderRichText(body, "messageBody", options)) : null}
       {!todoItems.length && !structured && detailsText ? renderCodeBlock(detailsText) : null}
     </MessageSurface>
   );

@@ -880,6 +880,51 @@ describe("ConversationPane", () => {
     expect(root.textContent).not.toContain('"todos"');
   });
 
+  it("renders manage_todo_list todo cards when todos are embedded in text json", () => {
+    const sessionsStore = createStaticStore(
+      { items: [], activeSessionId: "sess-manage-todo-text", loading: false, newSessionDefaults: null },
+      { refresh: () => Promise.resolve(), select: () => undefined },
+    );
+    const messagesStore = createStaticStore(
+      {
+        bySessionId: {
+          "sess-manage-todo-text": [
+            {
+              type: "tool_result",
+              name: "manage_todo_list",
+              text: '{"operation":"write","todos":[{"id":1,"title":"gamma","status":"not-started"},{"id":2,"title":"delta","status":"completed"}]}',
+              ts: 100,
+            },
+          ],
+        },
+        offsetsBySessionId: { "sess-manage-todo-text": 1 },
+        loading: false,
+      },
+      { loadInitial: () => Promise.resolve(), poll: () => Promise.resolve() },
+    );
+
+    root = document.createElement("div");
+    document.body.appendChild(root);
+    render(
+      <AppProviders sessionsStore={sessionsStore as any} messagesStore={messagesStore as any}>
+        <ConversationPane />
+      </AppProviders>,
+      root,
+    );
+
+    const token = root.querySelector(".machineTraceToken.tool_result") as HTMLButtonElement | null;
+    expect(token).not.toBeNull();
+
+    act(() => {
+      token?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+
+    expect(root.querySelectorAll(".machineTraceDetail.tool_result .messageTodoItem")).toHaveLength(2);
+    expect(root.textContent).toContain("gamma");
+    expect(root.textContent).toContain("delta");
+    expect(root.textContent).not.toContain('"todos"');
+  });
+
   it("renders ad-process custom messages as compact process icons", () => {
     const sessionsStore = createStaticStore(
       { items: [], activeSessionId: "sess-process-custom", loading: false, newSessionDefaults: null },
