@@ -5,6 +5,7 @@ from pathlib import Path
 
 from codoxear import server
 from codoxear.workspace import file_search as _file_search
+from codoxear.workspace import service as _workspace_service
 
 
 class TestSessionFileList(unittest.TestCase):
@@ -17,7 +18,11 @@ class TestSessionFileList(unittest.TestCase):
             (nested / "app.py").write_text("print('ok')\n", encoding="utf-8")
 
             self.assertEqual(
-                server._list_session_directory_entries(root, ""),
+                _workspace_service.list_session_directory_entries(
+                    server.RUNTIME,
+                    root,
+                    "",
+                ),
                 [
                     {"name": "src", "path": "src", "kind": "dir"},
                     {"name": "README.md", "path": "README.md", "kind": "file"},
@@ -31,7 +36,11 @@ class TestSessionFileList(unittest.TestCase):
             (root / "src" / "main.tsx").write_text("export {};\n", encoding="utf-8")
 
             self.assertEqual(
-                server._list_session_directory_entries(root, "src"),
+                _workspace_service.list_session_directory_entries(
+                    server.RUNTIME,
+                    root,
+                    "src",
+                ),
                 [
                     {"name": "components", "path": "src/components", "kind": "dir"},
                     {"name": "main.tsx", "path": "src/main.tsx", "kind": "file"},
@@ -49,7 +58,11 @@ class TestSessionFileList(unittest.TestCase):
             self.assertEqual(
                 [
                     item["path"]
-                    for item in server._list_session_directory_entries(root, "")
+                    for item in _workspace_service.list_session_directory_entries(
+                        server.RUNTIME,
+                        root,
+                        "",
+                    )
                 ],
                 ["a-dir", "b-dir", "a.txt", "b.txt"],
             )
@@ -62,7 +75,11 @@ class TestSessionFileList(unittest.TestCase):
             (root / "README.md").write_text("# repo\n", encoding="utf-8")
 
             self.assertEqual(
-                server._list_session_directory_entries(root, ""),
+                _workspace_service.list_session_directory_entries(
+                    server.RUNTIME,
+                    root,
+                    "",
+                ),
                 [{"name": "README.md", "path": "README.md", "kind": "file"}],
             )
 
@@ -75,7 +92,11 @@ class TestSessionFileList(unittest.TestCase):
             (root / "visible.txt").write_text("visible\n", encoding="utf-8")
 
             self.assertEqual(
-                server._list_session_directory_entries(root, ""),
+                _workspace_service.list_session_directory_entries(
+                    server.RUNTIME,
+                    root,
+                    "",
+                ),
                 [
                     {"name": ".gitignore", "path": ".gitignore", "kind": "file"},
                     {"name": "visible.txt", "path": "visible.txt", "kind": "file"},
@@ -87,7 +108,11 @@ class TestSessionFileList(unittest.TestCase):
             root = Path(td)
 
             with self.assertRaisesRegex(ValueError, "escapes session cwd"):
-                server._list_session_directory_entries(root, "../outside")
+                _workspace_service.list_session_directory_entries(
+                    server.RUNTIME,
+                    root,
+                    "../outside",
+                )
 
     def test_rejects_non_directory_paths(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -95,14 +120,22 @@ class TestSessionFileList(unittest.TestCase):
             (root / "README.md").write_text("# repo\n", encoding="utf-8")
 
             with self.assertRaisesRegex(ValueError, "path is not a directory"):
-                server._list_session_directory_entries(root, "README.md")
+                _workspace_service.list_session_directory_entries(
+                    server.RUNTIME,
+                    root,
+                    "README.md",
+                )
 
     def test_rejects_missing_paths(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
 
             with self.assertRaisesRegex(FileNotFoundError, "path not found"):
-                server._list_session_directory_entries(root, "missing")
+                _workspace_service.list_session_directory_entries(
+                    server.RUNTIME,
+                    root,
+                    "missing",
+                )
 
     def test_search_score_prefers_closer_basename_matches(self) -> None:
         best = _file_search.file_search_score("src/app.py", "app")

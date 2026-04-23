@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import base64
+import fnmatch
+import os
 import urllib.parse
 from pathlib import Path
 from typing import Any
@@ -24,6 +26,252 @@ def _track_file(runtime: ServerRuntime, session_id: str, path_obj: Path) -> None
         runtime.MANAGER.files_add(session_id, str(path_obj))
     except KeyError:
         pass
+
+
+def _resolve_under(base: Path, rel: str) -> Path:
+    if not isinstance(rel, str) or not rel.strip():
+        raise ValueError("path required")
+    if "\x00" in rel:
+        raise ValueError("invalid path")
+    p = Path(rel)
+    if p.is_absolute():
+        raise ValueError("path must be relative")
+    resolved_base = base.resolve()
+    resolved = (resolved_base / p).resolve()
+    if (
+        not str(resolved).startswith(str(resolved_base) + os.sep)
+        and resolved != resolved_base
+    ):
+        raise ValueError("path escapes session cwd")
+    return resolved
+
+
+def _resolve_session_relative_child(base: Path, raw_path: str) -> Path:
+    rel = str(raw_path or "").strip()
+    if not rel:
+        return base.resolve()
+    if "\x00" in rel:
+        raise ValueError("invalid path")
+    p = Path(rel)
+    if p.is_absolute():
+        raise ValueError("path must be relative")
+    resolved_base = base.resolve()
+    resolved = (resolved_base / p).resolve()
+    if (
+        not str(resolved).startswith(str(resolved_base) + os.sep)
+        and resolved != resolved_base
+    ):
+        raise ValueError("path escapes session cwd")
+    return resolved
+
+
+def _load_root_gitignore_patterns(root: Path) -> list[str]:
+    path = root / ".gitignore"
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return []
+    except OSError:
+        return []
+    patterns: list[str] = []
+    for line in raw.splitlines():
+        pattern = line.strip()
+        if not pattern or pattern.startswith("#") or pattern.startswith("!"):
+            continue
+        patterns.append(pattern)
+    return patterns
+
+
+def _gitignore_matches(rel_path: str, *, is_dir: bool, pattern: str) -> bool:
+    candidate = rel_path.strip("/")
+    if not candidate:
+        return False
+    rule = pattern.strip()
+    if not rule:
+        return False
+    dir_only = rule.endswith("/")
+    if dir_only and not is_dir:
+        return False
+    rule = rule.rstrip("/")
+    if not rule:
+        return False
+    anchored = rule.startswith("/")
+    rule = rule.lstrip("/")
+    if not rule:
+        return False
+
+    if "/" in rule:
+        return fnmatch.fnmatchcase(candidate, rule)
+
+    parts = candidate.split("/")
+    if anchored:
+        return fnmatch.fnmatchcase(parts[0], rule)
+    return any(fnmatch.fnmatchcase(part, rule) for part in parts)
+
+
+def _is_ignored_session_relpath(
+    rel_path: str, *, is_dir: bool, patterns: list[str]
+) -> bool:
+    return any(
+        _gitignore_matches(rel_path, is_dir=is_dir, pattern=pattern)
+        for pattern in patterns
+    )
+
+
+def _session_entry_sort_key(entry: dict[str, str]) -> tuple[int, str]:
+    return (0 if entry.get("kind") == "dir" else 1, entry.get("name", ""))
+
+
+def list_session_directory_entries(
+    runtime: ServerRuntime,
+    base: Path,
+    raw_path: str = "",
+) -> list[dict[str, str]]:
+    root = runtime._safe_expanduser(base).resolve()
+    if not root.exists():
+        raise FileNotFoundError("session cwd not found")
+    if not root.is_dir():
+        raise ValueError("session cwd is not a directory")
+    target = _resolve_session_relative_child(root, raw_path)
+    if not target.exists():
+        raise FileNotFoundError("path not found")
+    if not target.is_dir():
+        raise ValueError("path is not a directory")
+
+    patterns = _load_root_gitignore_patterns(root)
+    out: list[dict[str, str]] = []
+    for child in target.iterdir():
+        rel = child.relative_to(root).as_posix()
+        if child.is_dir() and child.name in runtime.FILE_LIST_IGNORED_DIRS:
+            continue
+        if _is_ignored_session_relpath(rel, is_dir=child.is_dir(), patterns=patterns):
+            continue
+        out.append(
+            {
+                "name": child.name,
+                "path": rel,
+                "kind": "dir" if child.is_dir() else "file",
+            }
+        )
+    out.sort(key=_session_entry_sort_key)
+    return out
+
+
+def write_text_file_atomic(
+    runtime: ServerRuntime,
+    path: Path,
+    *,
+    text: str,
+    max_bytes: int | None = None,
+) -> tuple[int, str]:
+    st = path.stat()
+    if not path.is_file():
+        raise ValueError("path is not a file")
+    if path.is_symlink():
+        raise ValueError("symlink write not supported")
+    data = text.encode("utf-8")
+    size = len(data)
+    max_allowed = int(runtime.FILE_READ_MAX_BYTES if max_bytes is None else max_bytes)
+    if size > max_allowed:
+        raise ValueError(f"file too large (max {max_allowed} bytes)")
+    tmp = path.with_name(f".{path.name}.codoxear-tmp-{runtime.secrets.token_hex(6)}")
+    try:
+        fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL, st.st_mode & 0o777)
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(data)
+        os.replace(tmp, path)
+    finally:
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except OSError:
+            pass
+    return size, runtime._file_content_version(data)
+
+
+def write_new_text_file_atomic(
+    runtime: ServerRuntime,
+    path: Path,
+    *,
+    text: str,
+    max_bytes: int | None = None,
+) -> tuple[int, str]:
+    path = runtime._safe_expanduser(path)
+    parent = path.parent
+    if not parent.exists():
+        raise FileNotFoundError("parent directory not found")
+    if not parent.is_dir():
+        raise ValueError("parent is not a directory")
+    if parent.is_symlink():
+        raise ValueError("symlink parent directory not supported")
+    if path.exists():
+        raise FileExistsError("file already exists")
+    data = text.encode("utf-8")
+    size = len(data)
+    max_allowed = int(runtime.FILE_READ_MAX_BYTES if max_bytes is None else max_bytes)
+    if size > max_allowed:
+        raise ValueError(f"file too large (max {max_allowed} bytes)")
+    tmp = path.with_name(f".{path.name}.codoxear-tmp-{runtime.secrets.token_hex(6)}")
+    try:
+        fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(data)
+        os.link(str(tmp), str(path))
+    finally:
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except OSError:
+            pass
+    return size, runtime._file_content_version(data)
+
+
+def _safe_filename(name: str, *, default: str = "file") -> str:
+    out = []
+    base = Path(str(name or "")).name
+    for ch in base:
+        if ch.isalnum() or ch in ("-", "_", ".", " "):
+            out.append(ch)
+    s = "".join(out).strip().replace(" ", "_")
+    if not s:
+        return default
+    return s[:96]
+
+
+def stage_uploaded_file(
+    runtime: ServerRuntime,
+    session_id: str,
+    filename: str,
+    raw: bytes,
+    *,
+    max_bytes: int | None = None,
+) -> Path:
+    if not isinstance(session_id, str) or not session_id.strip():
+        raise ValueError("session_id required")
+    if not isinstance(filename, str) or not filename.strip():
+        raise ValueError("filename required")
+    if not isinstance(raw, (bytes, bytearray)):
+        raise ValueError("file bytes required")
+    data = bytes(raw)
+    max_allowed = int(runtime.ATTACH_UPLOAD_MAX_BYTES if max_bytes is None else max_bytes)
+    if len(data) > max_allowed:
+        raise ValueError(f"file too large (max {max_allowed} bytes)")
+    safe_name = _safe_filename(filename, default="file")
+    subdir = (runtime.UPLOAD_DIR / session_id).resolve()
+    subdir.mkdir(parents=True, exist_ok=True)
+    out_path = (subdir / f"{int(runtime._now() * 1000)}_{safe_name}").resolve()
+    if not str(out_path).startswith(str(subdir) + os.sep):
+        raise ValueError("bad path")
+    out_path.write_bytes(data)
+    os.chmod(out_path, 0o600)
+    return out_path
+
+
+def attachment_inject_text(attachment_index: int, path: Path) -> str:
+    idx = int(attachment_index)
+    if idx <= 0:
+        raise ValueError("attachment_index must be >= 1")
+    return f"Attachment {idx}: {path}\n"
 
 
 def read_session_file(runtime: ServerRuntime, session_id: str, rel: str) -> dict[str, Any]:
@@ -93,7 +341,7 @@ def search_session_files(runtime: ServerRuntime, session_id: str, query: str, li
 
 def list_session_files(runtime: ServerRuntime, session_id: str, raw_rel: str) -> dict[str, Any]:
     _session, base = _session_base(runtime, session_id, strict=False)
-    entries = runtime._list_session_directory_entries(base, raw_rel)
+    entries = list_session_directory_entries(runtime, base, raw_rel)
     return {
         "ok": True,
         "cwd": str(base),
@@ -196,9 +444,9 @@ def write_session_file(
 ) -> dict[str, Any]:
     session, base = _session_base(runtime, session_id, strict=True)
     if create:
-        path_obj = runtime._resolve_under(base, path_raw)
+        path_obj = _resolve_under(base, path_raw)
         try:
-            size, next_version = runtime._write_new_text_file_atomic(path_obj, text=text)
+            size, next_version = write_new_text_file_atomic(runtime, path_obj, text=text)
         except FileExistsError as exc:
             raise FileExistsError(str(path_obj)) from exc
     else:
@@ -208,7 +456,7 @@ def write_session_file(
         )
         if current_version != version:
             raise FileExistsError(str(path_obj), current_version)
-        size, next_version = runtime._write_text_file_atomic(path_obj, text=text)
+        size, next_version = write_text_file_atomic(runtime, path_obj, text=text)
     _track_file(runtime, session_id, path_obj)
     return {
         "ok": True,
@@ -236,8 +484,8 @@ def inject_session_attachment(
         raw = base64.b64decode(data_b64.encode("ascii"), validate=True)
     except Exception as exc:
         raise ValueError("invalid base64") from exc
-    out_path = runtime._stage_uploaded_file(session_id, filename, raw)
-    inject_text = runtime._attachment_inject_text(attachment_index, out_path)
+    out_path = stage_uploaded_file(runtime, session_id, filename, raw)
+    inject_text = attachment_inject_text(attachment_index, out_path)
     seq = f"\x1b[200~{inject_text}\x1b[201~"
     try:
         broker = runtime.MANAGER.inject_keys(session_id, seq)

@@ -4,7 +4,6 @@ from __future__ import annotations
 import base64
 import copy
 import errno
-import fnmatch
 import gzip
 import hashlib
 import hmac
@@ -1102,81 +1101,6 @@ def _read_text_file_for_write(path: Path, *, max_bytes: int) -> tuple[str, int, 
     return text, size, _file_content_version(data)
 
 
-def _write_text_file_atomic(path: Path, *, text: str) -> tuple[int, str]:
-    if not isinstance(text, str):
-        raise ValueError("text must be a string")
-    if path.is_symlink():
-        raise ValueError("symlink file not supported")
-    data = text.encode("utf-8")
-    size = len(data)
-    if size > FILE_READ_MAX_BYTES:
-        raise ValueError(f"file too large (max {FILE_READ_MAX_BYTES} bytes)")
-    st = path.stat()
-    tmp = path.with_name(f".{path.name}.codoxear-tmp-{secrets.token_hex(6)}")
-    try:
-        tmp.write_bytes(data)
-        os.chmod(tmp, st.st_mode & 0o777)
-        os.replace(tmp, path)
-    finally:
-        try:
-            if tmp.exists():
-                tmp.unlink()
-        except OSError:
-            pass
-    return size, _file_content_version(data)
-
-
-def _write_new_text_file_atomic(path: Path, *, text: str) -> tuple[int, str]:
-    if not isinstance(text, str):
-        raise ValueError("text must be a string")
-    if path.is_symlink():
-        raise ValueError("symlink file not supported")
-    parent = path.parent
-    if not parent.exists():
-        raise FileNotFoundError("parent directory not found")
-    if not parent.is_dir():
-        raise ValueError("parent path is not a directory")
-    if parent.is_symlink():
-        raise ValueError("symlink parent directory not supported")
-    if path.exists():
-        raise FileExistsError("file already exists")
-    data = text.encode("utf-8")
-    size = len(data)
-    if size > FILE_READ_MAX_BYTES:
-        raise ValueError(f"file too large (max {FILE_READ_MAX_BYTES} bytes)")
-    tmp = path.with_name(f".{path.name}.codoxear-tmp-{secrets.token_hex(6)}")
-    try:
-        fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
-        with os.fdopen(fd, "wb") as fh:
-            fh.write(data)
-        os.link(str(tmp), str(path))
-    finally:
-        try:
-            if tmp.exists():
-                tmp.unlink()
-        except OSError:
-            pass
-    return size, _file_content_version(data)
-
-
-def _resolve_under(base: Path, rel: str) -> Path:
-    if not isinstance(rel, str) or not rel.strip():
-        raise ValueError("path required")
-    if "\x00" in rel:
-        raise ValueError("invalid path")
-    p = Path(rel)
-    if p.is_absolute():
-        raise ValueError("path must be relative")
-    resolved_base = base.resolve()
-    resolved = (resolved_base / p).resolve()
-    if (
-        not str(resolved).startswith(str(resolved_base) + os.sep)
-        and resolved != resolved_base
-    ):
-        raise ValueError("path escapes session cwd")
-    return resolved
-
-
 def _safe_expanduser(p: Path) -> Path:
     try:
         return p.expanduser()
@@ -1213,115 +1137,6 @@ def _resolve_git_path(cwd: Path, raw_path: str) -> tuple[Path, Path, str]:
     except ValueError as e:
         raise ValueError("path is outside git repo") from e
     return target, repo_root, rel
-
-
-def _resolve_session_relative_child(base: Path, raw_path: str) -> Path:
-    rel = str(raw_path or "").strip()
-    if not rel:
-        return base.resolve()
-    if "\x00" in rel:
-        raise ValueError("invalid path")
-    p = Path(rel)
-    if p.is_absolute():
-        raise ValueError("path must be relative")
-    resolved_base = base.resolve()
-    resolved = (resolved_base / p).resolve()
-    if (
-        not str(resolved).startswith(str(resolved_base) + os.sep)
-        and resolved != resolved_base
-    ):
-        raise ValueError("path escapes session cwd")
-    return resolved
-
-
-def _load_root_gitignore_patterns(root: Path) -> list[str]:
-    path = root / ".gitignore"
-    try:
-        raw = path.read_text(encoding="utf-8")
-    except FileNotFoundError:
-        return []
-    except OSError:
-        return []
-    patterns: list[str] = []
-    for line in raw.splitlines():
-        pattern = line.strip()
-        if not pattern or pattern.startswith("#") or pattern.startswith("!"):
-            continue
-        patterns.append(pattern)
-    return patterns
-
-
-def _gitignore_matches(rel_path: str, *, is_dir: bool, pattern: str) -> bool:
-    candidate = rel_path.strip("/")
-    if not candidate:
-        return False
-    rule = pattern.strip()
-    if not rule:
-        return False
-    dir_only = rule.endswith("/")
-    if dir_only and not is_dir:
-        return False
-    rule = rule.rstrip("/")
-    if not rule:
-        return False
-    anchored = rule.startswith("/")
-    rule = rule.lstrip("/")
-    if not rule:
-        return False
-
-    if "/" in rule:
-        return fnmatch.fnmatchcase(candidate, rule)
-
-    parts = candidate.split("/")
-    if anchored:
-        return fnmatch.fnmatchcase(parts[0], rule)
-    return any(fnmatch.fnmatchcase(part, rule) for part in parts)
-
-
-def _is_ignored_session_relpath(
-    rel_path: str, *, is_dir: bool, patterns: list[str]
-) -> bool:
-    return any(
-        _gitignore_matches(rel_path, is_dir=is_dir, pattern=pattern)
-        for pattern in patterns
-    )
-
-
-def _session_entry_sort_key(entry: dict[str, str]) -> tuple[int, str]:
-    return (0 if entry.get("kind") == "dir" else 1, entry.get("name", ""))
-
-
-def _list_session_directory_entries(
-    base: Path, raw_path: str = ""
-) -> list[dict[str, str]]:
-    root = _safe_expanduser(base).resolve()
-    if not root.exists():
-        raise FileNotFoundError("session cwd not found")
-    if not root.is_dir():
-        raise ValueError("session cwd is not a directory")
-    target = _resolve_session_relative_child(root, raw_path)
-    if not target.exists():
-        raise FileNotFoundError("path not found")
-    if not target.is_dir():
-        raise ValueError("path is not a directory")
-
-    patterns = _load_root_gitignore_patterns(root)
-    out: list[dict[str, str]] = []
-    for child in target.iterdir():
-        rel = child.relative_to(root).as_posix()
-        if child.is_dir() and child.name in FILE_LIST_IGNORED_DIRS:
-            continue
-        if _is_ignored_session_relpath(rel, is_dir=child.is_dir(), patterns=patterns):
-            continue
-        out.append(
-            {
-                "name": child.name,
-                "path": rel,
-                "kind": "dir" if child.is_dir() else "file",
-            }
-        )
-    out.sort(key=_session_entry_sort_key)
-    return out
 
 
 def _run_git(cwd: Path, args: list[str], *, timeout_s: float, max_bytes: int) -> str:
@@ -1524,40 +1339,6 @@ def _safe_filename(name: str, *, default: str = "file") -> str:
     if not s:
         return default
     return s[:96]
-
-
-def _stage_uploaded_file(
-    session_id: str,
-    filename: str,
-    raw: bytes,
-    *,
-    max_bytes: int = ATTACH_UPLOAD_MAX_BYTES,
-) -> Path:
-    if not isinstance(session_id, str) or not session_id.strip():
-        raise ValueError("session_id required")
-    if not isinstance(filename, str) or not filename.strip():
-        raise ValueError("filename required")
-    if not isinstance(raw, (bytes, bytearray)):
-        raise ValueError("file bytes required")
-    data = bytes(raw)
-    if len(data) > int(max_bytes):
-        raise ValueError(f"file too large (max {int(max_bytes)} bytes)")
-    safe_name = _safe_filename(filename, default="file")
-    subdir = (UPLOAD_DIR / session_id).resolve()
-    subdir.mkdir(parents=True, exist_ok=True)
-    out_path = (subdir / f"{int(_now() * 1000)}_{safe_name}").resolve()
-    if not str(out_path).startswith(str(subdir) + os.sep):
-        raise ValueError("bad path")
-    out_path.write_bytes(data)
-    os.chmod(out_path, 0o600)
-    return out_path
-
-
-def _attachment_inject_text(attachment_index: int, path: Path) -> str:
-    idx = int(attachment_index)
-    if idx <= 0:
-        raise ValueError("attachment_index must be >= 1")
-    return f"Attachment {idx}: {path}\n"
 
 
 def _clean_alias(name: str) -> str:
