@@ -663,69 +663,111 @@ class Broker:
             return self.sessions_dir
         return self.sessions_dir
 
+    def _discover_watcher_snapshot(
+        self,
+    ) -> tuple[Path | None, int, Path | None, set[Path], set[Path]] | None:
+        with self._lock:
+            st = self.state
+            if not st:
+                return None
+            current_log_path = st.log_path
+            root_pid = int(st.codex_pid)
+            sock_path = st.sock_path
+            known_paths = set(st.known_rollout_paths)
+            ignored_paths = set(st.ignored_rollout_paths)
+            if current_log_path is not None:
+                ignored_paths.add(current_log_path)
+        return current_log_path, root_pid, sock_path, known_paths, ignored_paths
+
+    def _discover_proc_rollout_log(
+        self,
+        *,
+        root_pid: int,
+        ignored_paths: set[Path],
+    ) -> Path | None:
+        if root_pid <= 0:
+            return None
+        return _proc_find_open_rollout_log(
+            proc_root=PROC_ROOT,
+            root_pid=root_pid,
+            agent_backend=AGENT_BACKEND,
+            cwd=self.cwd,
+            ignored_paths=ignored_paths,
+        )
+
+    def _discover_new_pi_session_log(
+        self,
+        *,
+        current_log_path: Path | None,
+        sock_path: Path | None,
+        known_paths: set[Path],
+        ignored_paths: set[Path],
+    ) -> Path | None:
+        if AGENT_BACKEND != "pi" or current_log_path is not None:
+            return None
+        scan_sessions_dir = self._pi_scan_sessions_dir()
+        claimed_paths = _claimed_log_paths_from_sock_meta(
+            sock_dir=SOCK_DIR,
+            exclude_sock=sock_path,
+        )
+        discovered = _find_new_session_log(
+            sessions_dir=scan_sessions_dir,
+            agent_backend="pi",
+            cwd=self.cwd,
+            after_ts=0.0,
+            preexisting=known_paths,
+            exclude_paths=claimed_paths | ignored_paths,
+            timeout_s=0.0,
+        )
+        if discovered is None:
+            return None
+        _sid, lp = discovered
+        return lp if lp.exists() else None
+
+    def _root_process_exited(self, *, root_pid: int) -> bool:
+        if root_pid <= 0:
+            return False
+        try:
+            wpid, _status = os.waitpid(root_pid, os.WNOHANG)
+            return wpid == root_pid
+        except ChildProcessError:
+            return True
+
     def _discover_log_watcher(self) -> None:
         try:
             while not self._stop.is_set():
-                with self._lock:
-                    st = self.state
-                    if not st:
-                        return
-                    current_log_path = st.log_path
-                    root_pid = int(st.codex_pid)
-                    sock_path = st.sock_path
-                    known_paths = set(st.known_rollout_paths)
-                    ignored_paths = set(st.ignored_rollout_paths)
-                    if current_log_path is not None:
-                        ignored_paths.add(current_log_path)
-                if root_pid > 0:
-                    lp = _proc_find_open_rollout_log(
-                        proc_root=PROC_ROOT,
-                        root_pid=root_pid,
-                        agent_backend=AGENT_BACKEND,
-                        cwd=self.cwd,
-                        ignored_paths=ignored_paths,
-                    )
-                    if lp and lp.exists():
-                        if current_log_path is None or (
-                            not _paths_match(lp, current_log_path)
-                        ):
-                            self._maybe_register_or_switch_rollout(log_path=lp)
-                            time.sleep(0.25)
-                            continue
-                    if AGENT_BACKEND == "pi" and current_log_path is None:
-                        # Once Pi is already bound to a concrete session log, avoid
-                        # rescanning the whole sessions tree on every watcher tick.
-                        scan_sessions_dir = self._pi_scan_sessions_dir()
-                        claimed_paths = _claimed_log_paths_from_sock_meta(
-                            sock_dir=SOCK_DIR, exclude_sock=sock_path
-                        )
-                        discovered = _find_new_session_log(
-                            sessions_dir=scan_sessions_dir,
-                            agent_backend="pi",
-                            cwd=self.cwd,
-                            after_ts=0.0,
-                            preexisting=known_paths,
-                            exclude_paths=claimed_paths | ignored_paths,
-                            timeout_s=0.0,
-                        )
-                        if discovered is not None:
-                            _sid, lp = discovered
-                            if lp.exists():
-                                if current_log_path is None or (
-                                    not _paths_match(lp, current_log_path)
-                                ):
-                                    self._maybe_register_or_switch_rollout(log_path=lp)
-                                    time.sleep(0.25)
-                                    continue
-                    # Exit early if Codex is gone.
-                    try:
-                        wpid, _status = os.waitpid(root_pid, os.WNOHANG)
-                        if wpid == root_pid:
-                            return
-                    except ChildProcessError:
-                        return
-                    except Exception:
-                        raise
+                snapshot = self._discover_watcher_snapshot()
+                if snapshot is None:
+                    return
+                current_log_path, root_pid, sock_path, known_paths, ignored_paths = snapshot
+
+                lp = self._discover_proc_rollout_log(
+                    root_pid=root_pid,
+                    ignored_paths=ignored_paths,
+                )
+                if lp is not None and lp.exists() and (
+                    current_log_path is None or (not _paths_match(lp, current_log_path))
+                ):
+                    self._maybe_register_or_switch_rollout(log_path=lp)
+                    time.sleep(0.25)
+                    continue
+
+                lp = self._discover_new_pi_session_log(
+                    current_log_path=current_log_path,
+                    sock_path=sock_path,
+                    known_paths=known_paths,
+                    ignored_paths=ignored_paths,
+                )
+                if lp is not None and (
+                    current_log_path is None or (not _paths_match(lp, current_log_path))
+                ):
+                    self._maybe_register_or_switch_rollout(log_path=lp)
+                    time.sleep(0.25)
+                    continue
+
+                if self._root_process_exited(root_pid=root_pid):
+                    return
+
                 time.sleep(0.25)
         except Exception:
             sys.stderr.write(
