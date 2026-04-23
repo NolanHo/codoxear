@@ -45,12 +45,16 @@ class TestBackendSeamsSource(unittest.TestCase):
 
     def test_file_routes_delegate_workspace_behavior_to_service_owner(self) -> None:
         source = (ROOT / "http" / "routes" / "files.py").read_text(encoding="utf-8")
-        self.assertIn("from ...workspace import service as _workspace_service", source)
-        self.assertIn("_workspace_service.read_session_file", source)
-        self.assertIn("_workspace_service.search_session_files", source)
-        self.assertIn("_workspace_service.list_session_files", source)
-        self.assertIn("_workspace_service.write_session_file", source)
-        self.assertIn("_workspace_service.inject_session_attachment", source)
+        get_source = (ROOT / "http" / "routes" / "files_get.py").read_text(encoding="utf-8")
+        post_source = (ROOT / "http" / "routes" / "files_post.py").read_text(encoding="utf-8")
+        self.assertIn("from . import files_get as _files_get", source)
+        self.assertIn("from . import files_post as _files_post", source)
+        self.assertIn("from ...workspace import service as _workspace_service", get_source)
+        self.assertIn("_workspace_service.read_session_file", get_source)
+        self.assertIn("_workspace_service.search_session_files", get_source)
+        self.assertIn("_workspace_service.list_session_files", get_source)
+        self.assertIn("_workspace_service.write_session_file", post_source)
+        self.assertIn("_workspace_service.inject_session_attachment", post_source)
 
     def test_session_routes_delegate_creation_to_owner_and_keep_server_listing_surfaces(self) -> None:
         read_source = (ROOT / "http" / "routes" / "sessions_read.py").read_text(encoding="utf-8")
