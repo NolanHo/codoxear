@@ -1777,10 +1777,6 @@ SESSION_HISTORY_PAGE_SIZE = 300
 SESSION_LIST_FALLBACK_GROUP_KEY = "__no_working_directory__"
 
 
-def _session_row_display_name(row: dict[str, Any], *, fallback: str = "Session") -> str:
-    return _session_listing.session_row_display_name(row, fallback=fallback)
-
-
 def _clean_optional_bool(value: Any) -> bool | None:
     if isinstance(value, bool):
         return value
@@ -1793,10 +1789,6 @@ def _normalize_session_cwd_row(row: dict[str, Any]) -> dict[str, Any]:
 
 def _frontend_session_list_row(row: dict[str, Any]) -> dict[str, Any]:
     return _session_listing.frontend_session_list_row(RUNTIME, row)
-
-
-def _session_list_group_key(row: dict[str, Any]) -> str:
-    return _session_listing.session_list_group_key(RUNTIME, row)
 
 
 def _session_list_payload(
@@ -2260,8 +2252,32 @@ def _parse_create_session_request(obj: dict[str, Any]) -> dict[str, Any]:
     return _session_creation.parse_create_session_request(RUNTIME, obj)
 
 
-def _configured_model_providers(data: dict[str, Any]) -> list[str]:
-    return _session_creation.configured_model_providers(data)
+def _read_codex_launch_defaults() -> dict[str, Any]:
+    return _session_creation.read_codex_launch_defaults(RUNTIME)
+
+
+def _read_pi_launch_defaults(
+    *,
+    page_state_db: PageStateDB | None = None,
+    force_refresh: bool = False,
+) -> dict[str, Any]:
+    return _session_creation.read_pi_launch_defaults(
+        RUNTIME,
+        page_state_db=page_state_db,
+        force_refresh=force_refresh,
+    )
+
+
+def _read_new_session_defaults(
+    *,
+    page_state_db: PageStateDB | None = None,
+    refresh_pi_models: bool = False,
+) -> dict[str, Any]:
+    return _session_creation.read_new_session_defaults(
+        RUNTIME,
+        page_state_db=page_state_db,
+        refresh_pi_models=refresh_pi_models,
+    )
 
 
 def _provider_choice_for_settings(
@@ -2358,57 +2374,6 @@ def _patch_metadata_pi_binding(sock: Path, session_path: Path) -> None:
         meta_path.write_text(json.dumps(meta), encoding="utf-8")
     except Exception:
         pass
-
-
-def _read_codex_launch_defaults() -> dict[str, Any]:
-    return _session_creation.read_codex_launch_defaults(RUNTIME)
-
-
-def _normalize_pi_provider_models_snapshot(raw: Any) -> dict[str, Any] | None:
-    return _session_creation.normalize_pi_provider_models_snapshot(RUNTIME, raw)
-
-
-
-def _read_pi_provider_models_snapshot_from_source() -> dict[str, Any]:
-    return _session_creation.read_pi_provider_models_snapshot_from_source(RUNTIME)
-
-
-
-def _read_pi_provider_models_snapshot(
-    *,
-    page_state_db: PageStateDB | None = None,
-    force_refresh: bool = False,
-) -> dict[str, Any]:
-    return _session_creation.read_pi_provider_models_snapshot(
-        RUNTIME,
-        page_state_db=page_state_db,
-        force_refresh=force_refresh,
-    )
-
-
-
-def _read_pi_launch_defaults(
-    *,
-    page_state_db: PageStateDB | None = None,
-    force_refresh: bool = False,
-) -> dict[str, Any]:
-    return _session_creation.read_pi_launch_defaults(
-        RUNTIME,
-        page_state_db=page_state_db,
-        force_refresh=force_refresh,
-    )
-
-
-def _read_new_session_defaults(
-    *,
-    page_state_db: PageStateDB | None = None,
-    refresh_pi_models: bool = False,
-) -> dict[str, Any]:
-    return _session_creation.read_new_session_defaults(
-        RUNTIME,
-        page_state_db=page_state_db,
-        refresh_pi_models=refresh_pi_models,
-    )
 
 
 def _fallback_path_mtime(path: Path) -> float | None:
@@ -2646,18 +2611,6 @@ def _historical_sidebar_items(
         live_resume_keys=live_resume_keys,
         now_ts=now_ts,
     )
-
-
-def _resume_preview_from_text(text: str, *, max_chars: int = 120) -> str:
-    return _session_listing.resume_preview_from_text(text, max_chars=max_chars)
-
-
-def _user_message_text(payload: dict[str, Any]) -> str:
-    return _session_listing.user_message_text(payload)
-
-
-def _is_scaffold_user_text(text: str) -> bool:
-    return _session_listing.is_scaffold_user_text(text)
 
 
 def _first_user_message_preview_from_log(

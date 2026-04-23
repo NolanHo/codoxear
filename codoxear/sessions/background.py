@@ -6,6 +6,7 @@ import traceback
 from pathlib import Path
 from typing import Any
 
+from . import listing as _session_listing
 from .runtime_access import manager_runtime
 
 
@@ -291,7 +292,7 @@ def session_display_name(manager: Any, session_id: str) -> str:
             return "Session"
         ref = manager._page_state_ref_for_session(session)
         alias = manager._aliases.get(ref) if ref is not None else None
-        return sv._session_row_display_name(
+        return _session_listing.session_row_display_name(
             {
                 "session_id": manager._durable_session_id_for_session(session),
                 "alias": alias,

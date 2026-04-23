@@ -5,16 +5,23 @@ from pathlib import Path
 from typing import Any, cast
 
 from ..runtime import ServerRuntime
+from . import listing as _session_listing
 
 
 def session_details_payload(runtime: ServerRuntime, manager: Any, session_id: str) -> dict[str, Any]:
     sv = runtime
     row = sv._listed_session_row(manager, session_id)
     if row is not None:
-        return {"ok": True, "session": sv._normalize_session_cwd_row(row)}
+        return {"ok": True, "session": _session_listing.normalize_session_cwd_row(sv, row)}
     historical_row = sv._historical_session_row(session_id)
     if historical_row is not None:
-        return {"ok": True, "session": sv._normalize_session_cwd_row(dict(historical_row))}
+        return {
+            "ok": True,
+            "session": _session_listing.normalize_session_cwd_row(
+                sv,
+                dict(historical_row),
+            ),
+        }
     raise KeyError("unknown session")
 
 

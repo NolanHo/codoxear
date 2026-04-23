@@ -4,6 +4,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from . import listing as _session_listing
 from .runtime_access import manager_runtime
 
 
@@ -25,7 +26,10 @@ def catalog_record_for_ref(manager: Any, ref: Any):
             return None
         title = sv._clean_optional_text(row.get("title")) or ""
         first_user_message = sv._clean_optional_text(
-            sv._first_user_message_preview_from_pi_session(source_path)
+            _session_listing.first_user_message_preview_from_pi_session(
+                sv,
+                source_path,
+            )
         )
     else:
         row = sv._resume_candidate_from_log(source_path, agent_backend=backend)
@@ -33,7 +37,10 @@ def catalog_record_for_ref(manager: Any, ref: Any):
             return None
         title = sv._clean_optional_text(row.get("title")) or ""
         first_user_message = sv._clean_optional_text(
-            sv._first_user_message_preview_from_log(source_path)
+            _session_listing.first_user_message_preview_from_log(
+                sv,
+                source_path,
+            )
         )
     cwd = sv._clean_optional_text(row.get("cwd"))
     updated_ts = row.get("updated_ts")
