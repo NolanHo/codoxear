@@ -505,6 +505,51 @@ describe("ConversationPane", () => {
     expect(root.textContent).toContain("timeout");
   });
 
+  it("renders bash tool output as raw code block without markdown list parsing", () => {
+    const sessionsStore = createStaticStore(
+      { items: [], activeSessionId: "sess-bash-raw", loading: false, newSessionDefaults: null },
+      { refresh: () => Promise.resolve(), select: () => undefined },
+    );
+    const messagesStore = createStaticStore(
+      {
+        bySessionId: {
+          "sess-bash-raw": [
+            {
+              type: "tool_result",
+              name: "bash",
+              text: "- [x] item\\n<raw>&value",
+              ts: 100,
+            },
+          ],
+        },
+        offsetsBySessionId: { "sess-bash-raw": 1 },
+        loading: false,
+      },
+      { loadInitial: () => Promise.resolve(), poll: () => Promise.resolve() },
+    );
+
+    root = document.createElement("div");
+    document.body.appendChild(root);
+    render(
+      <AppProviders sessionsStore={sessionsStore as any} messagesStore={messagesStore as any}>
+        <ConversationPane />
+      </AppProviders>,
+      root,
+    );
+
+    const token = root.querySelector(".machineTraceToken.tool_result") as HTMLButtonElement | null;
+    expect(token).not.toBeNull();
+
+    act(() => {
+      token?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+
+    const code = root.querySelector(".machineTraceDetail.tool_result .messageCardPre code");
+    expect(code?.textContent).toContain("- [x] item");
+    expect(code?.textContent).toContain("<raw>&value");
+    expect(root.querySelector(".machineTraceDetail.tool_result .messageBody ul")).toBeNull();
+  });
+
   it("renders process tool_result events with dedicated process styling and fields", () => {
     const sessionsStore = createStaticStore(
       { items: [], activeSessionId: "sess-process-result", loading: false, newSessionDefaults: null },
@@ -559,6 +604,58 @@ describe("ConversationPane", () => {
     expect(root.textContent).toContain("start");
     expect(root.textContent).toContain("Process ID");
     expect(root.textContent).toContain("proc_1");
+  });
+
+  it("renders manage_todo_list tool_result details as todo cards", () => {
+    const sessionsStore = createStaticStore(
+      { items: [], activeSessionId: "sess-manage-todo", loading: false, newSessionDefaults: null },
+      { refresh: () => Promise.resolve(), select: () => undefined },
+    );
+    const messagesStore = createStaticStore(
+      {
+        bySessionId: {
+          "sess-manage-todo": [
+            {
+              type: "tool_result",
+              name: "manage_todo_list",
+              text: "Todos updated",
+              details: {
+                operation: "write",
+                todos: [
+                  { id: 1, title: "alpha", status: "completed" },
+                  { id: 2, title: "beta", status: "in_progress" },
+                ],
+              },
+              ts: 100,
+            },
+          ],
+        },
+        offsetsBySessionId: { "sess-manage-todo": 1 },
+        loading: false,
+      },
+      { loadInitial: () => Promise.resolve(), poll: () => Promise.resolve() },
+    );
+
+    root = document.createElement("div");
+    document.body.appendChild(root);
+    render(
+      <AppProviders sessionsStore={sessionsStore as any} messagesStore={messagesStore as any}>
+        <ConversationPane />
+      </AppProviders>,
+      root,
+    );
+
+    const token = root.querySelector(".machineTraceToken.tool_result") as HTMLButtonElement | null;
+    expect(token).not.toBeNull();
+
+    act(() => {
+      token?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+
+    expect(root.querySelectorAll(".machineTraceDetail.tool_result .messageTodoItem")).toHaveLength(2);
+    expect(root.textContent).toContain("alpha");
+    expect(root.textContent).toContain("beta");
+    expect(root.textContent).not.toContain('"todos"');
   });
 
   it("renders ad-process custom messages as compact process icons", () => {
@@ -1030,7 +1127,7 @@ describe("ConversationPane", () => {
       await Promise.resolve();
     });
 
-    expect(root.querySelector("[data-testid='machine-trace-detail'] .messageBody")?.textContent).toContain("result line 1");
+    expect(root.querySelector("[data-testid='machine-trace-detail']")?.textContent).toContain("result line 1");
   });
 
   it("shows compact machine-trace tokens and switches detail selection", async () => {

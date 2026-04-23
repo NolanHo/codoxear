@@ -15,7 +15,7 @@ import { cn } from "@/lib/utils";
 import { AskUserCard, askUserHistorySignature, isUnresolvedAskUserEvent } from "./AskUserCard";
 import { useComposerStore, useComposerStoreApi, useLiveSessionStore, useLiveSessionStoreApi, useMessagesStore, useMessagesStoreApi, useSessionsStore } from "../../app/providers";
 import { getSessionRuntimeId } from "../../lib/session-identity";
-import type { MessageEvent } from "../../lib/types";
+import type { MessageEvent, TodoSnapshotItem } from "../../lib/types";
 
 const MAIN_TIMELINE_KINDS = new Set([
   "user",
@@ -1128,6 +1128,65 @@ function processNameFromDetails(details: Record<string, unknown> | null): string
   );
 }
 
+function isBashTool(name: unknown): boolean {
+  if (typeof name !== "string") {
+    return false;
+  }
+  return name === "bash" || name.startsWith("bashExecution");
+}
+
+function todoStatusClass(status: unknown): string {
+  if (typeof status !== "string") {
+    return "unknown";
+  }
+  const normalized = status.trim().toLowerCase().replace(/_/g, "-");
+  return normalized || "unknown";
+}
+
+function todoStatusLabel(status: unknown): string {
+  if (typeof status !== "string") {
+    return "unknown";
+  }
+  return status.trim().replace(/_/g, "-") || "unknown";
+}
+
+function todoItemsFromDetails(details: unknown): TodoSnapshotItem[] {
+  const record = asRecord(details);
+  const todos = record?.todos;
+  if (!Array.isArray(todos)) {
+    return [];
+  }
+  return todos
+    .map((item) => asRecord(item))
+    .filter((item): item is Record<string, unknown> => Boolean(item))
+    .map((item) => ({
+      id: typeof item.id === "number" || typeof item.id === "string" ? item.id : undefined,
+      title: typeof item.title === "string" ? item.title : undefined,
+      description: typeof item.description === "string" ? item.description : undefined,
+      status: todoStatusLabel(item.status),
+    }));
+}
+
+function renderCodeBlock(value: string) {
+  return <pre className="messageCardPre overflow-x-auto rounded-xl bg-background/80 p-3 text-sm"><code>{value}</code></pre>;
+}
+
+function renderTodoItemsList(items: TodoSnapshotItem[]) {
+  if (!items.length) {
+    return null;
+  }
+  return (
+    <ul className="messageTodoList space-y-2">
+      {items.map((item, index) => (
+        <li key={`${item.id ?? item.title ?? "todo"}-${index}`} className="messageTodoItem flex items-start gap-3 rounded-xl px-3 py-2 text-sm">
+          <span className={cn("messageTodoStatus rounded-full px-2 py-0.5 text-xs font-semibold uppercase tracking-wide", todoStatusClass(item.status))}>{todoStatusLabel(item.status)}</span>
+          <span>{item.title || item.description || "Untitled item"}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 function hasTrailingUnresolvedTool(events: MessageEvent[]) {
   for (let index = events.length - 1; index >= 0; index -= 1) {
     const kind = eventKind(events[index]);
@@ -1171,6 +1230,7 @@ function renderMachineTraceDetail(event: MessageEvent, kind: CompactTraceKind, o
     const rawArgs = toolCallRawArguments(event);
     const argsText = args ? JSON.stringify(args, null, 2) : rawArgs;
     const isProcessTool = event.name === "process";
+    const isBash = isBashTool(event.name);
     return (
       <div className={cn("machineTraceDetailBody space-y-3", isProcessTool && "processToolDetail")}> 
         {renderCardHeader("tool", machineTraceTitle(event, kind), event.summary || undefined, event.ts)}
@@ -1196,8 +1256,8 @@ function renderMachineTraceDetail(event: MessageEvent, kind: CompactTraceKind, o
             ) : null}
           </div>
         ) : null}
-        {body ? renderRichText(body, "messageBody", options) : null}
-        {argsText ? <pre className="messageCardPre overflow-x-auto rounded-xl bg-background/80 p-3 text-sm">{argsText}</pre> : <div className="messageCardFooterText text-sm text-muted-foreground">No additional tool input.</div>}
+        {body ? (isBash ? renderCodeBlock(body) : renderRichText(body, "messageBody", options)) : null}
+        {argsText ? renderCodeBlock(argsText) : <div className="messageCardFooterText text-sm text-muted-foreground">No additional tool input.</div>}
       </div>
     );
   }
@@ -1278,7 +1338,10 @@ function renderMachineTraceDetail(event: MessageEvent, kind: CompactTraceKind, o
   const detailsText = !event.text && event.details ? JSON.stringify(event.details, null, 2) : "";
   const details = processDetails(event);
   const process = asRecord(details?.process);
+  const todoItems = todoItemsFromDetails(event.details);
   const isProcessResult = event.name === "process";
+  const isBash = isBashTool(event.name);
+  const isTodoToolResult = event.name === "manage_todo_list" && todoItems.length > 0;
   return (
     <div className={cn("machineTraceDetailBody space-y-3", isProcessResult && "processToolDetail")}> 
       {renderCardHeader("tool_result", machineTraceTitle(event, kind), event.summary || undefined, event.ts)}
@@ -1304,8 +1367,9 @@ function renderMachineTraceDetail(event: MessageEvent, kind: CompactTraceKind, o
           ) : null}
         </div>
       ) : null}
-      {body ? renderRichText(body, "messageBody", options) : null}
-      {detailsText ? <pre className="messageCardPre overflow-x-auto rounded-xl bg-background/80 p-3 text-sm">{detailsText}</pre> : null}
+      {isTodoToolResult ? renderTodoItemsList(todoItems) : null}
+      {body ? (isBash ? renderCodeBlock(body) : renderRichText(body, "messageBody", options)) : null}
+      {!isTodoToolResult && detailsText ? renderCodeBlock(detailsText) : null}
     </div>
   );
 }
@@ -1445,16 +1509,7 @@ function renderTodoSnapshotCard(event: MessageEvent, options: MarkdownRenderOpti
   return (
     <MessageSurface kind="todo_snapshot">
       {renderCardHeader("todo_snapshot", firstNonEmptyText(event.progress_text, "Todo snapshot"), firstNonEmptyText(event.operation), event.ts)}
-      {items.length ? (
-        <ul className="messageTodoList space-y-2">
-          {items.map((item, index) => (
-            <li key={`${item.title || "todo"}-${index}`} className="messageTodoItem flex items-start gap-3 rounded-xl px-3 py-2 text-sm">
-              <span className={cn("messageTodoStatus rounded-full px-2 py-0.5 text-xs font-semibold uppercase tracking-wide", typeof item.status === "string" ? item.status : "unknown")}>{item.status || "unknown"}</span>
-              <span>{item.title || item.description || "Untitled item"}</span>
-            </li>
-          ))}
-        </ul>
-      ) : null}
+      {items.length ? renderTodoItemsList(items) : null}
       {event.text ? renderRichText(event.text, "messageBody", options) : null}
     </MessageSurface>
   );
@@ -1510,12 +1565,16 @@ function renderSystemCard(event: MessageEvent, kind: string, options: MarkdownRe
   const title = firstNonEmptyText(event.summary, event.name);
   const body = firstNonEmptyText(event.text, event.context, event.question, title === event.summary ? "" : event.summary);
   const detailsText = event.details ? JSON.stringify(event.details, null, 2) : "";
+  const isTool = kind === "tool" || kind === "tool_result";
+  const isBash = isTool && isBashTool(event.name);
+  const todoItems = kind === "tool_result" && event.name === "manage_todo_list" ? todoItemsFromDetails(event.details) : [];
 
   return (
     <MessageSurface kind={kind}>
       {renderCardHeader(kind, title || undefined, undefined, event.ts)}
-      {body ? renderRichText(body, "messageBody", options) : null}
-      {detailsText ? <pre className="messageCardPre overflow-x-auto rounded-xl bg-background/80 p-3 text-sm">{detailsText}</pre> : null}
+      {todoItems.length ? renderTodoItemsList(todoItems) : null}
+      {body ? (isBash ? renderCodeBlock(body) : renderRichText(body, "messageBody", options)) : null}
+      {!todoItems.length && detailsText ? renderCodeBlock(detailsText) : null}
     </MessageSurface>
   );
 }
