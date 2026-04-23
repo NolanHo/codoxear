@@ -775,18 +775,6 @@ def _load_or_create_hmac_secret() -> bytes:
 HMAC_SECRET = _load_or_create_hmac_secret()
 
 
-def _sign_cookie(payload: dict[str, Any]) -> str:
-    return _http_auth_tokens.sign_cookie(payload, secret=HMAC_SECRET)
-
-
-def _verify_cookie(value: str) -> dict[str, Any] | None:
-    return _http_auth_tokens.verify_cookie(value, secret=HMAC_SECRET, now_ts=_now())
-
-
-def _parse_cookies(header: str | None) -> dict[str, str]:
-    return _http_auth_tokens.parse_cookies(header)
-
-
 def _require_auth(handler: http.server.BaseHTTPRequestHandler) -> bool:
     return _http_auth_tokens.require_auth(
         handler,
@@ -849,16 +837,6 @@ def _read_text_file_strict(path: Path, *, max_bytes: int) -> tuple[str, int]:
 
 def _file_content_version(raw: bytes) -> str:
     return _workspace_file_access.file_content_version(raw)
-
-
-def _markdown_kind(path: Path) -> str:
-    return _workspace_file_access.markdown_kind(RUNTIME, path)
-
-
-def _decode_text_view_for_client(
-    path: Path, raw: bytes
-) -> tuple[str, bool, str] | None:
-    return _workspace_file_access.decode_text_view_for_client(RUNTIME, path, raw)
 
 
 def _read_text_file_for_write(path: Path, *, max_bytes: int) -> tuple[str, int, str]:
@@ -1938,20 +1916,12 @@ MANAGER = SessionManager()
 RUNTIME = MANAGER._runtime
 
 
-def _static_asset_version(static_dir: Path = STATIC_DIR) -> str:
-    return _http_static_assets.static_asset_version(RUNTIME, static_dir=static_dir)
-
-
 def _read_static_bytes(path: Path) -> bytes:
     return _http_static_assets.read_static_bytes(RUNTIME, path)
 
 
 def _is_path_within(root: Path, candidate: Path) -> bool:
     return _http_static_assets.is_path_within(root, candidate)
-
-
-def _candidate_web_dist_dirs() -> list[Path]:
-    return _http_static_assets.candidate_web_dist_dirs(RUNTIME)
 
 
 def _served_web_dist_dir() -> Path | None:
@@ -1964,10 +1934,6 @@ def _asset_version_from_manifest(manifest: dict[str, object]) -> str:
 
 def _pi_model_context_window(provider: str | None, model: str | None) -> int | None:
     return _pi_model_context_window_impl(provider, model)
-
-
-def _rewrite_web_index_html(data: str) -> str:
-    return _http_static_assets.rewrite_web_index_html(RUNTIME, data)
 
 
 def _read_web_index() -> tuple[str, str]:
