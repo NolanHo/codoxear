@@ -1310,6 +1310,97 @@ function parseContextCheckoutResult(text: string): { phase: string; note: string
   return null;
 }
 
+function renderStructuredToolCall(event: MessageEvent, args: Record<string, unknown> | null, rawArgs: string | null) {
+  if (event.name === "bash" || (typeof event.name === "string" && event.name.startsWith("bashExecution"))) {
+    const command = typeof args?.command === "string" ? args.command : rawArgs;
+    const timeout = typeof args?.timeout === "number" ? String(args.timeout) : null;
+    if (!command) {
+      return null;
+    }
+    return (
+      <div className="space-y-2">
+        {timeout ? (
+          <div className="messageMetaItem rounded-xl bg-background/70 p-3 text-sm">
+            <span className="block text-xs uppercase tracking-wide text-muted-foreground">Timeout</span>
+            <strong>{timeout}</strong>
+          </div>
+        ) : null}
+        {renderCodeBlock(command)}
+      </div>
+    );
+  }
+
+  if (event.name === "grep") {
+    const pattern = typeof args?.pattern === "string" ? args.pattern : rawArgs;
+    const path = typeof args?.path === "string" ? args.path : null;
+    const glob = typeof args?.glob === "string" ? args.glob : null;
+    const limit = typeof args?.limit === "number" ? String(args.limit) : null;
+    const context = typeof args?.context === "number" ? String(args.context) : null;
+    if (!pattern) {
+      return null;
+    }
+    return (
+      <div className="space-y-2">
+        <div className="grid grid-cols-2 gap-2">
+          {path ? (
+            <div className="messageMetaItem rounded-xl bg-background/70 p-3 text-sm col-span-2">
+              <span className="block text-xs uppercase tracking-wide text-muted-foreground">Path</span>
+              <strong>{path}</strong>
+            </div>
+          ) : null}
+          {glob ? (
+            <div className="messageMetaItem rounded-xl bg-background/70 p-3 text-sm">
+              <span className="block text-xs uppercase tracking-wide text-muted-foreground">Glob</span>
+              <strong>{glob}</strong>
+            </div>
+          ) : null}
+          {limit ? (
+            <div className="messageMetaItem rounded-xl bg-background/70 p-3 text-sm">
+              <span className="block text-xs uppercase tracking-wide text-muted-foreground">Limit</span>
+              <strong>{limit}</strong>
+            </div>
+          ) : null}
+          {context ? (
+            <div className="messageMetaItem rounded-xl bg-background/70 p-3 text-sm">
+              <span className="block text-xs uppercase tracking-wide text-muted-foreground">Context</span>
+              <strong>{context}</strong>
+            </div>
+          ) : null}
+        </div>
+        {renderCodeBlock(pattern)}
+      </div>
+    );
+  }
+
+  if (event.name === "edit") {
+    const path = typeof args?.path === "string" ? args.path : "";
+    const hasEdits = Array.isArray(args?.edits);
+    const mode = hasEdits ? "multi" : "single";
+    const blocks = hasEdits ? String((args?.edits as unknown[]).length) : "1";
+    if (!path) {
+      return null;
+    }
+    return (
+      <div className="grid grid-cols-2 gap-2">
+        <div className="messageMetaItem rounded-xl bg-background/70 p-3 text-sm">
+          <span className="block text-xs uppercase tracking-wide text-muted-foreground">Mode</span>
+          <strong>{mode}</strong>
+        </div>
+        <div className="messageMetaItem rounded-xl bg-background/70 p-3 text-sm">
+          <span className="block text-xs uppercase tracking-wide text-muted-foreground">Blocks</span>
+          <strong>{blocks}</strong>
+        </div>
+        <div className="messageMetaItem rounded-xl bg-background/70 p-3 text-sm col-span-2">
+          <span className="block text-xs uppercase tracking-wide text-muted-foreground">Path</span>
+          <strong>{path}</strong>
+        </div>
+      </div>
+    );
+  }
+
+  return null;
+}
+
 function renderStructuredToolResult(event: MessageEvent) {
   const text = firstNonEmptyText(event.text);
   if (!text) {
@@ -1463,8 +1554,9 @@ function renderMachineTraceDetail(event: MessageEvent, kind: CompactTraceKind, o
     const args = toolCallArgumentDetails(event);
     const rawArgs = toolCallRawArguments(event);
     const argsText = args ? JSON.stringify(args, null, 2) : rawArgs;
+    const structuredCall = renderStructuredToolCall(event, args, rawArgs);
     const isProcessTool = event.name === "process";
-    const isBash = isBashTool(event.name);
+    const isRawCode = isRawCodeToolOutput(event.name);
     return (
       <div className={cn("machineTraceDetailBody space-y-3", isProcessTool && "processToolDetail")}> 
         {renderCardHeader("tool", machineTraceTitle(event, kind), event.summary || undefined, event.ts)}
@@ -1490,8 +1582,10 @@ function renderMachineTraceDetail(event: MessageEvent, kind: CompactTraceKind, o
             ) : null}
           </div>
         ) : null}
-        {body ? (isBash ? renderCodeBlock(body) : renderRichText(body, "messageBody", options)) : null}
-        {argsText ? renderCodeBlock(argsText) : <div className="messageCardFooterText text-sm text-muted-foreground">No additional tool input.</div>}
+        {structuredCall}
+        {body ? (isRawCode ? renderCodeBlock(body) : renderRichText(body, "messageBody", options)) : null}
+        {!structuredCall && argsText ? renderCodeBlock(argsText) : null}
+        {!structuredCall && !argsText ? <div className="messageCardFooterText text-sm text-muted-foreground">No additional tool input.</div> : null}
       </div>
     );
   }

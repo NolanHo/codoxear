@@ -455,7 +455,7 @@ describe("ConversationPane", () => {
     expect(root.textContent).toContain("threshold");
   });
 
-  it("shows tool call arguments in compact trace detail", () => {
+  it("shows bash tool call command as code block instead of json args", () => {
     const sessionsStore = createStaticStore(
       { items: [], activeSessionId: "sess-tool-args", loading: false, newSessionDefaults: null },
       { refresh: () => Promise.resolve(), select: () => undefined },
@@ -501,8 +501,115 @@ describe("ConversationPane", () => {
       token?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     });
 
-    expect(root.textContent).toContain("ls -la");
-    expect(root.textContent).toContain("timeout");
+    const code = root.querySelector(".machineTraceDetail.tool .messageCardPre code");
+    expect(code?.textContent).toContain("ls -la");
+    expect(root.textContent).toContain("Timeout");
+    expect(root.textContent).not.toContain('"command"');
+  });
+
+  it("renders grep tool call with structured fields instead of raw json", () => {
+    const sessionsStore = createStaticStore(
+      { items: [], activeSessionId: "sess-grep-args", loading: false, newSessionDefaults: null },
+      { refresh: () => Promise.resolve(), select: () => undefined },
+    );
+    const messagesStore = createStaticStore(
+      {
+        bySessionId: {
+          "sess-grep-args": [
+            {
+              type: "tool",
+              name: "grep",
+              details: {
+                arguments: {
+                  pattern: "manage_todo_list",
+                  path: "/tmp/repo",
+                  limit: 20,
+                },
+              },
+              ts: 100,
+            },
+          ],
+        },
+        offsetsBySessionId: { "sess-grep-args": 1 },
+        loading: false,
+      },
+      { loadInitial: () => Promise.resolve(), poll: () => Promise.resolve() },
+    );
+
+    root = document.createElement("div");
+    document.body.appendChild(root);
+    render(
+      <AppProviders sessionsStore={sessionsStore as any} messagesStore={messagesStore as any}>
+        <ConversationPane />
+      </AppProviders>,
+      root,
+    );
+
+    const token = root.querySelector(".machineTraceToken.tool") as HTMLButtonElement | null;
+    expect(token).not.toBeNull();
+
+    act(() => {
+      token?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+
+    expect(root.textContent).toContain("Path");
+    expect(root.textContent).toContain("/tmp/repo");
+    expect(root.textContent).toContain("Limit");
+    expect(root.textContent).toContain("20");
+    expect(root.textContent).toContain("manage_todo_list");
+    expect(root.textContent).not.toContain('"pattern"');
+  });
+
+  it("renders edit tool call with structured fields instead of raw json", () => {
+    const sessionsStore = createStaticStore(
+      { items: [], activeSessionId: "sess-edit-args", loading: false, newSessionDefaults: null },
+      { refresh: () => Promise.resolve(), select: () => undefined },
+    );
+    const messagesStore = createStaticStore(
+      {
+        bySessionId: {
+          "sess-edit-args": [
+            {
+              type: "tool",
+              name: "edit",
+              details: {
+                arguments: {
+                  path: "/tmp/repo/file.ts",
+                  edits: [{ oldText: "a", newText: "b" }, { oldText: "c", newText: "d" }],
+                },
+              },
+              ts: 100,
+            },
+          ],
+        },
+        offsetsBySessionId: { "sess-edit-args": 1 },
+        loading: false,
+      },
+      { loadInitial: () => Promise.resolve(), poll: () => Promise.resolve() },
+    );
+
+    root = document.createElement("div");
+    document.body.appendChild(root);
+    render(
+      <AppProviders sessionsStore={sessionsStore as any} messagesStore={messagesStore as any}>
+        <ConversationPane />
+      </AppProviders>,
+      root,
+    );
+
+    const token = root.querySelector(".machineTraceToken.tool") as HTMLButtonElement | null;
+    expect(token).not.toBeNull();
+
+    act(() => {
+      token?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+
+    expect(root.textContent).toContain("Mode");
+    expect(root.textContent).toContain("multi");
+    expect(root.textContent).toContain("Blocks");
+    expect(root.textContent).toContain("2");
+    expect(root.textContent).toContain("/tmp/repo/file.ts");
+    expect(root.textContent).not.toContain('"edits"');
   });
 
   it("renders bash tool output as raw code block without markdown list parsing", () => {
@@ -1441,7 +1548,7 @@ describe("ConversationPane", () => {
       await Promise.resolve();
     });
 
-    expect(root.querySelector("[data-testid='machine-trace-detail'] .messageBody")?.textContent).toContain("web/src/components/conversation/ConversationPane.tsx");
+    expect(root.querySelector("[data-testid='machine-trace-detail']")?.textContent).toContain("web/src/components/conversation/ConversationPane.tsx");
     expect(toolToken?.getAttribute("aria-expanded")).toBe("true");
     expect(toolResultToken?.getAttribute("aria-expanded")).toBe("false");
 
