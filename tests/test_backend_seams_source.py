@@ -58,14 +58,18 @@ class TestBackendSeamsSource(unittest.TestCase):
 
     def test_session_routes_delegate_creation_to_owner_and_keep_server_listing_surfaces(self) -> None:
         read_source = (ROOT / "http" / "routes" / "sessions_read.py").read_text(encoding="utf-8")
+        read_bootstrap = (ROOT / "http" / "routes" / "sessions_read_bootstrap.py").read_text(encoding="utf-8")
         write_source = (ROOT / "http" / "routes" / "sessions_write.py").read_text(encoding="utf-8")
-        self.assertIn("from ...sessions import creation as _session_creation", read_source)
-        self.assertIn("_session_creation.read_new_session_defaults(", read_source)
-        self.assertIn("sv._session_list_payload(", read_source)
-        self.assertIn("sv._first_user_message_preview_from_log", read_source)
-        self.assertIn("sv._first_user_message_preview_from_pi_session", read_source)
-        self.assertIn("from ...sessions import creation as _session_creation", write_source)
-        self.assertIn("_session_creation.parse_create_session_request(sv, obj)", write_source)
+        write_create = (ROOT / "http" / "routes" / "sessions_write_create.py").read_text(encoding="utf-8")
+        self.assertIn("from . import sessions_read_bootstrap as _bootstrap", read_source)
+        self.assertIn("from ...sessions import creation as _session_creation", read_bootstrap)
+        self.assertIn("_session_creation.read_new_session_defaults(", read_bootstrap)
+        self.assertIn("runtime._session_list_payload(", read_bootstrap)
+        self.assertIn("runtime._first_user_message_preview_from_log", read_bootstrap)
+        self.assertIn("runtime._first_user_message_preview_from_pi_session", read_bootstrap)
+        self.assertIn("from . import sessions_write_create as _create", write_source)
+        self.assertIn("from ...sessions import creation as _session_creation", write_create)
+        self.assertIn("_session_creation.parse_create_session_request(runtime, obj)", write_create)
 
     def test_server_delegates_session_catalog_identity_lookups(self) -> None:
         source = SERVER.read_text(encoding="utf-8")

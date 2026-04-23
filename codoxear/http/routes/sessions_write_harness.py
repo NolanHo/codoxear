@@ -1,0 +1,81 @@
+from __future__ import annotations
+
+from typing import Any
+
+from ...runtime import ServerRuntime
+from . import sessions_write_common as _common
+
+
+def handle_post(runtime: ServerRuntime, handler: Any, path: str) -> bool:
+    if path.startswith("/api/sessions/") and path.endswith("/harness"):
+        if not runtime._require_auth(handler):
+            handler._unauthorized()
+            return True
+        session_id = _common.session_id_from_path(path)
+        obj = _common.read_json_object(runtime, handler)
+        enabled_raw = obj.get("enabled", None)
+        request_raw = obj.get("request", None)
+        cooldown_minutes_raw = obj.get("cooldown_minutes", None)
+        remaining_injections_raw = obj.get("remaining_injections", None)
+        if "text" in obj:
+            runtime._json_response(handler, 400, {"error": "unknown field: text (use request)"})
+            return True
+        enabled = None if enabled_raw is None else bool(enabled_raw)
+        if request_raw is not None and not isinstance(request_raw, str):
+            runtime._json_response(handler, 400, {"error": "request must be a string"})
+            return True
+        request = request_raw if request_raw is not None else None
+        if cooldown_minutes_raw is not None:
+            try:
+                cooldown_minutes = runtime._clean_harness_cooldown_minutes(cooldown_minutes_raw)
+            except ValueError as exc:
+                runtime._json_response(handler, 400, {"error": str(exc)})
+                return True
+        else:
+            cooldown_minutes = None
+        if remaining_injections_raw is not None:
+            try:
+                remaining_injections = runtime._clean_harness_remaining_injections(
+                    remaining_injections_raw,
+                    allow_zero=True,
+                )
+            except ValueError as exc:
+                runtime._json_response(handler, 400, {"error": str(exc)})
+                return True
+        else:
+            remaining_injections = None
+        cfg = runtime.MANAGER.harness_set(
+            session_id,
+            enabled=enabled,
+            request=request,
+            cooldown_minutes=cooldown_minutes,
+            remaining_injections=remaining_injections,
+        )
+        runtime._json_response(handler, 200, {"ok": True, **cfg})
+        return True
+
+    if path.startswith("/api/sessions/") and path.endswith("/interrupt"):
+        if not runtime._require_auth(handler):
+            handler._unauthorized()
+            return True
+        session_id = _common.session_id_from_path(path)
+        runtime._read_body(handler)
+        try:
+            resp = runtime.MANAGER.inject_keys(session_id, "\\x1b")
+        except KeyError:
+            runtime._json_response(handler, 404, {"error": "unknown session"})
+            return True
+        except ValueError as exc:
+            runtime._json_response(handler, 502, {"error": str(exc)})
+            return True
+        durable_session_id = runtime.MANAGER._durable_session_id_for_identifier(session_id) or session_id
+        runtime_id = runtime.MANAGER._runtime_session_id_for_identifier(session_id)
+        runtime._publish_session_live_invalidate(
+            durable_session_id,
+            runtime_id=runtime_id,
+            reason="interrupt",
+        )
+        runtime._json_response(handler, 200, {"ok": True, "broker": resp})
+        return True
+
+    return False
