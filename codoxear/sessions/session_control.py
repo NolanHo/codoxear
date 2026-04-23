@@ -304,7 +304,7 @@ def spawn_web_session(
         else:
             pending_session_id = str(sv.uuid.uuid4())
             session_path = sv._pi_new_session_file_for_cwd(cwd_path)
-            sv._write_pi_session_header(
+            sv._pi_session_files.service(sv).write_pi_session_header(
                 session_path,
                 session_id=pending_session_id,
                 cwd=cwd3,
@@ -832,7 +832,7 @@ def handoff_session(manager: Any, session_id: str) -> dict[str, Any]:
     try:
         sv._copy_file_atomic(source_path, history_path)
         copied_history = True
-        sv._write_pi_handoff_session(
+        sv._pi_session_files.service(sv).write_pi_handoff_session(
             new_session_path,
             session_id=new_session_id,
             cwd=cwd,

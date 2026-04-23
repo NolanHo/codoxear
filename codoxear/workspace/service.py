@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from ..runtime import ServerRuntime
+from . import file_access as _file_access
 
 
 def _session_base(runtime: ServerRuntime, session_id: str, *, strict: bool = False) -> tuple[Any, Path]:
@@ -281,7 +282,7 @@ def read_session_file(runtime: ServerRuntime, session_id: str, rel: str) -> dict
         raise FileNotFoundError("file not found")
     if not path_obj.is_file():
         raise ValueError("path is not a file")
-    view = runtime._read_client_file_view(path_obj)
+    view = _file_access.read_client_file_view(runtime, path_obj)
     _track_file(runtime, session_id, path_obj)
     if view.kind == "image":
         return {
@@ -371,14 +372,18 @@ def resolve_client_blob(runtime: ServerRuntime, raw_path: str) -> Path:
 
 def download_session_file(runtime: ServerRuntime, session_id: str, rel: str) -> tuple[Path, bytes, int]:
     path_obj = resolve_session_blob(runtime, session_id, rel)
-    raw, size = runtime._read_downloadable_file(path_obj)
+    raw, size = _file_access.read_downloadable_file(path_obj)
     _track_file(runtime, session_id, path_obj)
     return path_obj, raw, size
 
 
 def read_client_file(runtime: ServerRuntime, path_raw: str, session_id: str = "") -> dict[str, Any]:
-    path_obj = runtime._resolve_client_file_path(session_id=session_id, raw_path=path_raw)
-    view = runtime._read_client_file_view(path_obj)
+    path_obj = _file_access.resolve_client_file_path(
+        runtime,
+        session_id=session_id,
+        raw_path=path_raw,
+    )
+    view = _file_access.read_client_file_view(runtime, path_obj)
     if session_id:
         _track_file(runtime, session_id, path_obj)
     if view.kind == "image":
@@ -420,8 +425,12 @@ def read_client_file(runtime: ServerRuntime, path_raw: str, session_id: str = ""
 
 
 def inspect_client_file(runtime: ServerRuntime, path_raw: str, session_id: str = "") -> dict[str, Any]:
-    path_obj = runtime._resolve_client_file_path(session_id=session_id, raw_path=path_raw)
-    view = runtime._read_client_file_view(path_obj)
+    path_obj = _file_access.resolve_client_file_path(
+        runtime,
+        session_id=session_id,
+        raw_path=path_raw,
+    )
+    view = _file_access.read_client_file_view(runtime, path_obj)
     return {
         "ok": True,
         "path": str(path_obj),

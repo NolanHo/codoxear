@@ -9,13 +9,16 @@ VOICE_PUSH = ROOT / "voice_push.py"
 class TestBackendSeamsSource(unittest.TestCase):
     def test_server_dispatches_http_routes_through_modules(self) -> None:
         source = SERVER.read_text(encoding="utf-8")
+        runner = (ROOT / "http" / "server_runner.py").read_text(encoding="utf-8")
         self.assertIn("from .http.routes import assets as _http_assets_routes", source)
         self.assertIn("from .http.routes import sessions_read as _http_session_read_routes", source)
-        self.assertIn("route_module.handle_get(RUNTIME, self, path, u)", source)
-        self.assertIn("route_module.handle_post(RUNTIME, self, path, u)", source)
+        self.assertIn("route_module.handle_get(runtime, self, path, u)", runner)
+        self.assertIn("route_module.handle_post(runtime, self, path, u)", runner)
 
     def test_server_uses_payload_sidebar_and_pi_bridge_seams(self) -> None:
         source = SERVER.read_text(encoding="utf-8")
+        delegates = (ROOT / "sessions" / "manager_delegates.py").read_text(encoding="utf-8")
+        combined = source + "\n" + delegates
         self.assertIn("from .sessions import payloads as _session_payloads", source)
         self.assertIn("from .sessions import live_payloads as _session_live_payloads", source)
         self.assertIn("from .sessions import pi_session_files as _pi_session_files", source)
@@ -31,8 +34,8 @@ class TestBackendSeamsSource(unittest.TestCase):
         self.assertIn("from .workspace import file_access as _workspace_file_access", source)
         self.assertIn("from .workspace import file_search as _workspace_file_search", source)
         self.assertIn("from .pi import ui_bridge as _pi_ui_bridge", source)
-        self.assertIn("self._sidebar_state_facade().persist_session_ui_state()", source)
-        self.assertIn("return _pi_ui_bridge.submit_ui_response(RUNTIME, self, session_id, payload)", source)
+        self.assertIn("self._sidebar_state_facade().persist_session_ui_state()", combined)
+        self.assertIn("_pi_ui_bridge.submit_ui_response(", combined)
 
     def test_server_builds_explicit_runtime_object(self) -> None:
         source = SERVER.read_text(encoding="utf-8")
@@ -62,87 +65,68 @@ class TestBackendSeamsSource(unittest.TestCase):
 
     def test_server_delegates_session_catalog_identity_lookups(self) -> None:
         source = SERVER.read_text(encoding="utf-8")
+        delegates = (ROOT / "sessions" / "manager_delegates.py").read_text(encoding="utf-8")
+        combined = source + "\n" + delegates
         self.assertIn("from .sessions import session_catalog as _session_catalog", source)
-        self.assertIn("return _session_catalog.service(self).runtime_session_id_for_identifier(session_id)", source)
-        self.assertIn("return _session_catalog.service(self).durable_session_id_for_identifier(session_id)", source)
-        self.assertIn("return _session_catalog.service(self).page_state_ref_for_session_id(session_id)", source)
-        self.assertIn("return _session_catalog.service(self).get_session(session_id)", source)
-        self.assertIn("return _session_catalog.service(self).list_sessions()", source)
-        self.assertIn("_session_catalog.service(self).refresh_session_meta(session_id, strict=strict)", source)
-        self.assertIn("_session_catalog.service(self).discover_existing(", source)
-        self.assertIn("return _session_catalog.service(self).refresh_session_state(", source)
-        self.assertIn("_session_catalog.service(self).prune_dead_sessions()", source)
+        self.assertIn("_session_catalog.service(self).runtime_session_id_for_identifier(session_id)", combined)
+        self.assertIn("_session_catalog.service(self).durable_session_id_for_identifier(session_id)", combined)
+        self.assertIn("_session_catalog.service(self).page_state_ref_for_session_id(session_id)", combined)
+        self.assertIn("_session_catalog.service(self).get_session(session_id)", combined)
+        self.assertIn("_session_catalog.service(self).list_sessions()", combined)
+        self.assertIn("_session_catalog.service(self).refresh_session_meta(", combined)
+        self.assertIn("_session_catalog.service(self).discover_existing(", combined)
+        self.assertIn("_session_catalog.service(self).refresh_session_state(", combined)
+        self.assertIn("_session_catalog.service(self).prune_dead_sessions()", combined)
 
     def test_server_delegates_session_control_send_and_queue_flows(self) -> None:
         source = SERVER.read_text(encoding="utf-8")
-        self.assertIn("from .sessions import session_control as _session_control", source)
-        self.assertIn("return _session_control.service(self).send(session_id, text)", source)
-        self.assertIn("return _session_control.service(self).enqueue(session_id, text)", source)
-        self.assertIn("return _session_control.service(self).queue_list(session_id)", source)
-        self.assertIn("return _session_control.service(self).queue_delete(session_id, int(index))", source)
-        self.assertIn("return _session_control.service(self).queue_update(session_id, int(index), text)", source)
-        self.assertIn("return _session_control.service(self).restart_session(session_id)", source)
-        self.assertIn("return _session_control.service(self).handoff_session(session_id)", source)
-        self.assertIn("return _session_control.service(self).spawn_web_session(", source)
-        self.assertIn("return _message_history.service(self).get_messages_page(", source)
-        self.assertIn("return _message_history.service(self).ensure_chat_index(", source)
-        self.assertIn("return _message_history.service(self).ensure_pi_chat_index(", source)
-        self.assertIn("_message_history.service(self).mark_log_delta(", source)
-        self.assertIn("return _message_history.service(self).idle_from_log(session_id)", source)
-        self.assertIn("return _page_state.service(self).queue_len(session_id)", source)
-        self.assertIn("return _page_state.service(self).queue_enqueue_local(session_id, text)", source)
-        self.assertIn("return _page_state.service(self).files_get(session_id)", source)
-        self.assertIn("return _page_state.service(self).harness_get(session_id)", source)
-        self.assertIn("return _page_state.service(self).cwd_group_set(", source)
-        self.assertIn("return _page_state.service(self).recent_cwds(limit=limit)", source)
-        self.assertIn("return _session_background.service(self).probe_bridge_transport(", source)
-        self.assertIn("return _session_background.service(self).enqueue_outbound_request(runtime_id, text)", source)
-        self.assertIn("return _session_background.service(self).maybe_drain_outbound_request(runtime_id)", source)
-        self.assertIn("return _session_background.service(self).session_display_name(session_id)", source)
-        self.assertIn("_session_background.service(self).observe_rollout_delta(", source)
-        self.assertIn("_session_background.service(self).harness_sweep()", source)
-        self.assertIn("_session_background.service(self).queue_sweep()", source)
-        self.assertIn("_session_background.service(self).update_meta_counters()", source)
-        self.assertIn("return _session_lifecycle.service(self).catalog_record_for_ref(ref)", source)
-        self.assertIn("_session_lifecycle.service(self).refresh_durable_session_catalog(force=force)", source)
-        self.assertIn("return _session_lifecycle.service(self).wait_for_live_session(", source)
-        self.assertIn("return _session_lifecycle.service(self).capture_runtime_bound_restart_state(", source)
-        self.assertIn("_session_lifecycle.service(self).stage_runtime_bound_restart_state(", source)
-        self.assertIn("_session_lifecycle.service(self).restore_runtime_bound_restart_state(", source)
-        self.assertIn("_session_lifecycle.service(self).finalize_pending_pi_spawn(", source)
-        self.assertIn("_session_lifecycle.service(self).reset_log_caches(s, meta_log_off=meta_log_off)", source)
-        self.assertIn("return _session_lifecycle.service(self).claimed_pi_session_paths(", source)
-        self.assertIn("_session_lifecycle.service(self).apply_session_source(", source)
-        self.assertIn("return _session_lifecycle.service(self).session_run_settings(", source)
-        self.assertIn("return _session_transport.service(self).get_state(session_id)", source)
-        self.assertIn("return _session_transport.service(self).get_tail(session_id)", source)
-        self.assertIn("return _session_transport.service(self).inject_keys(session_id, seq)", source)
-        self.assertIn("return _session_transport.service(self).kill_session(session_id)", source)
-        self.assertIn("return _session_payloads.service(RUNTIME, manager).session_details_payload(session_id)", source)
-        self.assertIn("return _session_payloads.service(RUNTIME).session_context_usage_payload(s, token_val)", source)
-        self.assertIn("return _session_payloads.service(RUNTIME).session_turn_timing_payload(", source)
-        self.assertIn("return _session_payloads.service(RUNTIME, manager).session_workspace_payload(session_id)", source)
-        self.assertIn("return _session_live_payloads.service(RUNTIME, manager).session_live_payload(", source)
-        self.assertIn("return _workspace_file_access.resolve_client_file_path(", source)
-        self.assertIn("return _workspace_file_access.read_client_file_view(RUNTIME, path_obj)", source)
-        self.assertIn("return _workspace_file_access.read_downloadable_file(path_obj)", source)
-        self.assertIn("return _workspace_file_access.download_disposition(path_obj)", source)
-        self.assertIn("return _workspace_file_search.search_session_relative_files(", source)
-        self.assertIn("return _resume_candidates.service(RUNTIME).resume_candidate_from_log(", source)
-        self.assertIn("return _resume_candidates.service(RUNTIME).resolve_pi_session_path(", source)
-        self.assertIn("return _resume_candidates.service(RUNTIME).list_resume_candidates_for_cwd(", source)
-        self.assertIn("return _resume_candidates.service(RUNTIME).iter_all_resume_candidates(limit=limit)", source)
-        self.assertIn("return _resume_candidates.service(RUNTIME).pi_resume_candidate_from_session_file(", source)
-        self.assertIn("return _session_listing.service(RUNTIME).historical_session_id(", source)
-        self.assertIn("return _session_listing.service(RUNTIME).parse_historical_session_id(session_id)", source)
-        self.assertIn("return _session_listing.service(RUNTIME).historical_session_row(session_id)", source)
-        self.assertIn("return _pi_session_files.service(RUNTIME).pi_new_session_file_for_cwd(cwd)", source)
-        self.assertIn("return _pi_session_files.service(RUNTIME).write_pi_session_header(", source)
-        self.assertIn("return _pi_session_files.service(RUNTIME).next_pi_handoff_history_path(session_path)", source)
-        self.assertIn("return _pi_session_files.service(RUNTIME).copy_file_atomic(source_path, target_path)", source)
-        self.assertIn("return _pi_session_files.service(RUNTIME).write_pi_handoff_session(", source)
-        self.assertIn("return _pi_session_files.service(RUNTIME).pi_session_has_handoff_history(session_path)", source)
-        self.assertIn("return _pi_session_files.service(RUNTIME).pi_session_name_from_session_file(", source)
+        delegates = (ROOT / "sessions" / "manager_delegates.py").read_text(encoding="utf-8")
+        combined = source + "\n" + delegates
+        self.assertIn("from .sessions import manager_delegates as _manager_delegates", source)
+        self.assertIn("class SessionManager(_manager_delegates.SessionManagerDelegates)", source)
+        for fragment in [
+            "_session_control.service(self).send(session_id, text)",
+            "_session_control.service(self).enqueue(session_id, text)",
+            "_session_control.service(self).queue_list(session_id)",
+            "_session_control.service(self).queue_delete(session_id, int(index))",
+            "_session_control.service(self).queue_update(",
+            "_session_control.service(self).spawn_web_session(",
+            "_message_history.service(self).get_messages_page(",
+            "_message_history.service(self).ensure_chat_index(",
+            "_message_history.service(self).ensure_pi_chat_index(",
+            "_message_history.service(self).mark_log_delta(",
+            "_page_state.service(self).queue_len(session_id)",
+            "_page_state.service(self).queue_enqueue_local(session_id, text)",
+            "_page_state.service(self).files_get(session_id)",
+            "_page_state.service(self).harness_get(session_id)",
+            "_page_state.service(self).cwd_group_set(",
+            "_session_background.service(self).probe_bridge_transport(",
+            "_session_background.service(self).session_display_name(session_id)",
+            "_session_background.service(self).observe_rollout_delta(",
+            "_session_background.service(self).harness_sweep()",
+            "_session_background.service(self).queue_sweep()",
+            "_session_background.service(self).update_meta_counters()",
+            "_session_lifecycle.service(self).catalog_record_for_ref(ref)",
+            "_session_lifecycle.service(self).refresh_durable_session_catalog(force=force)",
+            "_session_lifecycle.service(self).wait_for_live_session(",
+            "_session_lifecycle.service(self).capture_runtime_bound_restart_state(",
+            "_session_lifecycle.service(self).stage_runtime_bound_restart_state(",
+            "_session_lifecycle.service(self).restore_runtime_bound_restart_state(",
+            "_session_transport.service(self).get_state(session_id)",
+            "_session_transport.service(self).get_tail(session_id)",
+            "_session_transport.service(self).inject_keys(session_id, seq)",
+            "_session_transport.service(self).kill_session(session_id)",
+            "_session_payloads.service(RUNTIME, manager).session_details_payload(session_id)",
+            "_session_payloads.service(RUNTIME).session_context_usage_payload(s, token_val)",
+            "_session_payloads.service(RUNTIME).session_turn_timing_payload(",
+            "_session_live_payloads.service(RUNTIME, manager).session_live_payload(",
+            "_workspace_file_search.search_session_relative_files(",
+            "_workspace_file_search.search_session_relative_files(",
+            "_resume_candidates.service(RUNTIME).resume_candidate_from_log(",
+            "_resume_candidates.service(RUNTIME).list_resume_candidates_for_cwd(",
+            "_session_listing.service(RUNTIME).historical_session_id(",
+        ]:
+            self.assertIn(fragment, combined)
 
     def test_seam_modules_no_longer_use_bound_server_globals(self) -> None:
         files = [

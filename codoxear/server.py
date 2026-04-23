@@ -30,7 +30,7 @@ import traceback
 import urllib.parse
 import uuid
 import zlib
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -41,8 +41,10 @@ from .agent_backend import (
     infer_agent_backend_from_log_path,
     normalize_agent_backend,
 )
+from .events import publish as _event_publish
 from .events.hub import EventHub
 from .http import auth_tokens as _http_auth_tokens
+from .http import server_runner as _http_server_runner
 from .http import static_assets as _http_static_assets
 from .http.routes import assets as _http_assets_routes
 from .http.routes import auth as _http_auth_routes
@@ -58,6 +60,7 @@ from .page_state_sqlite import (
     import_legacy_app_dir_to_db,
 )
 from .pi import ui_bridge as _pi_ui_bridge
+from .pi import ui_payloads as _pi_ui_payloads
 from .pi_log import pi_model_context_window as _pi_model_context_window_impl
 from .pi_log import pi_user_text as _pi_user_text
 from .pi_log import read_pi_run_settings as _read_pi_run_settings
@@ -67,17 +70,24 @@ from .sessions import background as _session_background
 from .sessions import lifecycle as _session_lifecycle
 from .sessions import listing as _session_listing
 from .sessions import live_payloads as _session_live_payloads
+from .sessions import manager_delegates as _manager_delegates
 from .sessions import message_history as _message_history
+from .sessions import metadata_patch as _session_metadata_patch
+from .sessions import models as _session_models
 from .sessions import page_state as _page_state
 from .sessions import payloads as _session_payloads
 from .sessions import pi_session_files as _pi_session_files
+from .sessions import process_kill as _session_process_kill
 from .sessions import resume_candidates as _resume_candidates
 from .sessions import session_catalog as _session_catalog
+from .sessions import session_settings as _session_settings
+from .sessions import spawn_utils as _session_spawn_utils
 from .sessions import session_control as _session_control
 from .sessions import session_display as _session_display
 from .sessions import sidebar_state as _sidebar_state_module
 from .sessions import transport as _session_transport
 from .sessions.sidebar_state import SidebarStateFacade
+from . import env_file as _env_file
 from .util import default_app_dir as _default_app_dir
 from .workspace import file_access as _workspace_file_access
 from .workspace import file_search as _workspace_file_search
@@ -110,31 +120,26 @@ def _publish_invalidate_event(
     hints: dict[str, Any] | None = None,
     coalesce_ms: int = 300,
 ) -> dict[str, Any] | None:
-    payload: dict[str, Any] = {
-        "type": event_type,
-        "reason": str(reason).strip() or "update",
-        "_coalesce_ms": int(coalesce_ms),
-        "_coalesce_key": (str(event_type), str(session_id or "")),
-    }
-    clean_session_id = _clean_optional_text(session_id)
-    clean_runtime_id = _clean_optional_text(runtime_id)
-    if clean_session_id is not None:
-        payload["session_id"] = clean_session_id
-    if clean_runtime_id is not None:
-        payload["runtime_id"] = clean_runtime_id
-    if isinstance(hints, dict) and hints:
-        payload["hints"] = dict(hints)
-    return EVENT_HUB.publish(payload)
+    return _event_publish.publish_invalidate_event(
+        EVENT_HUB,
+        _clean_optional_text,
+        event_type,
+        session_id=session_id,
+        runtime_id=runtime_id,
+        reason=reason,
+        hints=hints,
+        coalesce_ms=coalesce_ms,
+    )
 
 
 
 def _publish_sessions_invalidate(*, reason: str, coalesce_ms: int = 500) -> dict[str, Any] | None:
-    return _publish_invalidate_event(
-        "sessions.invalidate",
+    return _event_publish.publish_sessions_invalidate(
+        EVENT_HUB,
+        _clean_optional_text,
         reason=reason,
         coalesce_ms=coalesce_ms,
     )
-
 
 
 def _publish_session_live_invalidate(
@@ -145,9 +150,10 @@ def _publish_session_live_invalidate(
     hints: dict[str, Any] | None = None,
     coalesce_ms: int = 300,
 ) -> dict[str, Any] | None:
-    return _publish_invalidate_event(
-        "session.live.invalidate",
-        session_id=session_id,
+    return _event_publish.publish_session_live_invalidate(
+        EVENT_HUB,
+        _clean_optional_text,
+        session_id,
         runtime_id=runtime_id,
         reason=reason,
         hints=hints,
@@ -163,9 +169,10 @@ def _publish_session_workspace_invalidate(
     reason: str,
     coalesce_ms: int = 300,
 ) -> dict[str, Any] | None:
-    return _publish_invalidate_event(
-        "session.workspace.invalidate",
-        session_id=session_id,
+    return _event_publish.publish_session_workspace_invalidate(
+        EVENT_HUB,
+        _clean_optional_text,
+        session_id,
         runtime_id=runtime_id,
         reason=reason,
         coalesce_ms=coalesce_ms,
@@ -180,9 +187,10 @@ def _publish_session_transport_invalidate(
     reason: str,
     coalesce_ms: int = 300,
 ) -> dict[str, Any] | None:
-    return _publish_invalidate_event(
-        "session.transport.invalidate",
-        session_id=session_id,
+    return _event_publish.publish_session_transport_invalidate(
+        EVENT_HUB,
+        _clean_optional_text,
+        session_id,
         runtime_id=runtime_id,
         reason=reason,
         coalesce_ms=coalesce_ms,
@@ -202,27 +210,8 @@ def _voice_push_publish_callback(event: dict[str, Any]) -> None:
     )
 
 
-
 def _load_env_file(path: Path) -> dict[str, str]:
-    data = path.read_text("utf-8")
-
-    out: dict[str, str] = {}
-    for raw in data.splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
-        if line.startswith("export "):
-            line = line[len("export ") :].strip()
-        if "=" not in line:
-            continue
-        k, v = line.split("=", 1)
-        k = k.strip()
-        v = v.strip()
-        if len(v) >= 2 and ((v[0] == v[-1] == '"') or (v[0] == v[-1] == "'")):
-            v = v[1:-1]
-        if k:
-            out[k] = v
-    return out
+    return _env_file.load_env_file(path)
 
 
 def _normalize_url_prefix(raw: str | None) -> str:
@@ -632,57 +621,16 @@ def _tmux_available() -> bool:
 
 
 def _ensure_tmux_short_app_dir() -> str:
-    try:
-        APP_DIR.mkdir(parents=True, exist_ok=True)
-    except Exception:
-        return str(TMUX_SHORT_APP_DIR)
-
-    alias = TMUX_SHORT_APP_DIR
-    try:
-        if alias.is_symlink():
-            if alias.resolve() == APP_DIR.resolve():
-                return str(alias)
-            alias.unlink()
-        elif alias.exists():
-            if alias.resolve() == APP_DIR.resolve():
-                return str(alias)
-            return str(alias)
-        alias.parent.mkdir(parents=True, exist_ok=True)
-        alias.symlink_to(APP_DIR, target_is_directory=True)
-        return str(alias)
-    except Exception:
-        return str(alias)
+    return _session_spawn_utils.ensure_tmux_short_app_dir(RUNTIME)
 
 
 def _wait_for_spawned_broker_meta(
     spawn_nonce: str, *, timeout_s: float = TMUX_META_WAIT_SECONDS
 ) -> dict[str, Any]:
-    deadline = time.time() + max(timeout_s, 0.0)
-    last_meta: dict[str, Any] | None = None
-    while time.time() <= deadline:
-        for meta_path in sorted(SOCK_DIR.glob("*.json")):
-            try:
-                meta = json.loads(meta_path.read_text(encoding="utf-8"))
-            except (FileNotFoundError, json.JSONDecodeError, OSError):
-                continue
-            if not isinstance(meta, dict):
-                continue
-            if _clean_optional_text(meta.get("spawn_nonce")) != spawn_nonce:
-                continue
-            broker_pid = meta.get("broker_pid")
-            if not isinstance(broker_pid, int):
-                continue
-            last_meta = meta
-            backend = normalize_agent_backend(meta.get("backend"), default="codex")
-            session_id = _clean_optional_text(meta.get("session_id"))
-            if backend == "pi" and session_id is None:
-                continue
-            return meta
-        time.sleep(0.05)
-    if last_meta is not None:
-        return last_meta
-    raise RuntimeError(
-        f"tmux launch did not publish broker metadata within {timeout_s:.1f}s"
+    return _session_spawn_utils.wait_for_spawned_broker_meta(
+        RUNTIME,
+        spawn_nonce,
+        timeout_s=timeout_s,
     )
 
 
@@ -730,63 +678,15 @@ def _process_group_alive(root_pid: int) -> bool:
 
 
 def _terminate_process_group(root_pid: int, *, wait_seconds: float = 1.0) -> bool:
-    if not _process_group_alive(root_pid):
-        return True
-    try:
-        os.killpg(root_pid, signal.SIGTERM)
-    except ProcessLookupError:
-        return True
-    except PermissionError:
-        return False
-    deadline = _now() + max(wait_seconds, 0.0)
-    while _process_group_alive(root_pid):
-        if _now() >= deadline:
-            break
-        time.sleep(0.05)
-    if not _process_group_alive(root_pid):
-        return True
-    try:
-        os.killpg(root_pid, signal.SIGKILL)
-    except ProcessLookupError:
-        return True
-    except PermissionError:
-        return False
-    deadline = _now() + 0.2
-    while _process_group_alive(root_pid):
-        if _now() >= deadline:
-            break
-        time.sleep(0.05)
-    return not _process_group_alive(root_pid)
+    return _session_process_kill.terminate_process_group(
+        RUNTIME,
+        root_pid,
+        wait_seconds=wait_seconds,
+    )
 
 
 def _terminate_process(pid: int, *, wait_seconds: float = 1.0) -> bool:
-    if not _pid_alive(pid):
-        return True
-    try:
-        os.kill(pid, signal.SIGTERM)
-    except ProcessLookupError:
-        return True
-    except PermissionError:
-        return False
-    deadline = _now() + max(wait_seconds, 0.0)
-    while _pid_alive(pid):
-        if _now() >= deadline:
-            break
-        time.sleep(0.05)
-    if not _pid_alive(pid):
-        return True
-    try:
-        os.kill(pid, signal.SIGKILL)
-    except ProcessLookupError:
-        return True
-    except PermissionError:
-        return False
-    deadline = _now() + 0.2
-    while _pid_alive(pid):
-        if _now() >= deadline:
-            break
-        time.sleep(0.05)
-    return not _pid_alive(pid)
+    return _session_process_kill.terminate_process(RUNTIME, pid, wait_seconds=wait_seconds)
 
 
 def _unlink_quiet(path: Path) -> None:
@@ -1135,62 +1035,15 @@ def _default_worktree_path(source_cwd: Path, branch: str) -> Path:
 
 
 def _create_git_worktree(source_cwd: Path, worktree_branch: str) -> Path:
-    repo_root = _git_repo_root(source_cwd)
-    if repo_root is None:
-        raise ValueError("cwd is not inside a git worktree")
-    branch = _clean_worktree_branch(worktree_branch)
-    target = _default_worktree_path(source_cwd, branch)
-    if target.exists():
-        raise ValueError(f"derived worktree path already exists: {target}")
-    target.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        proc = subprocess.run(
-            ["git", "worktree", "add", "-b", branch, str(target)],
-            cwd=str(repo_root),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            timeout=GIT_WORKTREE_TIMEOUT_SECONDS,
-            check=False,
-        )
-    except subprocess.TimeoutExpired as e:
-        raise ValueError("git worktree add timed out") from e
-    if proc.returncode != 0:
-        err = proc.stderr.decode("utf-8", errors="replace").strip()
-        out = proc.stdout.decode("utf-8", errors="replace").strip()
-        raise ValueError(
-            err or out or f"git worktree add failed with code {proc.returncode}"
-        )
-    return target.resolve()
+    return _session_spawn_utils.create_git_worktree(
+        RUNTIME,
+        source_cwd,
+        worktree_branch,
+    )
 
 
 def _parse_git_numstat(text: str) -> dict[str, dict[str, int | None]]:
-    out: dict[str, dict[str, int | None]] = {}
-    for raw in text.splitlines():
-        line = raw.strip()
-        if not line:
-            continue
-        parts = line.split("\t", 2)
-        if len(parts) != 3:
-            continue
-        add_raw, del_raw, path = parts
-        path_s = path.strip()
-        if not path_s:
-            continue
-        add_v = None if add_raw == "-" else int(add_raw)
-        del_v = None if del_raw == "-" else int(del_raw)
-        prev = out.get(path_s)
-        if prev is None:
-            out[path_s] = {"additions": add_v, "deletions": del_v}
-            continue
-        if add_v is None or prev["additions"] is None:
-            prev["additions"] = None
-        else:
-            prev["additions"] = int(prev["additions"]) + add_v
-        if del_v is None or prev["deletions"] is None:
-            prev["deletions"] = None
-        else:
-            prev["deletions"] = int(prev["deletions"]) + del_v
-    return out
+    return _session_spawn_utils.parse_git_numstat(text)
 
 
 def _safe_filename(name: str, *, default: str = "file") -> str:
@@ -1406,33 +1259,11 @@ def _display_pi_reasoning_effort(value: Any) -> str | None:
 
 
 def _normalize_requested_reasoning_effort(value: Any) -> str | None:
-    if value is None:
-        return None
-    if not isinstance(value, str):
-        raise ValueError("reasoning_effort must be a string")
-    out = value.strip().lower()
-    if not out:
-        return None
-    if out not in SUPPORTED_REASONING_EFFORTS:
-        raise ValueError(
-            f"reasoning_effort must be one of {', '.join(SUPPORTED_REASONING_EFFORTS)}"
-        )
-    return out
+    return _session_settings.normalize_requested_reasoning_effort(RUNTIME, value)
 
 
 def _normalize_requested_pi_reasoning_effort(value: Any) -> str | None:
-    if value is None:
-        return None
-    if not isinstance(value, str):
-        raise ValueError("reasoning_effort must be a string")
-    out = value.strip().lower()
-    if not out:
-        return None
-    if out not in SUPPORTED_PI_REASONING_EFFORTS:
-        raise ValueError(
-            f"reasoning_effort must be one of {', '.join(SUPPORTED_PI_REASONING_EFFORTS)}"
-        )
-    return out
+    return _session_settings.normalize_requested_pi_reasoning_effort(RUNTIME, value)
 
 
 def _priority_from_elapsed_seconds(elapsed_s: float) -> float:
@@ -1457,45 +1288,11 @@ def _current_git_branch(cwd: Path) -> str | None:
 
 
 def _todo_snapshot_payload_for_session(s: Session) -> dict[str, Any]:
-    empty = {"available": False, "error": False, "items": []}
-    read_error = {"available": False, "error": True, "items": []}
-    if s.backend != "pi" or s.session_path is None:
-        return empty
-    try:
-        snapshot = _pi_messages.read_latest_pi_todo_snapshot(s.session_path)
-    except FileNotFoundError:
-        return empty
-    except OSError as exc:
-        if exc.errno == errno.ENOENT:
-            return empty
-        return read_error
-    if snapshot is None:
-        return empty
-    return {
-        "available": True,
-        "error": False,
-        "items": snapshot.get("items", []),
-        "counts": snapshot.get("counts", {}),
-        "progress_text": snapshot.get("progress_text", ""),
-    }
-
-
-_PI_DIALOG_UI_METHODS = {"select", "confirm", "input", "editor"}
+    return _pi_ui_payloads.todo_snapshot_payload_for_session(RUNTIME, s)
 
 
 def _sanitize_pi_ui_state_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    requests = payload.get("requests")
-    if not isinstance(requests, list):
-        return {"requests": []}
-    filtered = []
-    for item in requests:
-        if not isinstance(item, dict):
-            continue
-        method = item.get("method")
-        if not isinstance(method, str) or method not in _PI_DIALOG_UI_METHODS:
-            continue
-        filtered.append(item)
-    return {"requests": filtered}
+    return _pi_ui_payloads.sanitize_pi_ui_state_payload(payload)
 
 
 def _ui_requests_version(requests: list[dict[str, Any]]) -> str:
@@ -1510,72 +1307,11 @@ def _ui_requests_version(requests: list[dict[str, Any]]) -> str:
 
 
 def _sanitize_pi_commands_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    commands = payload.get("commands")
-    if not isinstance(commands, list):
-        return {"commands": []}
-    filtered: list[dict[str, Any]] = []
-    for item in commands:
-        if not isinstance(item, dict):
-            continue
-        name = item.get("name")
-        if not isinstance(name, str):
-            continue
-        clean_name = name.strip()
-        if not clean_name:
-            continue
-        clean_item: dict[str, Any] = {"name": clean_name}
-        description = item.get("description")
-        if isinstance(description, str) and description.strip():
-            clean_item["description"] = description.strip()
-        source = item.get("source")
-        if isinstance(source, str) and source.strip():
-            clean_item["source"] = source.strip()
-        filtered.append(clean_item)
-    return {"commands": filtered}
+    return _pi_ui_payloads.sanitize_pi_commands_payload(payload)
 
 
 def _legacy_pi_ui_response_text(payload: dict[str, Any]) -> str | None:
-    if payload.get("cancelled") is True:
-        return None
-    confirmed = payload.get("confirmed")
-    if isinstance(confirmed, bool):
-        return "yes" if confirmed else "no"
-    value = payload.get("value")
-    if isinstance(value, str):
-        text = value.strip()
-        return text or None
-    if isinstance(value, list):
-        parts = []
-        for item in value:
-            if not isinstance(item, str):
-                continue
-            text = item.strip()
-            if not text:
-                continue
-            parts.append(text)
-        if parts:
-            return ", ".join(parts)
-    return None
-
-
-def _resolve_client_file_path(*, session_id: str, raw_path: str) -> Path:
-    return _workspace_file_access.resolve_client_file_path(
-        RUNTIME,
-        session_id=session_id,
-        raw_path=raw_path,
-    )
-
-
-def _read_client_file_view(path_obj: Path) -> ClientFileView:
-    return _workspace_file_access.read_client_file_view(RUNTIME, path_obj)
-
-
-def _read_downloadable_file(path_obj: Path) -> tuple[bytes, int]:
-    return _workspace_file_access.read_downloadable_file(path_obj)
-
-
-def _download_disposition(path_obj: Path) -> str:
-    return _workspace_file_access.download_disposition(path_obj)
+    return _pi_ui_payloads.legacy_pi_ui_response_text(payload)
 
 
 def _iter_session_logs(*, agent_backend: str = "codex") -> list[Path]:
@@ -1627,194 +1363,96 @@ def _session_id_from_rollout_path(log_path: Path) -> str | None:
 def _read_session_meta(
     log_path: Path, *, agent_backend: str | None = None
 ) -> dict[str, Any]:
-    if agent_backend is None:
-        try:
-            log_path.resolve().relative_to(PI_SESSIONS_DIR.resolve())
-            inferred = "pi"
-        except Exception:
-            inferred = "codex"
-        backend_name = inferred
-    else:
-        backend_name = normalize_agent_backend(agent_backend)
-    payload = _read_session_meta_payload_impl(
-        log_path, agent_backend=backend_name, timeout_s=0.0
+    return _session_settings.read_session_meta(
+        RUNTIME,
+        log_path,
+        agent_backend=agent_backend,
     )
-    if payload is None:
-        raise ValueError(f"missing session metadata in {log_path}")
-    return payload
 
 
 def _turn_context_run_settings(payload: Any) -> tuple[str | None, str | None]:
-    if not isinstance(payload, dict):
-        return None, None
-    return (
-        _clean_optional_text(payload.get("model")),
-        _display_reasoning_effort(
-            payload.get("reasoning_effort") or payload.get("effort")
-        ),
-    )
+    return _session_settings.turn_context_run_settings(RUNTIME, payload)
 
 
 def _read_run_settings_from_log(
     log_path: Path, *, agent_backend: str = "codex"
 ) -> tuple[str | None, str | None, str | None]:
-    backend_name = normalize_agent_backend(agent_backend)
-    if backend_name == "pi":
-        return _read_pi_run_settings(log_path)
-    meta = _read_session_meta(log_path, agent_backend="codex")
-    model_provider = _clean_optional_text(meta.get("model_provider"))
-    model = _clean_optional_text(meta.get("model"))
-    reasoning_effort = _display_reasoning_effort(meta.get("reasoning_effort"))
-    if model is None or reasoning_effort is None:
-        ctx_model, ctx_effort = _turn_context_run_settings(
-            _rollout_log._find_latest_turn_context(
-                log_path, max_scan_bytes=8 * 1024 * 1024
-            )
-        )
-        if model is None:
-            model = ctx_model
-        if reasoning_effort is None:
-            reasoning_effort = ctx_effort
-    return model_provider, model, reasoning_effort
+    return _session_settings.read_run_settings_from_log(
+        RUNTIME,
+        log_path,
+        agent_backend=agent_backend,
+    )
 
 
 def _normalize_requested_model_provider(
     value: Any, *, allowed: set[str] | None = None
 ) -> str | None:
-    provider = _clean_optional_text(value)
-    if provider is None:
-        return None
-    if allowed is not None and provider not in allowed:
-        allowed_txt = ", ".join(sorted(allowed))
-        raise ValueError(f"model_provider must be one of {allowed_txt}")
-    return provider
+    return _session_settings.normalize_requested_model_provider(
+        RUNTIME,
+        value,
+        allowed=allowed,
+    )
 
 
 def _normalize_requested_service_tier(value: Any) -> str | None:
-    tier = _clean_optional_text(value)
-    if tier is None:
-        return None
-    if tier not in {"fast", "flex"}:
-        raise ValueError("service_tier must be one of fast, flex")
-    return tier
+    return _session_settings.normalize_requested_service_tier(RUNTIME, value)
 
 
 def _normalize_requested_preferred_auth_method(value: Any) -> str | None:
-    method = _clean_optional_text(value)
-    if method is None:
-        return None
-    if method not in {"chatgpt", "apikey"}:
-        raise ValueError("preferred_auth_method must be one of chatgpt, apikey")
-    return method
+    return _session_settings.normalize_requested_preferred_auth_method(RUNTIME, value)
 
 
 def _normalize_requested_backend(raw: Any) -> str:
-    if raw is None:
-        return "codex"
-    if not isinstance(raw, str):
-        raise ValueError("backend must be a string")
-    backend = raw.strip().lower()
-    if not backend:
-        return "codex"
-    if backend not in {"codex", "pi"}:
-        raise ValueError("backend must be one of codex, pi")
-    return backend
+    return _session_settings.normalize_requested_backend(raw)
 
 
 def _provider_choice_for_settings(
     *, model_provider: str | None, preferred_auth_method: str | None
 ) -> str:
-    provider = model_provider or "openai"
-    if provider == "openai":
-        return "chatgpt" if preferred_auth_method == "chatgpt" else "openai-api"
-    return provider
+    return _session_settings.provider_choice_for_settings(
+        model_provider=model_provider,
+        preferred_auth_method=preferred_auth_method,
+    )
 
 
 def _provider_choice_for_backend(
     *, backend: str, model_provider: str | None, preferred_auth_method: str | None
 ) -> str | None:
-    if backend == "pi":
-        return None
-    return _provider_choice_for_settings(
-        model_provider=model_provider, preferred_auth_method=preferred_auth_method
+    return _session_settings.provider_choice_for_backend(
+        backend=backend,
+        model_provider=model_provider,
+        preferred_auth_method=preferred_auth_method,
     )
 
 
 def _metadata_log_path(
     *, meta: dict[str, Any], backend: str, sock: Path
 ) -> Path | None:
-    if backend == "pi":
-        return None
-    if "log_path" not in meta:
-        raise ValueError(f"missing log_path in metadata for socket {sock}")
-    if meta.get("log_path") is None:
-        return None
-    log_path_raw = meta.get("log_path")
-    if not isinstance(log_path_raw, str) or (not log_path_raw.strip()):
-        raise ValueError(f"invalid log_path in metadata for socket {sock}")
-    return Path(log_path_raw)
+    return _session_settings.metadata_log_path(meta=meta, backend=backend, sock=sock)
 
 
 def _metadata_session_path(
     *, meta: dict[str, Any], backend: str, sock: Path
 ) -> Path | None:
-    if backend != "pi":
-        return None
-    if "session_path" not in meta:
-        raise ValueError(f"missing session_path in metadata for socket {sock}")
-    session_path_raw = meta.get("session_path")
-    if not isinstance(session_path_raw, str) or (not session_path_raw.strip()):
-        raise ValueError(f"invalid session_path in metadata for socket {sock}")
-    return Path(session_path_raw)
+    return _session_settings.metadata_session_path(
+        meta=meta,
+        backend=backend,
+        sock=sock,
+    )
 
 
 def _patch_metadata_session_path(
     sock: Path, session_path: Path, *, force: bool = False
 ) -> None:
-    """Write discovered session_path back to the broker metadata file.
-
-    The PTY broker (broker.py) does not include session_path in its metadata
-    for pi sessions.  Once the server discovers the correct file, writing it
-    back makes the mapping persistent across server restarts.
-
-    When *force* is True, overwrite even if session_path is already present
-    (used when the session has switched via /resume).
-    """
-    meta_path = sock.with_suffix(".json")
-    try:
-        meta = json.loads(meta_path.read_text(encoding="utf-8"))
-        if not isinstance(meta, dict):
-            return
-        if not force and "session_path" in meta:
-            return  # already present (e.g. pi_broker wrote it)
-        meta["session_path"] = str(session_path)
-        meta_path.write_text(json.dumps(meta), encoding="utf-8")
-    except Exception:
-        pass  # best-effort; discovery will re-run next cycle
+    _session_metadata_patch.patch_metadata_session_path(
+        sock,
+        session_path,
+        force=force,
+    )
 
 
 def _patch_metadata_pi_binding(sock: Path, session_path: Path) -> None:
-    """Persist a recovered Pi binding for brokers that were launched ambiguously."""
-    meta_path = sock.with_suffix(".json")
-    try:
-        meta = json.loads(meta_path.read_text(encoding="utf-8"))
-        if not isinstance(meta, dict):
-            return
-        changed = False
-        if meta.get("backend") != "pi":
-            meta["backend"] = "pi"
-            changed = True
-        if meta.get("agent_backend") != "pi":
-            meta["agent_backend"] = "pi"
-            changed = True
-        if meta.get("session_path") != str(session_path):
-            meta["session_path"] = str(session_path)
-            changed = True
-        if not changed:
-            return
-        meta_path.write_text(json.dumps(meta), encoding="utf-8")
-    except Exception:
-        pass
+    _session_metadata_patch.patch_metadata_pi_binding(sock, session_path)
 
 
 def _resume_candidate_from_log(
@@ -1834,27 +1472,6 @@ def _pi_new_session_file_for_cwd(cwd: str | Path) -> Path:
     return _pi_session_files.service(RUNTIME).pi_new_session_file_for_cwd(cwd)
 
 
-def _write_pi_session_header(
-    session_path: Path,
-    *,
-    session_id: str,
-    cwd: str,
-    parent_session: str | None = None,
-    provider: str | None = None,
-    model_id: str | None = None,
-    thinking_level: str | None = None,
-) -> None:
-    return _pi_session_files.service(RUNTIME).write_pi_session_header(
-        session_path,
-        session_id=session_id,
-        cwd=cwd,
-        parent_session=parent_session,
-        provider=provider,
-        model_id=model_id,
-        thinking_level=thinking_level,
-    )
-
-
 def _pi_session_has_handoff_history(session_path: Path) -> bool:
     return _pi_session_files.service(RUNTIME).pi_session_has_handoff_history(session_path)
 
@@ -1865,29 +1482,6 @@ def _next_pi_handoff_history_path(session_path: Path) -> Path:
 
 def _copy_file_atomic(source_path: Path, target_path: Path) -> None:
     return _pi_session_files.service(RUNTIME).copy_file_atomic(source_path, target_path)
-
-
-def _write_pi_handoff_session(
-    session_path: Path,
-    *,
-    session_id: str,
-    cwd: str,
-    source_session_id: str,
-    history_path: Path,
-    provider: str | None = None,
-    model_id: str | None = None,
-    thinking_level: str | None = None,
-) -> None:
-    return _pi_session_files.service(RUNTIME).write_pi_handoff_session(
-        session_path,
-        session_id=session_id,
-        cwd=cwd,
-        source_session_id=source_session_id,
-        history_path=history_path,
-        provider=provider,
-        model_id=model_id,
-        thinking_level=thinking_level,
-    )
 
 
 def _pi_session_name_from_session_file(
@@ -2121,71 +1715,8 @@ def _touch_session_file(path: Path | None) -> float | None:
     return _session_file_activity_ts(path)
 
 
-@dataclass
-class Session:
-    session_id: str
-    thread_id: str
-    broker_pid: int
-    codex_pid: int
-    agent_backend: str
-    owned: bool
-    start_ts: float
-    cwd: str
-    log_path: Path | None
-    sock_path: Path
-    session_path: Path | None = None
-    backend: str = "codex"
-    busy: bool = False
-    queue_len: int = 0
-    token: dict[str, Any] | None = None
-    last_turn_id: str | None = None
-    last_chat_ts: float | None = None
-    last_chat_history_scanned: bool = False
-    meta_thinking: int = 0
-    meta_tools: int = 0
-    meta_system: int = 0
-    meta_log_off: int = 0
-    chat_index_events: list[dict[str, Any]] = field(default_factory=list)
-    chat_index_scan_bytes: int = 0
-    chat_index_scan_complete: bool = False
-    chat_index_log_off: int = 0
-    delivery_log_off: int = 0
-    idle_cache_log_off: int = -1
-    idle_cache_value: bool | None = None
-    queue_idle_since: float | None = None
-    model_provider: str | None = None
-    preferred_auth_method: str | None = None
-    model: str | None = None
-    reasoning_effort: str | None = None
-    service_tier: str | None = None
-    transport: str | None = None
-    supports_live_ui: bool | None = None
-    ui_protocol_version: int | None = None
-    tmux_session: str | None = None
-    tmux_window: str | None = None
-    resume_session_id: str | None = None
-    title: str | None = None
-    first_user_message: str | None = None
-    pi_idle_activity_ts: float | None = None
-    pi_busy_activity_floor: float | None = None
-    pi_session_path_discovered: bool = False
-    pi_attention_scan_activity_ts: float | None = None
-    bridge_transport_state: str = "unknown"
-    bridge_transport_error: str | None = None
-    bridge_transport_checked_ts: float = 0.0
-
-
-@dataclass
-class BridgeOutboundRequest:
-    request_id: str
-    runtime_id: str
-    durable_session_id: str
-    text: str
-    created_ts: float
-    state: str = "queued"
-    attempts: int = 0
-    last_error: str | None = None
-    last_attempt_ts: float = 0.0
+Session = _session_models.Session
+BridgeOutboundRequest = _session_models.BridgeOutboundRequest
 
 
 def _session_supports_live_pi_ui(session: Session) -> bool:
@@ -2275,18 +1806,13 @@ def _session_context_usage_payload(
     return _session_payloads.service(RUNTIME).session_context_usage_payload(s, token_val)
 
 
-
 def _session_turn_timing_payload(
     s: Session,
     events: list[dict[str, Any]],
     *,
     busy: bool,
 ) -> dict[str, Any] | None:
-    return _session_payloads.service(RUNTIME).session_turn_timing_payload(
-        s,
-        events,
-        busy=busy,
-    )
+    return _session_payloads.service(RUNTIME).session_turn_timing_payload(s, events, busy=busy)
 
 
 def _session_workspace_payload(
@@ -2304,20 +1830,14 @@ def _session_live_payload(
     bridge_offset: int = 0,
     requests_version: str | None = None,
 ) -> dict[str, Any]:
-    return _session_live_payloads.service(RUNTIME, manager).session_live_payload(
-        session_id,
-        offset=offset,
-        live_offset=live_offset,
-        bridge_offset=bridge_offset,
-        requests_version=requests_version,
-    )
+    return _session_live_payloads.service(RUNTIME, manager).session_live_payload(session_id, offset=offset, live_offset=live_offset, bridge_offset=bridge_offset, requests_version=requests_version)
 
 
 def _supports_web_control(meta: dict[str, Any]) -> bool:
     return meta.get("supports_web_control") is True
 
 
-class SessionManager:
+class SessionManager(_manager_delegates.SessionManagerDelegates):
     def __init__(self) -> None:
         self._lock = threading.Lock()
         # Sidebar should reflect broker-visible live sessions only.
@@ -2401,890 +1921,6 @@ class SessionManager:
         self._stop.set()
         EVENT_HUB.close()
 
-    def _page_state_ref_for_session(self, session: Session) -> SessionRef | None:
-        durable_id = _clean_optional_text(session.thread_id) or _clean_optional_text(session.session_id)
-        if durable_id is None:
-            return None
-        backend = normalize_agent_backend(session.agent_backend, default=session.backend or "codex")
-        return backend, durable_id
-
-    def _durable_session_id_for_session(self, session: Session) -> str:
-        ref = self._page_state_ref_for_session(session)
-        if ref is not None:
-            return ref[1]
-        return str(session.session_id)
-
-    def _runtime_session_id_for_identifier(self, session_id: str) -> str | None:
-        return _session_catalog.service(self).runtime_session_id_for_identifier(session_id)
-
-    def _durable_session_id_for_identifier(self, session_id: str) -> str | None:
-        return _session_catalog.service(self).durable_session_id_for_identifier(session_id)
-
-    def _append_bridge_event(self, durable_session_id: str, event: dict[str, Any]) -> dict[str, Any]:
-        key = _clean_optional_text(durable_session_id)
-        if key is None:
-            raise ValueError("durable session id required")
-        with self._lock:
-            offsets = getattr(self, "_bridge_event_offsets", None)
-            if not isinstance(offsets, dict):
-                self._bridge_event_offsets = {}
-                offsets = self._bridge_event_offsets
-            rows_by_session = getattr(self, "_bridge_events", None)
-            if not isinstance(rows_by_session, dict):
-                self._bridge_events = {}
-                rows_by_session = self._bridge_events
-            next_offset = int(offsets.get(key, 0)) + 1
-            offsets[key] = next_offset
-            stamped = dict(event)
-            stamped["event_id"] = str(stamped.get("event_id") or f"bridge:{key}:{next_offset}")
-            stamped["ts"] = float(stamped.get("ts") or time.time())
-            rows_by_session.setdefault(key, []).append({"offset": next_offset, "event": stamped})
-            rows = rows_by_session[key]
-            if len(rows) > 64:
-                rows_by_session[key] = rows[-64:]
-        _publish_session_live_invalidate(key, reason="bridge_event")
-        return stamped
-
-    def _bridge_events_since(self, durable_session_id: str, offset: int = 0) -> tuple[list[dict[str, Any]], int]:
-        key = _clean_optional_text(durable_session_id)
-        if key is None:
-            return [], max(0, int(offset))
-        with self._lock:
-            rows_by_session = getattr(self, "_bridge_events", None)
-            offsets = getattr(self, "_bridge_event_offsets", None)
-            rows = list(rows_by_session.get(key, [])) if isinstance(rows_by_session, dict) else []
-            latest = int(offsets.get(key, 0)) if isinstance(offsets, dict) else 0
-        since = max(0, int(offset))
-        events: list[dict[str, Any]] = []
-        for row in rows:
-            if not isinstance(row, dict):
-                continue
-            if int(row.get("offset", 0) or 0) <= since:
-                continue
-            event = row.get("event")
-            if isinstance(event, dict):
-                events.append(dict(event))
-        return events, latest
-
-    def _set_bridge_transport_state(
-        self,
-        runtime_id: str,
-        *,
-        state: str,
-        error: str | None = None,
-        checked_ts: float | None = None,
-    ) -> None:
-        _session_background.service(self).set_bridge_transport_state(
-            runtime_id,
-            state=state,
-            error=error,
-            checked_ts=checked_ts,
-        )
-
-    def _probe_bridge_transport(
-        self, session_id: str, *, force_rpc: bool = False
-    ) -> tuple[str, str | None]:
-        return _session_background.service(self).probe_bridge_transport(
-            session_id,
-            force_rpc=force_rpc,
-        )
-
-    def _enqueue_outbound_request(self, runtime_id: str, text: str) -> BridgeOutboundRequest:
-        return _session_background.service(self).enqueue_outbound_request(runtime_id, text)
-
-    def _fail_outbound_request(self, request: BridgeOutboundRequest, error: str) -> None:
-        _session_background.service(self).fail_outbound_request(request, error)
-
-    def _mark_outbound_request_buffered_for_compaction(
-        self, request: BridgeOutboundRequest
-    ) -> None:
-        _session_background.service(self).mark_outbound_request_buffered_for_compaction(request)
-
-    def _maybe_drain_outbound_request(self, runtime_id: str) -> bool:
-        return _session_background.service(self).maybe_drain_outbound_request(runtime_id)
-
-    def _catalog_record_for_ref(self, ref: SessionRef) -> DurableSessionRecord | None:
-        return _session_lifecycle.service(self).catalog_record_for_ref(ref)
-
-    def _refresh_durable_session_catalog(self, *, force: bool = False) -> None:
-        _session_lifecycle.service(self).refresh_durable_session_catalog(force=force)
-
-    def _page_state_ref_for_session_id(self, session_id: str) -> SessionRef | None:
-        return _session_catalog.service(self).page_state_ref_for_session_id(session_id)
-
-    def _persist_durable_session_record(self, row: DurableSessionRecord) -> None:
-        db = getattr(self, "_page_state_db", None)
-        if isinstance(db, PageStateDB):
-            db.upsert_session(row)
-
-    def _delete_durable_session_record(self, ref: SessionRef | None) -> None:
-        db = getattr(self, "_page_state_db", None)
-        if ref is not None and isinstance(db, PageStateDB):
-            db.delete_session(ref)
-
-    def _wait_for_live_session(
-        self,
-        durable_session_id: str,
-        *,
-        timeout_s: float = 8.0,
-    ) -> Session:
-        return _session_lifecycle.service(self).wait_for_live_session(
-            durable_session_id,
-            timeout_s=timeout_s,
-        )
-
-    def _copy_session_ui_identity(
-        self,
-        *,
-        source_session_id: str,
-        target_session_id: str,
-    ) -> str | None:
-        return _session_lifecycle.service(self).copy_session_ui_identity(
-            source_session_id=source_session_id,
-            target_session_id=target_session_id,
-        )
-
-    def _capture_runtime_bound_restart_state(
-        self, runtime_id: str, ref: SessionRef
-    ) -> dict[str, Any]:
-        return _session_lifecycle.service(self).capture_runtime_bound_restart_state(
-            runtime_id,
-            ref,
-        )
-
-    def _stage_runtime_bound_restart_state(
-        self, runtime_id: str, ref: SessionRef, state: dict[str, Any]
-    ) -> None:
-        _session_lifecycle.service(self).stage_runtime_bound_restart_state(
-            runtime_id,
-            ref,
-            state,
-        )
-
-    def _restore_runtime_bound_restart_state(
-        self, runtime_id: str, ref: SessionRef, state: dict[str, Any]
-    ) -> None:
-        _session_lifecycle.service(self).restore_runtime_bound_restart_state(
-            runtime_id,
-            ref,
-            state,
-        )
-
-    def _finalize_pending_pi_restart_state(
-        self,
-        *,
-        durable_session_id: str,
-        ref: SessionRef,
-        state: dict[str, Any],
-        timeout_s: float = 8.0,
-    ) -> None:
-        try:
-            session = self._wait_for_live_session(
-                durable_session_id,
-                timeout_s=timeout_s,
-            )
-        except Exception:
-            return
-        self._restore_runtime_bound_restart_state(session.session_id, ref, state)
-
-    def restart_session(self, session_id: str) -> dict[str, Any]:
-        return _session_control.service(self).restart_session(session_id)
-
-    def handoff_session(self, session_id: str) -> dict[str, Any]:
-        return _session_control.service(self).handoff_session(session_id)
-
-    def _finalize_pending_pi_spawn(
-        self,
-        *,
-        spawn_nonce: str,
-        durable_session_id: str,
-        cwd: str,
-        session_path: Path,
-        proc: subprocess.Popen[bytes] | None = None,
-        delete_on_failure: bool = True,
-        restore_record_on_failure: DurableSessionRecord | None = None,
-    ) -> None:
-        _session_lifecycle.service(self).finalize_pending_pi_spawn(
-            spawn_nonce=spawn_nonce,
-            durable_session_id=durable_session_id,
-            cwd=cwd,
-            session_path=session_path,
-            proc=proc,
-            delete_on_failure=delete_on_failure,
-            restore_record_on_failure=restore_record_on_failure,
-        )
-
-    def _persist_session_ui_state(self) -> None:
-        self._sidebar_state_facade().persist_session_ui_state()
-
-    def _persist_files(self) -> None:
-        db = getattr(self, "_page_state_db", None)
-        if db is None:
-            return
-        with self._lock:
-            files_src = dict(self._files)
-        rows: dict[SessionRef, list[str]] = {}
-        for key, value in files_src.items():
-            ref = key if isinstance(key, tuple) and len(key) == 2 else self._page_state_ref_for_session_id(str(key))
-            if ref is None or not isinstance(value, list):
-                continue
-            rows[ref] = [row for row in value if isinstance(row, str) and row.strip()]
-        db.save_files(rows)
-
-    def _persist_queues(self) -> None:
-        db = getattr(self, "_page_state_db", None)
-        if db is None:
-            return
-        with self._lock:
-            queues_src = dict(self._queues)
-        rows: dict[SessionRef, list[str]] = {}
-        for key, value in queues_src.items():
-            ref = key if isinstance(key, tuple) and len(key) == 2 else self._page_state_ref_for_session_id(str(key))
-            if ref is None or not isinstance(value, list):
-                continue
-            rows[ref] = [row for row in value if isinstance(row, str) and row.strip()]
-        db.save_queues(rows)
-
-    def _persist_recent_cwds(self) -> None:
-        db = getattr(self, "_page_state_db", None)
-        if db is None:
-            return
-        with self._lock:
-            recent_cwds = dict(self._recent_cwds)
-        db.save_recent_cwds(recent_cwds)
-
-    def _persist_cwd_groups(self) -> None:
-        db = getattr(self, "_page_state_db", None)
-        if db is None:
-            return
-        with self._lock:
-            cwd_groups = dict(self._cwd_groups)
-        db.save_cwd_groups(cwd_groups)
-
-    def _reset_log_caches(self, s: Session, *, meta_log_off: int) -> None:
-        _session_lifecycle.service(self).reset_log_caches(s, meta_log_off=meta_log_off)
-
-    def _session_source_changed(
-        self, s: Session, *, log_path: Path | None, session_path: Path | None
-    ) -> bool:
-        return _session_lifecycle.service(self).session_source_changed(
-            s,
-            log_path=log_path,
-            session_path=session_path,
-        )
-
-    def _claimed_pi_session_paths(self, *, exclude_sid: str = "") -> set[Path]:
-        return _session_lifecycle.service(self).claimed_pi_session_paths(
-            exclude_sid=exclude_sid,
-        )
-
-    def _apply_session_source(
-        self, s: Session, *, log_path: Path | None, session_path: Path | None
-    ) -> None:
-        _session_lifecycle.service(self).apply_session_source(
-            s,
-            log_path=log_path,
-            session_path=session_path,
-        )
-
-    def _session_run_settings(
-        self,
-        *,
-        meta: dict[str, Any],
-        log_path: Path | None,
-        backend: str | None = None,
-        agent_backend: str | None = None,
-    ) -> tuple[str | None, str | None, str | None, str | None]:
-        return _session_lifecycle.service(self).session_run_settings(
-            meta=meta,
-            log_path=log_path,
-            backend=backend,
-            agent_backend=agent_backend,
-        )
-
-    def _session_transport(
-        self, *, meta: dict[str, Any]
-    ) -> tuple[str | None, str | None, str | None]:
-        transport = _clean_optional_text(meta.get("transport"))
-        tmux_session = _clean_optional_text(meta.get("tmux_session"))
-        tmux_window = _clean_optional_text(meta.get("tmux_window"))
-        if transport is None and (tmux_session is not None or tmux_window is not None):
-            transport = "tmux"
-        return transport, tmux_session, tmux_window
-
-    def _discover_existing_if_stale(self, *, force: bool = False) -> None:
-        now = time.time()
-        with self._lock:
-            last = float(getattr(self, "_last_discover_ts", 0.0))
-        if (not force) and ((now - last) < DISCOVER_MIN_INTERVAL_SECONDS):
-            return
-        try:
-            self._discover_existing(force=force, skip_invalid_sidecars=True)
-        except TypeError:
-            try:
-                self._discover_existing(force=force)
-            except TypeError:
-                self._discover_existing()
-
-    def _sidecar_quarantine_signature(self, sock: Path) -> tuple[bool, int, int]:
-        meta_path = sock.with_suffix(".json")
-        try:
-            st = meta_path.stat()
-        except FileNotFoundError:
-            return (False, 0, 0)
-        return (True, int(st.st_mtime_ns), int(st.st_size))
-
-    def _sidecar_is_quarantined(self, sock: Path) -> bool:
-        bad_sidecars = getattr(self, "_bad_sidecars", None)
-        if not isinstance(bad_sidecars, dict):
-            self._bad_sidecars = {}
-            bad_sidecars = self._bad_sidecars
-        key = str(sock)
-        prev_sig = bad_sidecars.get(key)
-        if prev_sig is None:
-            return False
-        cur_sig = self._sidecar_quarantine_signature(sock)
-        if cur_sig == prev_sig:
-            return True
-        bad_sidecars.pop(key, None)
-        return False
-
-    def _quarantine_sidecar(
-        self,
-        sock: Path,
-        exc: BaseException,
-        *,
-        reason: str = "invalid sidecar",
-        log: bool = True,
-    ) -> None:
-        bad_sidecars = getattr(self, "_bad_sidecars", None)
-        if not isinstance(bad_sidecars, dict):
-            self._bad_sidecars = {}
-            bad_sidecars = self._bad_sidecars
-        bad_sidecars[str(sock)] = self._sidecar_quarantine_signature(sock)
-        if log:
-            sys.stderr.write(
-                f"error: discover: quarantining {reason} for {sock}: {type(exc).__name__}: {exc}\n"
-            )
-            sys.stderr.flush()
-
-    def _clear_sidecar_quarantine(self, sock: Path) -> None:
-        bad_sidecars = getattr(self, "_bad_sidecars", None)
-        if isinstance(bad_sidecars, dict):
-            bad_sidecars.pop(str(sock), None)
-
-    def _load_harness(self) -> None:
-        _page_state.service(self).load_harness()
-
-    def _save_harness(self) -> None:
-        _page_state.service(self).save_harness()
-
-    def _load_aliases(self) -> None:
-        self._sidebar_state_facade().load_aliases()
-
-    def _save_aliases(self) -> None:
-        self._persist_session_ui_state()
-
-    def _load_sidebar_meta(self) -> None:
-        self._sidebar_state_facade().load_sidebar_meta()
-
-    def _save_sidebar_meta(self) -> None:
-        self._persist_session_ui_state()
-
-    def _load_hidden_sessions(self) -> None:
-        self._sidebar_state_facade().load_hidden_sessions()
-
-    def _save_hidden_sessions(self) -> None:
-        self._persist_session_ui_state()
-
-    def _hidden_session_keys(
-        self,
-        session_id: str | None,
-        thread_id: str | None,
-        resume_session_id: str | None,
-        backend: str | None,
-    ) -> set[str]:
-        return self._sidebar_state_facade().hidden_session_keys(
-            session_id, thread_id, resume_session_id, backend
-        )
-
-    def _session_is_hidden(
-        self,
-        session_id: str | None,
-        thread_id: str | None,
-        resume_session_id: str | None,
-        backend: str | None,
-    ) -> bool:
-        return self._sidebar_state_facade().session_is_hidden(
-            session_id, thread_id, resume_session_id, backend
-        )
-
-    def _hide_session(self, session_id: str) -> None:
-        self._sidebar_state_facade().hide_session(session_id)
-
-    def _hide_session_identity_values(
-        self,
-        session_id: str | None,
-        thread_id: str | None,
-        resume_session_id: str | None,
-        backend: str | None,
-    ) -> None:
-        self._sidebar_state_facade().hide_session_identity_values(
-            session_id, thread_id, resume_session_id, backend
-        )
-
-    def _hide_session_identity(self, s: Session) -> None:
-        self._sidebar_state_facade().hide_session_identity(s)
-
-    def _unhide_session(self, session_id: str) -> None:
-        self._sidebar_state_facade().unhide_session(session_id)
-
-    def set_created_session_name(
-        self,
-        *,
-        session_id: Any,
-        runtime_id: Any = None,
-        backend: Any = None,
-        name: Any,
-    ) -> str:
-        return self._sidebar_state_facade().set_created_session_name(
-            session_id=session_id,
-            runtime_id=runtime_id,
-            backend=backend,
-            name=name,
-        )
-
-    def alias_set(self, session_id: str, name: str) -> str:
-        alias = self._sidebar_state_facade().alias_set(session_id, name)
-        _publish_sessions_invalidate(reason="alias_changed")
-        return alias
-
-    def alias_get(self, session_id: str) -> str:
-        return self._sidebar_state_facade().alias_get(session_id)
-
-    def alias_clear(self, session_id: str) -> None:
-        self._sidebar_state_facade().alias_clear(session_id)
-        _publish_sessions_invalidate(reason="alias_cleared")
-
-    def sidebar_meta_get(self, session_id: str) -> dict[str, Any]:
-        return self._sidebar_state_facade().sidebar_meta_get(session_id)
-
-    def sidebar_meta_set(
-        self,
-        session_id: str,
-        *,
-        priority_offset: Any,
-        snooze_until: Any,
-        dependency_session_id: Any,
-    ) -> dict[str, Any]:
-        payload = self._sidebar_state_facade().sidebar_meta_set(
-            session_id,
-            priority_offset=priority_offset,
-            snooze_until=snooze_until,
-            dependency_session_id=dependency_session_id,
-        )
-        _publish_sessions_invalidate(reason="sidebar_meta_changed")
-        return payload
-
-    def focus_set(self, session_id: str, focused: Any) -> bool:
-        value = self._sidebar_state_facade().focus_set(session_id, focused)
-        _publish_sessions_invalidate(reason="focus_changed")
-        return value
-
-    def edit_session(
-        self,
-        session_id: str,
-        *,
-        name: str,
-        priority_offset: Any,
-        snooze_until: Any,
-        dependency_session_id: Any,
-    ) -> tuple[str, dict[str, Any]]:
-        payload = self._sidebar_state_facade().edit_session(
-            session_id,
-            name=name,
-            priority_offset=priority_offset,
-            snooze_until=snooze_until,
-            dependency_session_id=dependency_session_id,
-        )
-        _publish_sessions_invalidate(reason="session_edited")
-        return payload
-
-    def _clear_deleted_session_state(self, session_id: str) -> None:
-        _page_state.service(self).clear_deleted_session_state(session_id)
-
-    def _load_files(self) -> None:
-        _page_state.service(self).load_files()
-
-    def _save_files(self) -> None:
-        _page_state.service(self).save_files()
-
-    def _load_queues(self) -> None:
-        _page_state.service(self).load_queues()
-
-    def _save_queues(self) -> None:
-        _page_state.service(self).save_queues()
-
-    def _load_recent_cwds(self) -> None:
-        _page_state.service(self).load_recent_cwds()
-
-    def _save_recent_cwds(self) -> None:
-        _page_state.service(self).save_recent_cwds()
-
-    def _load_cwd_groups(self) -> None:
-        _page_state.service(self).load_cwd_groups()
-
-    def _save_cwd_groups(self) -> None:
-        _page_state.service(self).save_cwd_groups()
-
-    def cwd_groups_get(self) -> dict[str, dict[str, Any]]:
-        return _page_state.service(self).cwd_groups_get()
-
-    def _prune_stale_workspace_dirs(self) -> None:
-        _page_state.service(self).prune_stale_workspace_dirs()
-
-    def _known_cwd_group_keys(self) -> set[str]:
-        return _page_state.service(self).known_cwd_group_keys()
-
-    def cwd_group_set(
-        self, cwd: str, label: str | None = None, collapsed: bool | None = None
-    ) -> tuple[str, dict[str, Any]]:
-        return _page_state.service(self).cwd_group_set(
-            cwd,
-            label=label,
-            collapsed=collapsed,
-        )
-
-    def _remember_recent_cwd(self, cwd: Any, *, ts: Any = None) -> bool:
-        return _page_state.service(self).remember_recent_cwd(cwd, ts=ts)
-
-    def _backfill_recent_cwds_from_logs(self) -> None:
-        _page_state.service(self).backfill_recent_cwds_from_logs()
-
-    def recent_cwds(self, *, limit: int = RECENT_CWD_MAX) -> list[str]:
-        return _page_state.service(self).recent_cwds(limit=limit)
-
-    def _queue_len(self, session_id: str) -> int:
-        return _page_state.service(self).queue_len(session_id)
-
-    def _queue_list_local(self, session_id: str) -> list[str]:
-        return _page_state.service(self).queue_list_local(session_id)
-
-    def _queue_enqueue_local(self, session_id: str, text: str) -> dict[str, Any]:
-        return _page_state.service(self).queue_enqueue_local(session_id, text)
-
-    def _queue_delete_local(self, session_id: str, index: int) -> dict[str, Any]:
-        return _page_state.service(self).queue_delete_local(session_id, index)
-
-    def _queue_update_local(
-        self, session_id: str, index: int, text: str
-    ) -> dict[str, Any]:
-        return _page_state.service(self).queue_update_local(session_id, index, text)
-
-    def _files_key_for_session(self, session_id: str) -> tuple[str, SessionRef, "Session"]:
-        return _page_state.service(self).files_key_for_session(session_id)
-
-    def files_get(self, session_id: str) -> list[str]:
-        return _page_state.service(self).files_get(session_id)
-
-    def files_add(self, session_id: str, path: str) -> list[str]:
-        return _page_state.service(self).files_add(session_id, path)
-
-    def files_clear(self, session_id: str) -> None:
-        _page_state.service(self).files_clear(session_id)
-
-    def harness_get(self, session_id: str) -> dict[str, Any]:
-        return _page_state.service(self).harness_get(session_id)
-
-    def harness_set(
-        self,
-        session_id: str,
-        *,
-        enabled: bool | None = None,
-        request: str | None = None,
-        cooldown_minutes: int | None = None,
-        remaining_injections: int | None = None,
-    ) -> dict[str, Any]:
-        return _page_state.service(self).harness_set(
-            session_id,
-            enabled=enabled,
-            request=request,
-            cooldown_minutes=cooldown_minutes,
-            remaining_injections=remaining_injections,
-        )
-
-    def _session_display_name(self, session_id: str) -> str:
-        return _session_background.service(self).session_display_name(session_id)
-
-    def _observe_rollout_delta(
-        self, session_id: str, *, objs: list[dict[str, Any]], new_off: int
-    ) -> None:
-        _session_background.service(self).observe_rollout_delta(
-            session_id,
-            objs=objs,
-            new_off=new_off,
-        )
-
-    def _voice_push_scan_loop(self) -> None:
-        _session_background.service(self).voice_push_scan_loop()
-
-    def _voice_push_scan_sweep(self) -> None:
-        _session_background.service(self).voice_push_scan_sweep()
-
-    def _harness_loop(self) -> None:
-        _session_background.service(self).harness_loop()
-
-    def _harness_sweep(self) -> None:
-        _session_background.service(self).harness_sweep()
-
-    def _queue_loop(self) -> None:
-        _session_background.service(self).queue_loop()
-
-    def _maybe_drain_session_queue(
-        self, session_id: str, *, now_ts: float | None = None
-    ) -> bool:
-        return _session_background.service(self).maybe_drain_session_queue(
-            session_id,
-            now_ts=now_ts,
-        )
-
-    def _queue_sweep(self) -> None:
-        _session_background.service(self).queue_sweep()
-
-    def _discover_existing(
-        self, *, force: bool = False, skip_invalid_sidecars: bool = False
-    ) -> None:
-        if getattr(self, "_runtime", None) is None:
-            self._runtime = RUNTIME
-        _session_catalog.service(self).discover_existing(
-            force=force,
-            skip_invalid_sidecars=skip_invalid_sidecars,
-        )
-
-    def _refresh_session_state(
-        self, session_id: str, sock_path: Path, timeout_s: float = 0.4
-    ) -> tuple[bool, BaseException | None]:
-        if getattr(self, "_runtime", None) is None:
-            self._runtime = RUNTIME
-        return _session_catalog.service(self).refresh_session_state(
-            session_id,
-            sock_path,
-            timeout_s=timeout_s,
-        )
-
-    def _prune_dead_sessions(self) -> None:
-        if getattr(self, "_runtime", None) is None:
-            self._runtime = RUNTIME
-        _session_catalog.service(self).prune_dead_sessions()
-
-    def _update_meta_counters(self) -> None:
-        _session_background.service(self).update_meta_counters()
-
-    def list_sessions(self) -> list[dict[str, Any]]:
-        if getattr(self, "_runtime", None) is None:
-            self._runtime = RUNTIME
-        return _session_catalog.service(self).list_sessions()
-
-    def get_session(self, session_id: str) -> Session | None:
-        return _session_catalog.service(self).get_session(session_id)
-
-    def refresh_session_meta(self, session_id: str, *, strict: bool = True) -> None:
-        if getattr(self, "_runtime", None) is None:
-            self._runtime = RUNTIME
-        _session_catalog.service(self).refresh_session_meta(session_id, strict=strict)
-
-    def _set_chat_index_snapshot(
-        self,
-        *,
-        session_id: str,
-        events: list[dict[str, Any]],
-        token_update: dict[str, Any] | None,
-        scan_bytes: int,
-        scan_complete: bool,
-        log_off: int,
-    ) -> None:
-        _message_history.service(self).set_chat_index_snapshot(
-            session_id=session_id,
-            events=events,
-            token_update=token_update,
-            scan_bytes=scan_bytes,
-            scan_complete=scan_complete,
-            log_off=log_off,
-        )
-
-    def _append_chat_events(
-        self,
-        session_id: str,
-        new_events: list[dict[str, Any]],
-        *,
-        new_off: int,
-        latest_token: dict[str, Any] | None,
-    ) -> None:
-        _message_history.service(self).append_chat_events(
-            session_id,
-            new_events,
-            new_off=new_off,
-            latest_token=latest_token,
-        )
-
-    def _attach_notification_texts(
-        self, events: list[dict[str, Any]]
-    ) -> list[dict[str, Any]]:
-        return _message_history.service(self).attach_notification_texts(events)
-
-    def _update_pi_last_chat_ts(
-        self,
-        session_id: str,
-        events: list[dict[str, Any]],
-        *,
-        session_path: Path | None,
-    ) -> None:
-        _message_history.service(self).update_pi_last_chat_ts(
-            session_id,
-            events,
-            session_path=session_path,
-        )
-
-    def _ensure_pi_chat_index(
-        self, session_id: str, *, min_events: int, before: int
-    ) -> tuple[list[dict[str, Any]], int, bool, int, dict[str, Any]]:
-        return _message_history.service(self).ensure_pi_chat_index(
-            session_id,
-            min_events=min_events,
-            before=before,
-        )
-
-    def _ensure_chat_index(
-        self, session_id: str, *, min_events: int, before: int
-    ) -> tuple[list[dict[str, Any]], int, bool, int, dict[str, Any] | None]:
-        return _message_history.service(self).ensure_chat_index(
-            session_id,
-            min_events=min_events,
-            before=before,
-        )
-
-    def mark_log_delta(
-        self, session_id: str, *, objs: list[dict[str, Any]], new_off: int
-    ) -> None:
-        _message_history.service(self).mark_log_delta(
-            session_id,
-            objs=objs,
-            new_off=new_off,
-        )
-
-    def idle_from_log(self, session_id: str) -> bool:
-        return _message_history.service(self).idle_from_log(session_id)
-
-    def get_messages_page(
-        self,
-        session_id: str,
-        *,
-        offset: int,
-        init: bool,
-        limit: int,
-        before: int,
-        view: str = "conversation",
-    ) -> dict[str, Any]:
-        return _message_history.service(self).get_messages_page(
-            session_id,
-            offset=offset,
-            init=init,
-            limit=limit,
-            before=before,
-            view=view,
-        )
-
-    def _sock_call(
-        self, sock_path: Path, req: dict[str, Any], timeout_s: float = 2.0
-    ) -> dict[str, Any]:
-        return _session_transport.service(self).sock_call(sock_path, req, timeout_s=timeout_s)
-
-    def _kill_session_via_pids(self, s: Session) -> bool:
-        return _session_transport.service(self).kill_session_via_pids(s)
-
-    def kill_session(self, session_id: str) -> bool:
-        return _session_transport.service(self).kill_session(session_id)
-
-    def spawn_web_session(
-        self,
-        *,
-        cwd: str,
-        args: list[str] | None = None,
-        agent_backend: str = "codex",
-        resume_session_id: str | None = None,
-        worktree_branch: str | None = None,
-        model_provider: str | None = None,
-        preferred_auth_method: str | None = None,
-        model: str | None = None,
-        reasoning_effort: str | None = None,
-        service_tier: str | None = None,
-        create_in_tmux: bool = False,
-        backend: str | None = None,
-    ) -> dict[str, Any]:
-        return _session_control.service(self).spawn_web_session(
-            cwd=cwd,
-            args=args,
-            agent_backend=agent_backend,
-            resume_session_id=resume_session_id,
-            worktree_branch=worktree_branch,
-            model_provider=model_provider,
-            preferred_auth_method=preferred_auth_method,
-            model=model,
-            reasoning_effort=reasoning_effort,
-            service_tier=service_tier,
-            create_in_tmux=create_in_tmux,
-            backend=backend,
-        )
-
-    def delete_session(self, session_id: str) -> bool:
-        runtime_id = self._runtime_session_id_for_identifier(session_id)
-        if runtime_id is None:
-            ref = self._page_state_ref_for_session_id(session_id)
-            if ref is None:
-                return False
-            backend, durable_id = ref
-            self._hide_session_identity_values(
-                session_id,
-                durable_id,
-                durable_id if backend == "pi" else None,
-                backend,
-            )
-            self._delete_durable_session_record(ref)
-            self._clear_deleted_session_state(session_id)
-            return True
-        with self._lock:
-            s = self._sessions.get(runtime_id)
-        if not s:
-            return False
-        ok = self.kill_session(runtime_id)
-        if ok:
-            # Hide the session immediately so stale sidecars do not repopulate the
-            # sidebar before the broker and child process have fully exited.
-            self._hide_session_identity(s)
-            self.files_clear(runtime_id)
-            self._clear_deleted_session_state(runtime_id)
-            with self._lock:
-                self._sessions.pop(runtime_id, None)
-        return ok
-
-    def send(self, session_id: str, text: str) -> dict[str, Any]:
-        return _session_control.service(self).send(session_id, text)
-
-    def enqueue(self, session_id: str, text: str) -> dict[str, Any]:
-        return _session_control.service(self).enqueue(session_id, text)
-
-    def queue_list(self, session_id: str) -> list[str]:
-        return _session_control.service(self).queue_list(session_id)
-
-    def queue_delete(self, session_id: str, index: int) -> dict[str, Any]:
-        return _session_control.service(self).queue_delete(session_id, int(index))
-
-    def queue_update(self, session_id: str, index: int, text: str) -> dict[str, Any]:
-        return _session_control.service(self).queue_update(session_id, int(index), text)
-
-    def get_state(self, session_id: str) -> dict[str, Any]:
-        return _session_transport.service(self).get_state(session_id)
-
     def get_ui_state(self, session_id: str) -> dict[str, Any]:
         return _pi_ui_bridge.get_ui_state(RUNTIME, self, session_id)
 
@@ -3292,19 +1928,11 @@ class SessionManager:
         return _pi_ui_bridge.get_session_commands(RUNTIME, self, session_id)
 
     def submit_ui_response(
-        self, session_id: str, payload: dict[str, Any]
+        self,
+        session_id: str,
+        payload: dict[str, Any],
     ) -> dict[str, Any]:
         return _pi_ui_bridge.submit_ui_response(RUNTIME, self, session_id, payload)
-
-    def get_tail(self, session_id: str) -> str:
-        return _session_transport.service(self).get_tail(session_id)
-
-    def inject_keys(self, session_id: str, seq: str) -> dict[str, Any]:
-        return _session_transport.service(self).inject_keys(session_id, seq)
-
-    def mark_turn_complete(self, session_id: str, payload: dict[str, Any]) -> None:
-        return
-
 
 MANAGER = SessionManager()
 RUNTIME = MANAGER._runtime
@@ -3358,159 +1986,13 @@ def _cache_control_for_path(path: Path) -> str:
     return _http_static_assets.cache_control_for_path(path)
 
 
-class Handler(http.server.BaseHTTPRequestHandler):
-    server_version = "codoxear/0.1"
-
-    def _send_bytes(
-        self, data: bytes, ctype: str, *, cache_control: str = "no-store"
-    ) -> None:
-        self.send_response(200)
-        self.send_header("Content-Type", ctype)
-        self.send_header("Content-Length", str(len(data)))
-        self.send_header("Cache-Control", cache_control)
-        if cache_control == "no-store":
-            # UI is used for interactive debugging; serve HTML and legacy assets without caching
-            # so changes show up immediately on refresh.
-            self.send_header("Pragma", "no-cache")
-            self.send_header("Expires", "0")
-        self.end_headers()
-        self.wfile.write(data)
-
-    def _send_path(self, path: Path) -> None:
-        data = _read_static_bytes(path)
-        self._send_bytes(
-            data,
-            _content_type_for_path(path),
-            cache_control=_cache_control_for_path(path),
-        )
-
-    def _send_static(self, rel: str) -> None:
-        path = (STATIC_DIR / rel.lstrip("/")).resolve()
-        if not _is_path_within(STATIC_DIR.resolve(), path):
-            self.send_error(404)
-            return
-        if not path.exists() or not path.is_file():
-            self.send_error(404)
-            return
-        self._send_path(path)
-
-    def _unauthorized(self) -> None:
-        _json_response(self, 401, {"error": "unauthorized"})
-
-    def do_GET(self) -> None:
-        try:
-            u = urllib.parse.urlparse(self.path)
-            path = u.path
-            if URL_PREFIX:
-                if path == URL_PREFIX:
-                    loc = URL_PREFIX + "/"
-                    if u.query:
-                        loc = loc + "?" + u.query
-                    self.send_response(308)
-                    self.send_header("Location", loc)
-                    self.end_headers()
-                    return
-                stripped = _strip_url_prefix(URL_PREFIX, path)
-                if stripped is None:
-                    self.send_error(404)
-                    return
-                path = stripped
-            for route_module in (
-                _http_assets_routes,
-                _http_auth_routes,
-                _http_events_routes,
-                _http_notification_routes,
-                _http_session_read_routes,
-                _http_file_routes,
-            ):
-                if route_module.handle_get(RUNTIME, self, path, u):
-                    return
-            self.send_error(404)
-        except Exception as e:
-            traceback.print_exc()
-            _json_response(
-                self, 500, {"error": str(e), "trace": traceback.format_exc()}
-            )
-
-    def do_POST(self) -> None:
-        try:
-            u = urllib.parse.urlparse(self.path)
-            path = u.path
-            if URL_PREFIX:
-                if path == URL_PREFIX:
-                    loc = URL_PREFIX + "/"
-                    if u.query:
-                        loc = loc + "?" + u.query
-                    self.send_response(308)
-                    self.send_header("Location", loc)
-                    self.end_headers()
-                    return
-                stripped = _strip_url_prefix(URL_PREFIX, path)
-                if stripped is None:
-                    self.send_error(404)
-                    return
-                path = stripped
-            for route_module in (
-                _http_auth_routes,
-                _http_notification_routes,
-                _http_session_write_routes,
-                _http_file_routes,
-            ):
-                if route_module.handle_post(RUNTIME, self, path, u):
-                    return
-            self.send_error(404)
-        except KeyError:
-            _json_response(self, 404, {"error": "unknown session"})
-        except Exception as e:
-            traceback.print_exc()
-            _json_response(
-                self, 500, {"error": str(e), "trace": traceback.format_exc()}
-            )
-
-    def log_message(self, fmt: str, *args: Any) -> None:
-        # Quiet default logging to keep terminal usable.
-        return
-
-
-class ThreadingHTTPServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
-    daemon_threads = True
-
-
-class ThreadingHTTPServerV6(ThreadingHTTPServer):
-    address_family = socket.AF_INET6
-
-    def server_bind(self) -> None:
-        v6only = getattr(socket, "IPV6_V6ONLY", None)
-        if v6only is not None:
-            self.socket.setsockopt(socket.IPPROTO_IPV6, v6only, 0)
-        super().server_bind()
+Handler = _http_server_runner.make_handler(RUNTIME)
+ThreadingHTTPServer = _http_server_runner.ThreadingHTTPServer
+ThreadingHTTPServerV6 = _http_server_runner.ThreadingHTTPServerV6
 
 
 def main() -> None:
-    os.makedirs(APP_DIR, exist_ok=True)
-    os.makedirs(UPLOAD_DIR, exist_ok=True)
-    try:
-        _require_password()
-    except Exception as e:
-        sys.stderr.write(f"error: {e}\n")
-        raise SystemExit(2)
-
-    host = DEFAULT_HOST
-    server: ThreadingHTTPServer
-    if ":" in host:
-        server = ThreadingHTTPServerV6((host, DEFAULT_PORT), Handler)
-    else:
-        server = ThreadingHTTPServer((host, DEFAULT_PORT), Handler)
-
-    def _sigterm(_signo: int, _frame: Any) -> None:
-        # BaseServer.shutdown() must not run in the serve_forever thread.
-        MANAGER.stop()
-        threading.Thread(target=server.shutdown, daemon=True).start()
-
-    signal.signal(signal.SIGTERM, _sigterm)
-    signal.signal(signal.SIGINT, _sigterm)
-
-    server.serve_forever()
+    _http_server_runner.main(RUNTIME, Handler)
 
 
 if __name__ == "__main__":

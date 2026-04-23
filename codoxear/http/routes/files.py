@@ -215,7 +215,10 @@ def handle_get(runtime: ServerRuntime, handler: Any, path: str, u: Any) -> bool:
         handler.send_response(200)
         handler.send_header("Content-Type", "application/octet-stream")
         handler.send_header("Content-Length", str(size))
-        handler.send_header("Content-Disposition", sv._download_disposition(path_obj))
+        handler.send_header(
+            "Content-Disposition",
+            sv._workspace_file_access.download_disposition(path_obj),
+        )
         handler.send_header("Cache-Control", "no-store")
         handler.send_header("Pragma", "no-cache")
         handler.send_header("Expires", "0")

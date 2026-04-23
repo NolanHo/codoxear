@@ -4,10 +4,6 @@ import unittest
 from pathlib import Path
 
 from codoxear import server
-from codoxear.server import _download_disposition
-from codoxear.server import _read_client_file_view
-from codoxear.server import _read_text_file_for_write
-from codoxear.server import _read_downloadable_file
 from codoxear.workspace import file_access as _file_access
 from codoxear.workspace import service as _workspace_service
 
@@ -42,7 +38,7 @@ class TestInspectOpenableFile(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / "blob.bin"
             path.write_bytes(b"\x00\x01\x02\x03")
-            view = _read_client_file_view(path)
+            view = _file_access.read_client_file_view(server.RUNTIME, path)
             self.assertEqual(view.kind, "download_only")
             self.assertEqual(view.blocked_reason, "binary")
             self.assertEqual(view.size, 4)
@@ -64,7 +60,7 @@ class TestInspectOpenableFile(unittest.TestCase):
             self.assertGreater(size, 2 * 1024 * 1024)
             self.assertEqual(kind, "download_only")
             self.assertIsNone(image_ctype)
-            view = _read_client_file_view(path)
+            view = _file_access.read_client_file_view(server.RUNTIME, path)
             self.assertEqual(view.blocked_reason, "too_large")
             self.assertEqual(view.viewer_max_bytes, 2 * 1024 * 1024)
 
@@ -108,7 +104,7 @@ class TestInspectOpenableFile(unittest.TestCase):
             path = Path(td) / "note.md"
             raw = b"hello\n"
             path.write_bytes(raw)
-            view = _read_client_file_view(path)
+            view = _file_access.read_client_file_view(server.RUNTIME, path)
             self.assertEqual(view.text, "hello\n")
             self.assertEqual(view.size, len(raw))
             self.assertTrue(view.editable)
@@ -119,7 +115,7 @@ class TestInspectOpenableFile(unittest.TestCase):
             path = Path(td) / "note.txt"
             raw = b"broken:\xff\n"
             path.write_bytes(raw)
-            view = _read_client_file_view(path)
+            view = _file_access.read_client_file_view(server.RUNTIME, path)
             self.assertEqual(view.size, len(raw))
             self.assertFalse(view.editable)
             self.assertIn("broken:", str(view.text))
@@ -131,7 +127,7 @@ class TestInspectOpenableFile(unittest.TestCase):
             path = Path(td) / "note.txt"
             path.write_bytes(b"broken:\xff\n")
             with self.assertRaisesRegex(ValueError, "utf-8 text"):
-                _read_text_file_for_write(path, max_bytes=1024)
+                _file_access.read_text_file_for_write(path, max_bytes=1024)
 
     def test_write_text_file_atomic_updates_contents(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -186,13 +182,16 @@ class TestInspectOpenableFile(unittest.TestCase):
             path = Path(td) / "blob.bin"
             raw_in = b"\x00\x01\x02\x03"
             path.write_bytes(raw_in)
-            raw_out, size = _read_downloadable_file(path)
+            raw_out, size = _file_access.read_downloadable_file(path)
             self.assertEqual(raw_out, raw_in)
             self.assertEqual(size, len(raw_in))
 
     def test_download_disposition_uses_utf8_filename(self) -> None:
         path = Path("/tmp/report 1.py")
-        self.assertEqual(_download_disposition(path), "attachment; filename*=UTF-8''report%201.py")
+        self.assertEqual(
+            _file_access.download_disposition(path),
+            "attachment; filename*=UTF-8''report%201.py",
+        )
 
 
 if __name__ == "__main__":
