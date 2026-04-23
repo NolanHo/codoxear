@@ -57,12 +57,18 @@ class RuntimeFacade:
         return self.api.session_details_payload(self.manager, session_id)
 
     def session_diagnostics_payload(self, session_id: str) -> dict[str, Any]:
+        from .sessions import payloads as _session_payloads
+
         self.manager.refresh_session_meta(session_id, strict=False)
         session = self.manager.get_session(session_id)
         if not session:
             raise KeyError("unknown session")
         state = self.api.validated_session_state(self.manager.get_state(session_id))
-        return self.api.session_diagnostics_payload(self.manager, session_id, session, state)
+        return _session_payloads.service(self.runtime, self.manager).session_diagnostics_payload(
+            session_id,
+            session,
+            state,
+        )
 
     def session_queue_payload(self, session_id: str) -> dict[str, Any]:
         queue = self.manager.queue_list(session_id)

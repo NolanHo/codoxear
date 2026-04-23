@@ -1358,65 +1358,51 @@ class Broker:
             resume_session_id=resume_session_id,
         ).run(foreground=True)
 
-    def run(self) -> int:
-        if AGENT_BACKEND == "pi":
-            return self._run_pi_foreground_broker()
-
-        rows, cols = _term_size()
-        _require_proc()
-
-        self.sessions_dir.mkdir(parents=True, exist_ok=True)
-        start_ts = _now()
-        headless = OWNER_TAG == "web"
-        local_terminal = (not self._emulate_terminal) and sys.stdin.isatty()
-
+    def _spawn_agent_pty(self, *, rows: int, cols: int, headless: bool) -> tuple[int, int]:
         pid, master_fd = pty.fork()
-        if pid == 0:
-            try:
-                _set_pdeathsig(signal.SIGHUP)
-                term_raw = os.environ.get("TERM")
-                term = str(term_raw).strip() if term_raw is not None else ""
-                if not term:
-                    term = "xterm-256color"
-                os.environ.setdefault("TERM", term)
-                os.environ["COLUMNS"] = str(cols)
-                os.environ["LINES"] = str(rows)
-                os.environ[BACKEND.home_env_var] = str(self.codex_home)
-                if sys.stdin.isatty():
-                    try:
-                        fd = sys.stdin.fileno()
-                        attrs = termios.tcgetattr(fd)
-                        attrs[0] &= ~(termios.ICRNL | termios.INLCR | termios.IGNCR)
-                        termios.tcsetattr(fd, termios.TCSANOW, attrs)
-                    except (OSError, termios.error):
-                        if DEBUG:
-                            traceback.print_exc()
-                if headless:
-                    os.environ[BACKEND.home_env_var] = str(self.codex_home)
-                    _exec_agent_via_login_shell(
-                        cwd=self.cwd, agent_args=self.codex_args
-                    )
-                else:
-                    os.environ[BACKEND.home_env_var] = str(self.codex_home)
-                    _exec_agent(cwd=self.cwd, agent_args=self.codex_args)
-            except Exception:
-                traceback.print_exc()
-                os._exit(127)
-
-        if local_terminal:
-            try:
-                fd = sys.stdin.fileno()
-                self._stdin_termios = termios.tcgetattr(fd)
-                tty.setraw(fd)
-            except Exception:
-                traceback.print_exc()
-                self._stdin_termios = None
-
+        if pid != 0:
+            return pid, master_fd
         try:
-            _set_winsize(master_fd, rows, cols)
+            _set_pdeathsig(signal.SIGHUP)
+            term_raw = os.environ.get("TERM")
+            term = str(term_raw).strip() if term_raw is not None else ""
+            if not term:
+                term = "xterm-256color"
+            os.environ.setdefault("TERM", term)
+            os.environ["COLUMNS"] = str(cols)
+            os.environ["LINES"] = str(rows)
+            os.environ[BACKEND.home_env_var] = str(self.codex_home)
+            if sys.stdin.isatty():
+                try:
+                    fd = sys.stdin.fileno()
+                    attrs = termios.tcgetattr(fd)
+                    attrs[0] &= ~(termios.ICRNL | termios.INLCR | termios.IGNCR)
+                    termios.tcsetattr(fd, termios.TCSANOW, attrs)
+                except (OSError, termios.error):
+                    if DEBUG:
+                        traceback.print_exc()
+            if headless:
+                os.environ[BACKEND.home_env_var] = str(self.codex_home)
+                _exec_agent_via_login_shell(cwd=self.cwd, agent_args=self.codex_args)
+            else:
+                os.environ[BACKEND.home_env_var] = str(self.codex_home)
+                _exec_agent(cwd=self.cwd, agent_args=self.codex_args)
         except Exception:
             traceback.print_exc()
+        os._exit(127)
 
+    def _configure_local_terminal(self, *, local_terminal: bool) -> None:
+        if not local_terminal:
+            return
+        try:
+            fd = sys.stdin.fileno()
+            self._stdin_termios = termios.tcgetattr(fd)
+            tty.setraw(fd)
+        except Exception:
+            traceback.print_exc()
+            self._stdin_termios = None
+
+    def _initialize_broker_state(self, *, pid: int, master_fd: int, start_ts: float) -> None:
         st = State(
             codex_pid=pid,
             pty_master_fd=master_fd,
@@ -1442,6 +1428,7 @@ class Broker:
         if declared_log_path is not None and declared_log_path.exists():
             self._maybe_register_or_switch_rollout(log_path=declared_log_path)
 
+    def _install_sigwinch_handler(self, *, master_fd: int) -> None:
         def _sigwinch(_signo: int, _frame: Any) -> None:
             try:
                 r, c = _term_size()
@@ -1451,6 +1438,7 @@ class Broker:
 
         signal.signal(signal.SIGWINCH, _sigwinch)
 
+    def _start_runtime_threads(self, *, local_terminal: bool) -> None:
         self._write_meta()
         threading.Thread(target=self._sock_server, daemon=True).start()
         threading.Thread(target=self._pty_to_stdout, daemon=True).start()
@@ -1461,30 +1449,34 @@ class Broker:
         threading.Thread(target=self._log_watcher, daemon=True).start()
         threading.Thread(target=self._discover_log_watcher, daemon=True).start()
 
+    def _wait_child_exit(self, *, pid: int) -> int:
         exit_code = 0
-        try:
-            while not self._stop.is_set():
-                try:
-                    wpid, status = os.waitpid(pid, os.WNOHANG)
-                    if wpid == pid:
-                        if os.WIFEXITED(status):
-                            exit_code = int(os.WEXITSTATUS(status))
-                        elif os.WIFSIGNALED(status):
-                            exit_code = 128 + int(os.WTERMSIG(status))
-                        break
-                except ChildProcessError:
+        while not self._stop.is_set():
+            try:
+                wpid, status = os.waitpid(pid, os.WNOHANG)
+                if wpid == pid:
+                    if os.WIFEXITED(status):
+                        exit_code = int(os.WEXITSTATUS(status))
+                    elif os.WIFSIGNALED(status):
+                        exit_code = 128 + int(os.WTERMSIG(status))
                     break
-                time.sleep(0.1)
-        finally:
-            if self._stdin_termios is not None:
-                try:
-                    termios.tcsetattr(
-                        sys.stdin.fileno(), termios.TCSANOW, self._stdin_termios
-                    )
-                except Exception:
-                    traceback.print_exc()
-                self._stdin_termios = None
+            except ChildProcessError:
+                break
+            time.sleep(0.1)
+        return exit_code
 
+    def _restore_local_terminal(self) -> None:
+        if self._stdin_termios is None:
+            return
+        try:
+            termios.tcsetattr(
+                sys.stdin.fileno(), termios.TCSANOW, self._stdin_termios
+            )
+        except Exception:
+            traceback.print_exc()
+        self._stdin_termios = None
+
+    def _cleanup_runtime(self, *, master_fd: int) -> None:
         self._stop.set()
         try:
             os.close(master_fd)
@@ -1501,6 +1493,37 @@ class Broker:
                 st2.sock_path.with_suffix(".json").unlink()
             except Exception:
                 traceback.print_exc()
+
+    def run(self) -> int:
+        if AGENT_BACKEND == "pi":
+            return self._run_pi_foreground_broker()
+
+        rows, cols = _term_size()
+        _require_proc()
+
+        self.sessions_dir.mkdir(parents=True, exist_ok=True)
+        start_ts = _now()
+        headless = OWNER_TAG == "web"
+        local_terminal = (not self._emulate_terminal) and sys.stdin.isatty()
+
+        pid, master_fd = self._spawn_agent_pty(rows=rows, cols=cols, headless=headless)
+        self._configure_local_terminal(local_terminal=local_terminal)
+
+        try:
+            _set_winsize(master_fd, rows, cols)
+        except Exception:
+            traceback.print_exc()
+
+        self._initialize_broker_state(pid=pid, master_fd=master_fd, start_ts=start_ts)
+        self._install_sigwinch_handler(master_fd=master_fd)
+        self._start_runtime_threads(local_terminal=local_terminal)
+
+        try:
+            exit_code = self._wait_child_exit(pid=pid)
+        finally:
+            self._restore_local_terminal()
+
+        self._cleanup_runtime(master_fd=master_fd)
         return exit_code
 
 
