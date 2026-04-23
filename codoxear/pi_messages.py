@@ -876,378 +876,382 @@ def _assistant_payload_message_class(
     return "narration"
 
 
-def normalize_pi_entries(
-    entries: list[dict[str, Any]],
+
+def _normalize_turn_flags(
+    state: dict[str, Any],
     *,
-    ts_start: float = 0.0,
-    include_system: bool = False,
-) -> tuple[list[dict[str, Any]], dict[str, int], dict[str, bool], dict[str, Any]]:
-    events: list[dict[str, Any]] = []
-    meta_delta = {"thinking": 0, "tool": 0, "system": 0}
-    flags = {"turn_start": False, "turn_end": False, "turn_aborted": False}
-    tool_names: list[str] = []
-    active_turn_last_tool: str | None = None
-    fallback_ts = float(ts_start)
-    pending_ask_user: dict[str, dict[str, Any]] = {}
-    pending_subagents: dict[str, dict[str, Any]] = {}
+    source_event: str | None,
+    entry_type: str,
+) -> None:
+    flags = state["flags"]
+    if source_event == "turn.started" or entry_type == "turn.started":
+        flags["turn_start"] = True
+        state["active_turn_last_tool"] = None
+    if source_event in _PI_END_EVENT_TYPES or entry_type in _PI_END_EVENT_TYPES:
+        flags["turn_end"] = True
+    if source_event in _PI_ABORT_EVENT_TYPES or entry_type in _PI_ABORT_EVENT_TYPES:
+        flags["turn_aborted"] = True
 
-    for entry in entries:
-        if not isinstance(entry, dict):
-            continue
-        payload = _payload_for_entry(entry)
-        if not isinstance(payload, dict):
-            continue
-        entry_type = _entry_type(entry)
-        payload_type = _entry_type(payload)
-        source_event = (
-            payload.get("source_event")
-            if isinstance(payload.get("source_event"), str)
-            else None
+
+def _normalize_tool_result_entry(
+    state: dict[str, Any],
+    *,
+    payload: dict[str, Any],
+    payload_ts: float | None,
+    entry_ts: float | None,
+) -> bool:
+    events: list[dict[str, Any]] = state["events"]
+    meta_delta: dict[str, int] = state["meta_delta"]
+    tool_names: list[str] = state["tool_names"]
+    pending_ask_user: dict[str, dict[str, Any]] = state["pending_ask_user"]
+    pending_subagents: dict[str, dict[str, Any]] = state["pending_subagents"]
+    fallback_ts = float(state["fallback_ts"])
+    active_turn_last_tool = state["active_turn_last_tool"]
+
+    if payload.get("role") == "toolResult" and _is_ask_user_tool_name(
+        payload.get("toolName")
+    ):
+        meta_delta["tool"] += 1
+        tool_names.append("ask_user")
+        active_turn_last_tool = "ask_user"
+        call_id = payload.get("toolCallId")
+        details = _tool_result_details(payload) or {}
+        info = pending_ask_user.pop(call_id, None) if isinstance(call_id, str) else None
+        ts = (
+            info["ts"]
+            if info
+            else _event_ts_value(preferred_ts=payload_ts or entry_ts, fallback_ts=fallback_ts)
         )
-
-        if source_event == "turn.started" or entry_type == "turn.started":
-            flags["turn_start"] = True
-            active_turn_last_tool = None
-        if source_event in _PI_END_EVENT_TYPES or entry_type in _PI_END_EVENT_TYPES:
-            flags["turn_end"] = True
-        if source_event in _PI_ABORT_EVENT_TYPES or entry_type in _PI_ABORT_EVENT_TYPES:
-            flags["turn_aborted"] = True
-
-        entry_ts = _entry_ts(entry)
-        payload_ts = _entry_ts(payload)
-
-        # --- toolResult ---
-        if payload.get("role") == "toolResult" and _is_ask_user_tool_name(
-            payload.get("toolName")
-        ):
-            meta_delta["tool"] += 1
-            tool_names.append("ask_user")
-            active_turn_last_tool = "ask_user"
-            call_id = payload.get("toolCallId")
-            details = _tool_result_details(payload) or {}
-            info = (
-                pending_ask_user.pop(call_id, None)
-                if isinstance(call_id, str)
-                else None
-            )
-            ts = (
-                info["ts"]
-                if info
-                else _event_ts_value(
-                    preferred_ts=payload_ts or entry_ts, fallback_ts=fallback_ts
-                )
-            )
-            event: dict[str, Any] = (
-                info.copy()
-                if info
-                else _ask_user_event(
-                    {}, call_id=call_id if isinstance(call_id, str) else None, ts=ts
-                )
-            )
-            question = event.get("question")
-            question_text = question if isinstance(question, str) else ""
-            answer, was_custom = _normalize_ask_user_result(
-                details,
-                allow_multiple=bool(event.get("allow_multiple")),
-                question=question_text,
-                content_text=_entry_text(payload) or "",
-            )
-            answers_by_question = _normalize_ask_user_answers_map(details)
-            event["answer"] = answer
-            if answers_by_question:
-                event["answers_by_question"] = answers_by_question
-            event["cancelled"] = bool(details.get("cancelled"))
-            event["was_custom"] = was_custom
-            event["resolved"] = True
-            if _ask_user_prompt_fallback_available(payload, answer):
-                event["prompt_fallback_available"] = True
-            event["ts"] = float(ts)
-            events.append(event)
-            if not info:
-                fallback_ts = ts + 0.1
-            continue
-
-        if _is_subagent_result(payload):
-            call_id = payload.get("toolCallId")
-            output = _extract_subagent_output(payload)
-            info = (
-                pending_subagents.pop(call_id, None)
-                if isinstance(call_id, str)
-                else None
-            )
-            ts = (
-                info["ts"]
-                if info
-                else _event_ts_value(
-                    preferred_ts=payload_ts or entry_ts, fallback_ts=fallback_ts
-                )
-            )
-            events.append(
-                {
-                    "type": "subagent",
-                    "agent": info["agent"] if info else "subagent",
-                    "task": info.get("task") if info else None,
-                    "output": output,
-                    "ts": ts,
-                }
-            )
-            if not info:
-                fallback_ts = ts + 0.1
-            continue
-
-        if payload.get("role") == "toolResult":
-            meta_delta["tool"] += 1
-            tn = payload.get("toolName")
-            if isinstance(tn, str) and tn:
-                tool_names.append(tn)
-                active_turn_last_tool = tn
-            ts = _event_ts_value(
-                preferred_ts=payload_ts or entry_ts, fallback_ts=fallback_ts
-            )
-            if isinstance(tn, str) and tn == "manage_todo_list":
-                todo_event = _todo_snapshot_event(payload, ts=ts)
-                if todo_event is not None:
-                    events.append(todo_event)
-                    fallback_ts = ts + 0.1
-                    continue
-            output = _extract_subagent_output(payload)
-            tool_details = _tool_result_details(payload)
-            if isinstance(tn, str) and tn and (
-                (isinstance(output, str) and output)
-                or tool_details is not None
-                or payload.get("isError") is True
-            ):
-                tool_event: dict[str, Any] = {"type": "tool_result", "name": tn, "ts": ts}
-                if isinstance(output, str) and output:
-                    tool_event["text"] = output
-                elif payload.get("isError") is True:
-                    tool_event["text"] = f"{tn} failed"
-                if payload.get("isError") is True:
-                    tool_event["is_error"] = True
-                if tool_details is not None:
-                    tool_event["details"] = tool_details
-                events.append(tool_event)
+        event: dict[str, Any] = (
+            info.copy()
+            if info
+            else _ask_user_event({}, call_id=call_id if isinstance(call_id, str) else None, ts=ts)
+        )
+        question = event.get("question")
+        question_text = question if isinstance(question, str) else ""
+        answer, was_custom = _normalize_ask_user_result(
+            details,
+            allow_multiple=bool(event.get("allow_multiple")),
+            question=question_text,
+            content_text=_entry_text(payload) or "",
+        )
+        answers_by_question = _normalize_ask_user_answers_map(details)
+        event["answer"] = answer
+        if answers_by_question:
+            event["answers_by_question"] = answers_by_question
+        event["cancelled"] = bool(details.get("cancelled"))
+        event["was_custom"] = was_custom
+        event["resolved"] = True
+        if _ask_user_prompt_fallback_available(payload, answer):
+            event["prompt_fallback_available"] = True
+        event["ts"] = float(ts)
+        events.append(event)
+        if not info:
             fallback_ts = ts + 0.1
+        state["fallback_ts"] = fallback_ts
+        state["active_turn_last_tool"] = active_turn_last_tool
+        return True
+
+    if _is_subagent_result(payload):
+        call_id = payload.get("toolCallId")
+        output = _extract_subagent_output(payload)
+        info = pending_subagents.pop(call_id, None) if isinstance(call_id, str) else None
+        ts = (
+            info["ts"]
+            if info
+            else _event_ts_value(preferred_ts=payload_ts or entry_ts, fallback_ts=fallback_ts)
+        )
+        events.append(
+            {
+                "type": "subagent",
+                "agent": info["agent"] if info else "subagent",
+                "task": info.get("task") if info else None,
+                "output": output,
+                "ts": ts,
+            }
+        )
+        if not info:
+            fallback_ts = ts + 0.1
+        state["fallback_ts"] = fallback_ts
+        state["active_turn_last_tool"] = active_turn_last_tool
+        return True
+
+    if payload.get("role") != "toolResult":
+        state["fallback_ts"] = fallback_ts
+        state["active_turn_last_tool"] = active_turn_last_tool
+        return False
+
+    meta_delta["tool"] += 1
+    tool_name = payload.get("toolName")
+    if isinstance(tool_name, str) and tool_name:
+        tool_names.append(tool_name)
+        active_turn_last_tool = tool_name
+    ts = _event_ts_value(preferred_ts=payload_ts or entry_ts, fallback_ts=fallback_ts)
+    if isinstance(tool_name, str) and tool_name == "manage_todo_list":
+        todo_event = _todo_snapshot_event(payload, ts=ts)
+        if todo_event is not None:
+            events.append(todo_event)
+            state["fallback_ts"] = ts + 0.1
+            state["active_turn_last_tool"] = active_turn_last_tool
+            return True
+
+    output = _extract_subagent_output(payload)
+    tool_details = _tool_result_details(payload)
+    if isinstance(tool_name, str) and tool_name and (
+        (isinstance(output, str) and output)
+        or tool_details is not None
+        or payload.get("isError") is True
+    ):
+        tool_event: dict[str, Any] = {"type": "tool_result", "name": tool_name, "ts": ts}
+        if isinstance(output, str) and output:
+            tool_event["text"] = output
+        elif payload.get("isError") is True:
+            tool_event["text"] = f"{tool_name} failed"
+        if payload.get("isError") is True:
+            tool_event["is_error"] = True
+        if tool_details is not None:
+            tool_event["details"] = tool_details
+        events.append(tool_event)
+    state["fallback_ts"] = ts + 0.1
+    state["active_turn_last_tool"] = active_turn_last_tool
+    return True
+
+
+def _normalize_assistant_entry(
+    state: dict[str, Any],
+    *,
+    payload: dict[str, Any],
+    payload_ts: float | None,
+    entry_ts: float | None,
+    entry_type: str,
+    source_event: str | None,
+) -> bool:
+    if payload.get("role") != "assistant":
+        return False
+    content = payload.get("content")
+    if not isinstance(content, list):
+        return False
+
+    events: list[dict[str, Any]] = state["events"]
+    meta_delta: dict[str, int] = state["meta_delta"]
+    tool_names: list[str] = state["tool_names"]
+    pending_ask_user: dict[str, dict[str, Any]] = state["pending_ask_user"]
+    pending_subagents: dict[str, dict[str, Any]] = state["pending_subagents"]
+    fallback_ts = float(state["fallback_ts"])
+    active_turn_last_tool = state["active_turn_last_tool"]
+
+    entry_event_count = len(events)
+    text_parts: list[str] = []
+    assistant_ts = payload_ts if payload_ts is not None else entry_ts
+    assistant_message_class = _assistant_payload_message_class(
+        payload=payload,
+        entry_type=entry_type,
+        source_event=source_event,
+    )
+
+    for item in content:
+        if not isinstance(item, dict):
+            continue
+        item_type = item.get("type")
+        if item_type in _PI_TEXT_BLOCK_TYPES:
+            text = item.get("text")
+            if isinstance(text, str) and text:
+                text_parts.append(text)
             continue
 
-        # --- assistant content blocks in original order ---
-        if payload.get("role") == "assistant":
-            content = payload.get("content")
-            if isinstance(content, list):
-                entry_event_count = len(events)
-                text_parts: list[str] = []
-                assistant_ts = payload_ts if payload_ts is not None else entry_ts
-                assistant_message_class = _assistant_payload_message_class(
-                    payload=payload,
-                    entry_type=entry_type,
-                    source_event=source_event,
-                )
-                for item in content:
-                    if not isinstance(item, dict):
-                        continue
-                    item_type = item.get("type")
-                    if item_type in _PI_TEXT_BLOCK_TYPES:
-                        text = item.get("text")
-                        if isinstance(text, str) and text:
-                            text_parts.append(text)
-                        continue
-                    if item_type == "thinking":
-                        fallback_ts = _flush_assistant_text_buffer(
-                            text_parts=text_parts,
-                            events=events,
-                            fallback_ts=fallback_ts,
-                            preferred_ts=assistant_ts,
-                            message_class="narration",
-                        )
-                        thinking_text = item.get("thinking")
-                        summary = _thinking_summary_text(item)
-                        body_text = (
-                            thinking_text
-                            if isinstance(thinking_text, str) and thinking_text
-                            else summary
-                        )
-                        if isinstance(body_text, str) and body_text:
-                            ts = _event_ts_value(
-                                preferred_ts=assistant_ts, fallback_ts=fallback_ts
-                            )
-                            reasoning_event: dict[str, Any] = {
-                                "type": "reasoning",
-                                "text": body_text,
-                                "ts": ts,
-                            }
-                            if (
-                                isinstance(summary, str)
-                                and summary
-                                and summary != body_text
-                            ):
-                                reasoning_event["summary"] = summary
-                            events.append(reasoning_event)
-                            meta_delta["thinking"] += 1
-                            fallback_ts = ts + 0.1
-                            assistant_ts = None
-                        continue
-                    if item_type != "toolCall":
-                        continue
-                    fallback_ts = _flush_assistant_text_buffer(
-                        text_parts=text_parts,
-                        events=events,
-                        fallback_ts=fallback_ts,
-                        preferred_ts=assistant_ts,
-                        message_class="narration",
-                    )
-                    assistant_ts = None
-                    tc_name = item.get("name")
-                    if not isinstance(tc_name, str):
-                        continue
-                    call_id = item.get("id")
-                    if _is_ask_user_tool_name(tc_name):
-                        ts = float(
-                            _event_ts_value(
-                                preferred_ts=assistant_ts, fallback_ts=fallback_ts
-                            )
-                        )
-                        if isinstance(call_id, str) and call_id:
-                            pending_ask_user[call_id] = _ask_user_event(
-                                item.get("arguments"), call_id=call_id, ts=ts
-                            )
-                            meta_delta["tool"] += 1
-                            tool_names.append(tc_name)
-                            active_turn_last_tool = tc_name
-                            fallback_ts = ts + 0.1
-                            continue
-                        events.append(
-                            _ask_user_event(item.get("arguments"), call_id=None, ts=ts)
-                        )
-                        meta_delta["tool"] += 1
-                        tool_names.append(tc_name)
-                        active_turn_last_tool = tc_name
-                        fallback_ts = ts + 0.1
-                        continue
-                    if tc_name == "subagent":
-                        args = _coerce_tool_arguments(item.get("arguments", {}))
-                        agent = (
-                            args.get("agent", "subagent")
-                            if isinstance(args, dict)
-                            else "subagent"
-                        )
-                        task = args.get("task") if isinstance(args, dict) else None
-                        if isinstance(call_id, str) and call_id:
-                            pending_subagents[call_id] = {
-                                "agent": agent
-                                if isinstance(agent, str)
-                                else "subagent",
-                                "task": task if isinstance(task, str) else None,
-                                "ts": float(
-                                    _event_ts_value(
-                                        preferred_ts=assistant_ts,
-                                        fallback_ts=fallback_ts,
-                                    )
-                                ),
-                            }
-                            fallback_ts += 0.1
-                        continue
-                    assistant_tool_event: dict[str, Any] = {
-                        "type": "tool",
-                        "name": tc_name,
-                        "ts": float(
-                            _event_ts_value(
-                                preferred_ts=assistant_ts, fallback_ts=fallback_ts
-                            )
-                        ),
-                    }
-                    events.append(assistant_tool_event)
-                    meta_delta["tool"] += 1
-                    tool_names.append(tc_name)
-                    active_turn_last_tool = tc_name
-                    fallback_ts += 0.1
-                fallback_ts = _flush_assistant_text_buffer(
-                    text_parts=text_parts,
-                    events=events,
-                    fallback_ts=fallback_ts,
-                    preferred_ts=assistant_ts,
-                    message_class=assistant_message_class or "narration",
-                )
-                if len(events) > entry_event_count:
-                    continue
+        if item_type == "thinking":
+            fallback_ts = _flush_assistant_text_buffer(
+                text_parts=text_parts,
+                events=events,
+                fallback_ts=fallback_ts,
+                preferred_ts=assistant_ts,
+                message_class="narration",
+            )
+            thinking_text = item.get("thinking")
+            summary = _thinking_summary_text(item)
+            body_text = (
+                thinking_text if isinstance(thinking_text, str) and thinking_text else summary
+            )
+            if isinstance(body_text, str) and body_text:
+                ts = _event_ts_value(preferred_ts=assistant_ts, fallback_ts=fallback_ts)
+                reasoning_event: dict[str, Any] = {"type": "reasoning", "text": body_text, "ts": ts}
+                if isinstance(summary, str) and summary and summary != body_text:
+                    reasoning_event["summary"] = summary
+                events.append(reasoning_event)
+                meta_delta["thinking"] += 1
+                fallback_ts = ts + 0.1
+                assistant_ts = None
+            continue
 
-        role, text, has_ts = _message_event_info(entry)
-        if role is not None and text is not None:
-            if role == "user":
-                active_turn_last_tool = None
-            if has_ts:
-                ts = _entry_ts(payload)
-                if ts is None:
-                    ts = _entry_ts(entry)
-                if ts is None:
-                    ts = fallback_ts
-                elif ts < fallback_ts:
-                    ts = fallback_ts
+        if item_type != "toolCall":
+            continue
+
+        fallback_ts = _flush_assistant_text_buffer(
+            text_parts=text_parts,
+            events=events,
+            fallback_ts=fallback_ts,
+            preferred_ts=assistant_ts,
+            message_class="narration",
+        )
+        assistant_ts = None
+        tool_name = item.get("name")
+        if not isinstance(tool_name, str):
+            continue
+        call_id = item.get("id")
+
+        if _is_ask_user_tool_name(tool_name):
+            ts = float(_event_ts_value(preferred_ts=assistant_ts, fallback_ts=fallback_ts))
+            if isinstance(call_id, str) and call_id:
+                pending_ask_user[call_id] = _ask_user_event(item.get("arguments"), call_id=call_id, ts=ts)
             else:
-                ts = fallback_ts
-            fallback_ts = float(ts) + 1.0
-            event = {"role": role, "text": text, "ts": float(ts)}
-            if role == "assistant":
-                message_class = _assistant_payload_message_class(
-                    payload=payload,
-                    entry_type=entry_type,
-                    source_event=source_event,
-                )
-                if message_class is not None:
-                    event["message_class"] = message_class
-                    event["message_id"] = _text_message_id(
-                        message_class=message_class,
-                        text=text,
-                        ts=float(ts),
-                    )
-            events.append(event)
-            continue
-
-        empty_assistant_event = _empty_assistant_message_event(
-            entry,
-            payload,
-            ts=_event_ts_value(preferred_ts=entry_ts or payload_ts, fallback_ts=fallback_ts),
-        )
-        if empty_assistant_event is not None:
-            events.append(empty_assistant_event)
-            fallback_ts = float(empty_assistant_event["ts"]) + 0.1
-            continue
-
-        if entry_type in _PI_TOOL_EVENT_TYPES or payload_type in _PI_TOOL_EVENT_TYPES:
+                events.append(_ask_user_event(item.get("arguments"), call_id=None, ts=ts))
             meta_delta["tool"] += 1
-            tool_name = _tool_name(entry, payload)
-            if tool_name is not None:
-                tool_names.append(tool_name)
-                active_turn_last_tool = tool_name
-            ev_name = tool_name or entry_type or payload_type
-            if ev_name:
-                ts = _event_ts_value(
-                    preferred_ts=entry_ts or payload_ts, fallback_ts=fallback_ts
-                )
-                events.append({"type": "tool", "name": ev_name, "ts": ts})
-                fallback_ts = ts + 0.1
-            continue
-
-        if entry_type == "custom_message":
-            ts = _event_ts_value(
-                preferred_ts=entry_ts or payload_ts, fallback_ts=fallback_ts
-            )
-            custom_event = _custom_message_event(payload, ts=ts)
-            if custom_event is not None:
-                events.append(custom_event)
-                fallback_ts = ts + 0.1
-                continue
-
-        ts = _event_ts_value(
-            preferred_ts=entry_ts or payload_ts, fallback_ts=fallback_ts
-        )
-        fallback_event = _fallback_pi_event(entry, payload, ts=ts)
-        if fallback_event is not None:
-            events.append(fallback_event)
+            tool_names.append(tool_name)
+            active_turn_last_tool = tool_name
             fallback_ts = ts + 0.1
             continue
 
-    pending_events: list[dict[str, Any]] = [*pending_ask_user.values()]
-    for info in pending_subagents.values():
+        if tool_name == "subagent":
+            args = _coerce_tool_arguments(item.get("arguments", {}))
+            agent = args.get("agent", "subagent") if isinstance(args, dict) else "subagent"
+            task = args.get("task") if isinstance(args, dict) else None
+            if isinstance(call_id, str) and call_id:
+                pending_subagents[call_id] = {
+                    "agent": agent if isinstance(agent, str) else "subagent",
+                    "task": task if isinstance(task, str) else None,
+                    "ts": float(_event_ts_value(preferred_ts=assistant_ts, fallback_ts=fallback_ts)),
+                }
+                fallback_ts += 0.1
+            continue
+
+        events.append(
+            {
+                "type": "tool",
+                "name": tool_name,
+                "ts": float(_event_ts_value(preferred_ts=assistant_ts, fallback_ts=fallback_ts)),
+            }
+        )
+        meta_delta["tool"] += 1
+        tool_names.append(tool_name)
+        active_turn_last_tool = tool_name
+        fallback_ts += 0.1
+
+    fallback_ts = _flush_assistant_text_buffer(
+        text_parts=text_parts,
+        events=events,
+        fallback_ts=fallback_ts,
+        preferred_ts=assistant_ts,
+        message_class=assistant_message_class or "narration",
+    )
+
+    state["fallback_ts"] = fallback_ts
+    state["active_turn_last_tool"] = active_turn_last_tool
+    return len(events) > entry_event_count
+
+
+def _normalize_generic_entry(
+    state: dict[str, Any],
+    *,
+    entry: dict[str, Any],
+    payload: dict[str, Any],
+    entry_type: str,
+    payload_type: str,
+    source_event: str | None,
+    entry_ts: float | None,
+    payload_ts: float | None,
+) -> bool:
+    events: list[dict[str, Any]] = state["events"]
+    meta_delta: dict[str, int] = state["meta_delta"]
+    tool_names: list[str] = state["tool_names"]
+    fallback_ts = float(state["fallback_ts"])
+    active_turn_last_tool = state["active_turn_last_tool"]
+
+    role, text, has_ts = _message_event_info(entry)
+    if role is not None and text is not None:
+        if role == "user":
+            active_turn_last_tool = None
+        if has_ts:
+            ts = _entry_ts(payload)
+            if ts is None:
+                ts = _entry_ts(entry)
+            if ts is None:
+                ts = fallback_ts
+            elif ts < fallback_ts:
+                ts = fallback_ts
+        else:
+            ts = fallback_ts
+        fallback_ts = float(ts) + 1.0
+        event = {"role": role, "text": text, "ts": float(ts)}
+        if role == "assistant":
+            message_class = _assistant_payload_message_class(
+                payload=payload,
+                entry_type=entry_type,
+                source_event=source_event,
+            )
+            if message_class is not None:
+                event["message_class"] = message_class
+                event["message_id"] = _text_message_id(
+                    message_class=message_class,
+                    text=text,
+                    ts=float(ts),
+                )
+        events.append(event)
+        state["fallback_ts"] = fallback_ts
+        state["active_turn_last_tool"] = active_turn_last_tool
+        return True
+
+    empty_assistant_event = _empty_assistant_message_event(
+        entry,
+        payload,
+        ts=_event_ts_value(preferred_ts=entry_ts or payload_ts, fallback_ts=fallback_ts),
+    )
+    if empty_assistant_event is not None:
+        events.append(empty_assistant_event)
+        state["fallback_ts"] = float(empty_assistant_event["ts"]) + 0.1
+        state["active_turn_last_tool"] = active_turn_last_tool
+        return True
+
+    if entry_type in _PI_TOOL_EVENT_TYPES or payload_type in _PI_TOOL_EVENT_TYPES:
+        meta_delta["tool"] += 1
+        tool_name = _tool_name(entry, payload)
+        if tool_name is not None:
+            tool_names.append(tool_name)
+            active_turn_last_tool = tool_name
+        event_name = tool_name or entry_type or payload_type
+        if event_name:
+            ts = _event_ts_value(preferred_ts=entry_ts or payload_ts, fallback_ts=fallback_ts)
+            events.append({"type": "tool", "name": event_name, "ts": ts})
+            fallback_ts = ts + 0.1
+        state["fallback_ts"] = fallback_ts
+        state["active_turn_last_tool"] = active_turn_last_tool
+        return True
+
+    if entry_type == "custom_message":
+        ts = _event_ts_value(preferred_ts=entry_ts or payload_ts, fallback_ts=fallback_ts)
+        custom_event = _custom_message_event(payload, ts=ts)
+        if custom_event is not None:
+            events.append(custom_event)
+            state["fallback_ts"] = ts + 0.1
+            state["active_turn_last_tool"] = active_turn_last_tool
+            return True
+
+    ts = _event_ts_value(preferred_ts=entry_ts or payload_ts, fallback_ts=fallback_ts)
+    fallback_event = _fallback_pi_event(entry, payload, ts=ts)
+    if fallback_event is not None:
+        events.append(fallback_event)
+        state["fallback_ts"] = ts + 0.1
+        state["active_turn_last_tool"] = active_turn_last_tool
+        return True
+
+    state["fallback_ts"] = fallback_ts
+    state["active_turn_last_tool"] = active_turn_last_tool
+    return False
+
+
+def _append_pending_pi_events(state: dict[str, Any]) -> None:
+    events: list[dict[str, Any]] = state["events"]
+    pending_events: list[dict[str, Any]] = [*state["pending_ask_user"].values()]
+    for info in state["pending_subagents"].values():
         pending_events.append(
             {
                 "type": "subagent",
@@ -1260,11 +1264,82 @@ def normalize_pi_entries(
     pending_events.sort(key=lambda event: float(event.get("ts", 0.0)))
     events.extend(pending_events)
 
+
+def normalize_pi_entries(
+    entries: list[dict[str, Any]],
+    *,
+    ts_start: float = 0.0,
+    include_system: bool = False,
+) -> tuple[list[dict[str, Any]], dict[str, int], dict[str, bool], dict[str, Any]]:
+    state: dict[str, Any] = {
+        "events": [],
+        "meta_delta": {"thinking": 0, "tool": 0, "system": 0},
+        "flags": {"turn_start": False, "turn_end": False, "turn_aborted": False},
+        "tool_names": [],
+        "active_turn_last_tool": None,
+        "fallback_ts": float(ts_start),
+        "pending_ask_user": {},
+        "pending_subagents": {},
+    }
+
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        payload = _payload_for_entry(entry)
+        if not isinstance(payload, dict):
+            continue
+
+        entry_type = _entry_type(entry)
+        payload_type = _entry_type(payload)
+        source_event = payload.get("source_event") if isinstance(payload.get("source_event"), str) else None
+
+        _normalize_turn_flags(
+            state,
+            source_event=source_event,
+            entry_type=entry_type,
+        )
+
+        entry_ts = _entry_ts(entry)
+        payload_ts = _entry_ts(payload)
+
+        if _normalize_tool_result_entry(
+            state,
+            payload=payload,
+            payload_ts=payload_ts,
+            entry_ts=entry_ts,
+        ):
+            continue
+
+        if _normalize_assistant_entry(
+            state,
+            payload=payload,
+            payload_ts=payload_ts,
+            entry_ts=entry_ts,
+            entry_type=entry_type,
+            source_event=source_event,
+        ):
+            continue
+
+        _normalize_generic_entry(
+            state,
+            entry=entry,
+            payload=payload,
+            entry_type=entry_type,
+            payload_type=payload_type,
+            source_event=source_event,
+            entry_ts=entry_ts,
+            payload_ts=payload_ts,
+        )
+
+    _append_pending_pi_events(state)
     return (
-        events,
-        meta_delta,
-        flags,
-        {"tool_names": _cap_tool_names(tool_names), "last_tool": active_turn_last_tool},
+        state["events"],
+        state["meta_delta"],
+        state["flags"],
+        {
+            "tool_names": _cap_tool_names(state["tool_names"]),
+            "last_tool": state["active_turn_last_tool"],
+        },
     )
 
 
