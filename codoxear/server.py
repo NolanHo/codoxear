@@ -42,6 +42,7 @@ from .agent_backend import (
     normalize_agent_backend,
 )
 from .events.hub import EventHub
+from .http import auth_tokens as _http_auth_tokens
 from .http import static_assets as _http_static_assets
 from .http.routes import assets as _http_assets_routes
 from .http.routes import auth as _http_auth_routes
@@ -874,81 +875,37 @@ def _load_or_create_hmac_secret() -> bytes:
 HMAC_SECRET = _load_or_create_hmac_secret()
 
 
-def _b64u(b: bytes) -> str:
-    return base64.urlsafe_b64encode(b).decode("ascii").rstrip("=")
-
-
-def _b64u_dec(s: str) -> bytes:
-    pad = "=" * (-len(s) % 4)
-    return base64.urlsafe_b64decode((s + pad).encode("ascii"))
-
-
 def _sign_cookie(payload: dict[str, Any]) -> str:
-    raw = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
-    sig = hmac.new(HMAC_SECRET, raw, hashlib.sha256).digest()
-    return f"{_b64u(raw)}.{_b64u(sig)}"
+    return _http_auth_tokens.sign_cookie(payload, secret=HMAC_SECRET)
 
 
 def _verify_cookie(value: str) -> dict[str, Any] | None:
-    try:
-        a, b = value.split(".", 1)
-        raw = _b64u_dec(a)
-        sig = _b64u_dec(b)
-        want = hmac.new(HMAC_SECRET, raw, hashlib.sha256).digest()
-        if not hmac.compare_digest(sig, want):
-            return None
-        payload = json.loads(raw.decode("utf-8"))
-        if not isinstance(payload, dict):
-            return None
-        exp_raw = payload.get("exp")
-        if exp_raw is None:
-            return None
-        exp = int(exp_raw)
-        if exp <= int(_now()):
-            return None
-        return payload
-    except (TypeError, ValueError, json.JSONDecodeError):
-        return None
+    return _http_auth_tokens.verify_cookie(value, secret=HMAC_SECRET, now_ts=_now())
 
 
 def _parse_cookies(header: str | None) -> dict[str, str]:
-    if not header:
-        return {}
-    out: dict[str, str] = {}
-    parts = header.split(";")
-    for p in parts:
-        if "=" not in p:
-            continue
-        k, v = p.split("=", 1)
-        out[k.strip()] = v.strip()
-    return out
+    return _http_auth_tokens.parse_cookies(header)
 
 
 def _require_auth(handler: http.server.BaseHTTPRequestHandler) -> bool:
-    cookies = _parse_cookies(handler.headers.get("Cookie"))
-    token = cookies.get(COOKIE_NAME)
-    if not token:
-        return False
-    return _verify_cookie(token) is not None
+    return _http_auth_tokens.require_auth(
+        handler,
+        cookie_name=COOKIE_NAME,
+        secret=HMAC_SECRET,
+        now_ts=_now(),
+    )
 
 
 def _set_auth_cookie(handler: http.server.BaseHTTPRequestHandler) -> None:
-    exp = int(_now()) + COOKIE_TTL_SECONDS
-    token = _sign_cookie({"exp": exp})
-    attrs = [
-        f"{COOKIE_NAME}={token}",
-        f"Path={COOKIE_PATH}",
-        "HttpOnly",
-        "SameSite=Strict",
-        f"Max-Age={COOKIE_TTL_SECONDS}",
-    ]
-    forwarded_proto_raw = handler.headers.get("X-Forwarded-Proto")
-    forwarded_proto = (
-        str(forwarded_proto_raw).lower() if forwarded_proto_raw is not None else ""
+    _http_auth_tokens.set_auth_cookie(
+        handler,
+        cookie_name=COOKIE_NAME,
+        cookie_path=COOKIE_PATH,
+        cookie_ttl_seconds=COOKIE_TTL_SECONDS,
+        cookie_secure=COOKIE_SECURE,
+        secret=HMAC_SECRET,
+        now_ts=_now(),
     )
-    if COOKIE_SECURE or forwarded_proto == "https":
-        attrs.append("Secure")
-    handler.send_header("Set-Cookie", "; ".join(attrs))
 
 
 _PASSWORD_CACHE: str | None = None
@@ -1549,7 +1506,7 @@ def _ui_requests_version(requests: list[dict[str, Any]]) -> str:
         separators=(",", ":"),
     ).encode("utf-8")
     digest = hashlib.sha256(canonical).digest()[:12]
-    return _b64u(digest)
+    return base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
 
 
 def _sanitize_pi_commands_payload(payload: dict[str, Any]) -> dict[str, Any]:
