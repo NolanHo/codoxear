@@ -1411,176 +1411,204 @@ def read_pi_latest_turn_bounds(
 
 
 
-def _read_latest_claude_todo_snapshot(
-    session_path: Path, *, max_scan_bytes: int
-) -> dict[str, Any] | None:
-    entries, _ = _read_all_entries(session_path)
-    if not entries:
-        return None
 
-    tasks_by_list: dict[str, dict[str, dict[str, Any]]] = {}
-    order_by_list: dict[str, list[str]] = {}
-    latest_ts_by_list: dict[str, float] = {}
-    latest_state_enabled: bool | None = None
-    latest_state_ts: float | None = None
-    latest_write_snapshot: dict[str, Any] | None = None
-    latest_write_ts: float | None = None
+def _new_claude_todo_tracker() -> dict[str, Any]:
+    return {
+        "tasks_by_list": {},
+        "order_by_list": {},
+        "latest_ts_by_list": {},
+        "latest_state_enabled": None,
+        "latest_state_ts": None,
+        "latest_write_snapshot": None,
+        "latest_write_ts": None,
+    }
 
-    def ensure_task(task_list_id: str, task_id: str) -> dict[str, Any]:
-        task_list = tasks_by_list.setdefault(task_list_id, {})
-        order = order_by_list.setdefault(task_list_id, [])
-        if task_id not in task_list:
-            task_list[task_id] = {
-                "id": task_id,
-                "title": f"Task {task_id}",
-                "status": "not-started",
-                "source": "claude-todo-v2",
-            }
-            order.append(task_id)
-        elif task_id not in order:
-            order.append(task_id)
-        return task_list[task_id]
 
-    for entry in entries:
-        if not isinstance(entry, dict):
-            continue
-        payload = _payload_for_entry(entry)
-        if not isinstance(payload, dict):
-            continue
+def _ensure_claude_todo_task(
+    tracker: dict[str, Any],
+    task_list_id: str,
+    task_id: str,
+) -> dict[str, Any]:
+    tasks_by_list: dict[str, dict[str, dict[str, Any]]] = tracker["tasks_by_list"]
+    order_by_list: dict[str, list[str]] = tracker["order_by_list"]
+    task_list = tasks_by_list.setdefault(task_list_id, {})
+    order = order_by_list.setdefault(task_list_id, [])
+    if task_id not in task_list:
+        task_list[task_id] = {
+            "id": task_id,
+            "title": f"Task {task_id}",
+            "status": "not-started",
+            "source": "claude-todo-v2",
+        }
+        order.append(task_id)
+    elif task_id not in order:
+        order.append(task_id)
+    return task_list[task_id]
 
-        entry_type = _entry_type(entry)
 
-        if entry_type == "custom":
-            custom_type = _non_empty_string(entry.get("customType"))
-            if custom_type == "claude-todo-v2-state":
-                data = entry.get("data")
-                if isinstance(data, dict) and isinstance(
-                    data.get("panelEnabled"), bool
-                ):
-                    ts = _entry_ts(entry)
-                    if ts is not None and (
-                        latest_state_ts is None or ts >= latest_state_ts
-                    ):
-                        latest_state_ts = ts
-                        latest_state_enabled = bool(data.get("panelEnabled"))
-            continue
+def _track_claude_todo_list_timestamp(
+    tracker: dict[str, Any],
+    *,
+    task_list_id: str,
+    payload: dict[str, Any],
+    entry: dict[str, Any],
+) -> None:
+    ts = _entry_ts(payload)
+    if ts is None:
+        ts = _entry_ts(entry)
+    if ts is None:
+        return
+    latest_ts_by_list: dict[str, float] = tracker["latest_ts_by_list"]
+    latest_ts_by_list[task_list_id] = max(latest_ts_by_list.get(task_list_id, ts), ts)
 
-        if entry_type == "custom_message":
-            custom_type = _non_empty_string(payload.get("customType"))
-            if custom_type != "claude-todo-v2-task-assignment":
-                continue
-            details = payload.get("details")
-            if not isinstance(details, dict):
-                continue
-            task_id = _non_empty_string(details.get("taskId"))
-            task_list_id = _non_empty_string(details.get("taskListId"))
-            subject = _non_empty_string(details.get("subject"))
-            if task_id is None or task_list_id is None or subject is None:
-                continue
-            task = ensure_task(task_list_id, task_id)
-            task["title"] = subject
-            description = _non_empty_string(details.get("description"))
-            if description is not None:
-                task["description"] = description
-            owner = _non_empty_string(details.get("owner"))
-            if owner is not None:
-                task["owner"] = owner
-            assigned_by = _non_empty_string(details.get("assignedBy"))
-            if assigned_by is not None:
-                task["assigned_by"] = assigned_by
-            updated_at = _non_empty_string(
-                details.get("timestamp")
-            ) or _non_empty_string(payload.get("timestamp"))
-            if updated_at is not None:
-                task["updated_at"] = updated_at
-            ts = _entry_ts(payload)
-            if ts is None:
+
+def _apply_claude_todo_custom_entry(
+    tracker: dict[str, Any],
+    *,
+    entry: dict[str, Any],
+    payload: dict[str, Any],
+    entry_type: str,
+) -> bool:
+    if entry_type == "custom":
+        custom_type = _non_empty_string(entry.get("customType"))
+        if custom_type == "claude-todo-v2-state":
+            data = entry.get("data")
+            if isinstance(data, dict) and isinstance(data.get("panelEnabled"), bool):
                 ts = _entry_ts(entry)
-            if ts is not None:
-                latest_ts_by_list[task_list_id] = max(
-                    latest_ts_by_list.get(task_list_id, ts), ts
-                )
-            continue
+                latest_state_ts = tracker["latest_state_ts"]
+                if ts is not None and (latest_state_ts is None or ts >= latest_state_ts):
+                    tracker["latest_state_ts"] = ts
+                    tracker["latest_state_enabled"] = bool(data.get("panelEnabled"))
+        return True
 
-        if payload.get("role") != "toolResult":
-            continue
-        if payload.get("isError") is True:
-            continue
-        tool_name = _non_empty_string(payload.get("toolName"))
-        details_map = payload.get("details")
-        if not isinstance(details_map, dict):
-            continue
+    if entry_type != "custom_message":
+        return False
 
-        if tool_name == "TodoWrite":
-            new_todos = details_map.get("newTodos")
-            if isinstance(new_todos, list):
-                snapshot = _normalize_claude_todo_write_snapshot(
-                    [todo for todo in new_todos if isinstance(todo, dict)]
-                )
-                if snapshot["items"]:
-                    ts = _entry_ts(payload)
-                    if ts is None:
-                        ts = _entry_ts(entry)
-                    if ts is not None and (
-                        latest_write_ts is None or ts >= latest_write_ts
-                    ):
-                        latest_write_ts = ts
-                        latest_write_snapshot = snapshot
-            continue
+    custom_type = _non_empty_string(payload.get("customType"))
+    if custom_type != "claude-todo-v2-task-assignment":
+        return True
+    details = payload.get("details")
+    if not isinstance(details, dict):
+        return True
 
-        if tool_name == "TaskCreate":
-            task_payload = details_map.get("task")
-            task_list_id = _non_empty_string(details_map.get("taskListId"))
-            if not isinstance(task_payload, dict) or task_list_id is None:
-                continue
-            task_id = _non_empty_string(task_payload.get("id"))
-            subject = _non_empty_string(task_payload.get("subject"))
-            if task_id is None or subject is None:
-                continue
-            task_state = ensure_task(task_list_id, task_id)
-            task_state["title"] = subject
-            ts = _entry_ts(payload)
-            if ts is None:
-                ts = _entry_ts(entry)
-            if ts is not None:
-                latest_ts_by_list[task_list_id] = max(
-                    latest_ts_by_list.get(task_list_id, ts), ts
-                )
-            continue
+    task_id = _non_empty_string(details.get("taskId"))
+    task_list_id = _non_empty_string(details.get("taskListId"))
+    subject = _non_empty_string(details.get("subject"))
+    if task_id is None or task_list_id is None or subject is None:
+        return True
 
-        if tool_name == "TaskUpdate":
-            task_id = _non_empty_string(details_map.get("taskId"))
-            task_list_id = _non_empty_string(details_map.get("taskListId"))
-            if task_id is None or task_list_id is None:
-                continue
-            task_state = ensure_task(task_list_id, task_id)
-            status_change = details_map.get("statusChange")
-            if isinstance(status_change, dict):
-                normalized_status = _normalize_claude_todo_status(
-                    status_change.get("to")
-                )
-                if normalized_status is not None:
-                    task_state["status"] = normalized_status
-            ts = _entry_ts(payload)
-            if ts is None:
-                ts = _entry_ts(entry)
-            if ts is not None:
-                latest_ts_by_list[task_list_id] = max(
-                    latest_ts_by_list.get(task_list_id, ts), ts
-                )
+    task = _ensure_claude_todo_task(tracker, task_list_id, task_id)
+    task["title"] = subject
+    description = _non_empty_string(details.get("description"))
+    if description is not None:
+        task["description"] = description
+    owner = _non_empty_string(details.get("owner"))
+    if owner is not None:
+        task["owner"] = owner
+    assigned_by = _non_empty_string(details.get("assignedBy"))
+    if assigned_by is not None:
+        task["assigned_by"] = assigned_by
+    updated_at = _non_empty_string(details.get("timestamp")) or _non_empty_string(payload.get("timestamp"))
+    if updated_at is not None:
+        task["updated_at"] = updated_at
 
+    _track_claude_todo_list_timestamp(
+        tracker,
+        task_list_id=task_list_id,
+        payload=payload,
+        entry=entry,
+    )
+    return True
+
+
+def _apply_claude_todo_tool_result_entry(
+    tracker: dict[str, Any],
+    *,
+    entry: dict[str, Any],
+    payload: dict[str, Any],
+) -> None:
+    if payload.get("role") != "toolResult" or payload.get("isError") is True:
+        return
+    tool_name = _non_empty_string(payload.get("toolName"))
+    details_map = payload.get("details")
+    if not isinstance(details_map, dict):
+        return
+
+    if tool_name == "TodoWrite":
+        new_todos = details_map.get("newTodos")
+        if not isinstance(new_todos, list):
+            return
+        snapshot = _normalize_claude_todo_write_snapshot(
+            [todo for todo in new_todos if isinstance(todo, dict)]
+        )
+        if not snapshot["items"]:
+            return
+        ts = _entry_ts(payload)
+        if ts is None:
+            ts = _entry_ts(entry)
+        latest_write_ts = tracker["latest_write_ts"]
+        if ts is not None and (latest_write_ts is None or ts >= latest_write_ts):
+            tracker["latest_write_ts"] = ts
+            tracker["latest_write_snapshot"] = snapshot
+        return
+
+    if tool_name == "TaskCreate":
+        task_payload = details_map.get("task")
+        task_list_id = _non_empty_string(details_map.get("taskListId"))
+        if not isinstance(task_payload, dict) or task_list_id is None:
+            return
+        task_id = _non_empty_string(task_payload.get("id"))
+        subject = _non_empty_string(task_payload.get("subject"))
+        if task_id is None or subject is None:
+            return
+        task_state = _ensure_claude_todo_task(tracker, task_list_id, task_id)
+        task_state["title"] = subject
+        _track_claude_todo_list_timestamp(
+            tracker,
+            task_list_id=task_list_id,
+            payload=payload,
+            entry=entry,
+        )
+        return
+
+    if tool_name == "TaskUpdate":
+        task_id = _non_empty_string(details_map.get("taskId"))
+        task_list_id = _non_empty_string(details_map.get("taskListId"))
+        if task_id is None or task_list_id is None:
+            return
+        task_state = _ensure_claude_todo_task(tracker, task_list_id, task_id)
+        status_change = details_map.get("statusChange")
+        if isinstance(status_change, dict):
+            normalized_status = _normalize_claude_todo_status(status_change.get("to"))
+            if normalized_status is not None:
+                task_state["status"] = normalized_status
+        _track_claude_todo_list_timestamp(
+            tracker,
+            task_list_id=task_list_id,
+            payload=payload,
+            entry=entry,
+        )
+
+
+def _finalize_claude_todo_snapshot(tracker: dict[str, Any]) -> dict[str, Any] | None:
+    latest_write_snapshot = tracker["latest_write_snapshot"]
+    latest_state_enabled = tracker["latest_state_enabled"]
     if latest_write_snapshot is not None:
         if latest_state_enabled is False:
             return None
         if latest_state_enabled is True:
             return latest_write_snapshot
 
+    latest_ts_by_list: dict[str, float] = tracker["latest_ts_by_list"]
     if not latest_ts_by_list:
         return None
 
     latest_list_id = max(
-        latest_ts_by_list, key=lambda task_list_id: latest_ts_by_list[task_list_id]
+        latest_ts_by_list,
+        key=lambda task_list_id: latest_ts_by_list[task_list_id],
     )
+    order_by_list: dict[str, list[str]] = tracker["order_by_list"]
+    tasks_by_list: dict[str, dict[str, dict[str, Any]]] = tracker["tasks_by_list"]
     order = order_by_list.get(latest_list_id, [])
     tasks = [
         tasks_by_list[latest_list_id][task_id]
@@ -1590,6 +1618,38 @@ def _read_latest_claude_todo_snapshot(
     if not tasks:
         return None
     return _normalize_pi_todo_snapshot(tasks)
+
+
+def _read_latest_claude_todo_snapshot(
+    session_path: Path, *, max_scan_bytes: int
+) -> dict[str, Any] | None:
+    _ = max_scan_bytes
+    entries, _ = _read_all_entries(session_path)
+    if not entries:
+        return None
+
+    tracker = _new_claude_todo_tracker()
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        payload = _payload_for_entry(entry)
+        if not isinstance(payload, dict):
+            continue
+        entry_type = _entry_type(entry)
+        if _apply_claude_todo_custom_entry(
+            tracker,
+            entry=entry,
+            payload=payload,
+            entry_type=entry_type,
+        ):
+            continue
+        _apply_claude_todo_tool_result_entry(
+            tracker,
+            entry=entry,
+            payload=payload,
+        )
+
+    return _finalize_claude_todo_snapshot(tracker)
 
 
 def _latest_pi_token_update(entries: list[dict[str, Any]]) -> dict[str, Any] | None:
