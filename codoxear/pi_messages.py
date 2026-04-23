@@ -360,27 +360,52 @@ def _tool_name(entry: dict[str, Any], payload: dict[str, Any]) -> str | None:
     return None
 
 
-def _fallback_pi_event(
-    entry: dict[str, Any], payload: dict[str, Any], *, ts: float
-) -> dict[str, Any] | None:
-    entry_type = _entry_type(entry)
-    payload_type = _entry_type(payload)
-    source_event = _non_empty_string(payload.get("source_event"))
-    role = _non_empty_string(payload.get("role"))
-    error_text = _non_empty_string(payload.get("error")) or _non_empty_string(
-        entry.get("error")
-    )
-    message_text = _non_empty_string(payload.get("message")) or _non_empty_string(
-        entry.get("message")
-    )
-    body = _entry_text(payload) or error_text or message_text
-    details = payload.get("details") if isinstance(payload.get("details"), dict) else None
-    summary = source_event or entry_type or payload_type or role
-    is_error = bool(
+def _fallback_pi_error_text(entry: dict[str, Any], payload: dict[str, Any]) -> str | None:
+    return _non_empty_string(payload.get("error")) or _non_empty_string(entry.get("error"))
+
+
+def _fallback_pi_message_text(entry: dict[str, Any], payload: dict[str, Any]) -> str | None:
+    return _non_empty_string(payload.get("message")) or _non_empty_string(entry.get("message"))
+
+
+def _fallback_pi_summary(
+    *,
+    entry: dict[str, Any],
+    payload: dict[str, Any],
+    source_event: str | None,
+) -> str | None:
+    return source_event or _entry_type(entry) or _entry_type(payload) or _non_empty_string(payload.get("role"))
+
+
+def _fallback_pi_is_error(
+    *,
+    payload: dict[str, Any],
+    source_event: str | None,
+    entry_type: str | None,
+    error_text: str | None,
+) -> bool:
+    return bool(
         payload.get("isError") is True
         or source_event in _PI_ABORT_EVENT_TYPES
         or entry_type in _PI_ABORT_EVENT_TYPES
         or error_text
+    )
+
+
+def _fallback_pi_event(
+    entry: dict[str, Any], payload: dict[str, Any], *, ts: float
+) -> dict[str, Any] | None:
+    source_event = _non_empty_string(payload.get("source_event"))
+    entry_type = _entry_type(entry)
+    error_text = _fallback_pi_error_text(entry, payload)
+    body = _entry_text(payload) or error_text or _fallback_pi_message_text(entry, payload)
+    details = payload.get("details") if isinstance(payload.get("details"), dict) else None
+    summary = _fallback_pi_summary(entry=entry, payload=payload, source_event=source_event)
+    is_error = _fallback_pi_is_error(
+        payload=payload,
+        source_event=source_event,
+        entry_type=entry_type,
+        error_text=error_text,
     )
 
     if summary is None and body is None and details is None:
@@ -817,16 +842,8 @@ def _text_message_id(*, message_class: str, text: str, ts: float | None) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-def _assistant_payload_message_class(
-    *, payload: dict[str, Any], entry_type: str, source_event: str | None
-) -> str | None:
-    if payload.get("role") != "assistant":
-        return None
-    content = payload.get("content")
-    if not isinstance(content, list):
-        return None
-
-    text_blocks = [
+def _assistant_text_blocks(content: list[Any]) -> list[dict[str, Any]]:
+    return [
         item
         for item in content
         if isinstance(item, dict)
@@ -834,16 +851,9 @@ def _assistant_payload_message_class(
         and isinstance(item.get("text"), str)
         and item.get("text")
     ]
-    if not text_blocks:
-        return None
 
-    if source_event in _PI_END_EVENT_TYPES or entry_type in _PI_END_EVENT_TYPES:
-        return "final_response"
 
-    if payload.get("phase") == "final_answer" or payload.get("end_turn") is True:
-        return "final_response"
-
-    stop_reason = payload.get("stopReason")
+def _assistant_item_counts(content: list[Any]) -> tuple[int, int]:
     tool_count = sum(
         1
         for item in content
@@ -854,14 +864,10 @@ def _assistant_payload_message_class(
         for item in content
         if isinstance(item, dict) and item.get("type") == "thinking"
     )
+    return tool_count, thinking_count
 
-    if tool_count <= 0 and thinking_count <= 0:
-        if not isinstance(stop_reason, str) or stop_reason != "toolUse":
-            return "final_response"
 
-    if isinstance(stop_reason, str) and stop_reason and stop_reason != "toolUse":
-        return "final_response"
-
+def _assistant_signature_marks_final(text_blocks: list[dict[str, Any]]) -> bool:
     for item in text_blocks:
         raw_sig = item.get("textSignature")
         if not isinstance(raw_sig, str) or not raw_sig.strip():
@@ -871,8 +877,40 @@ def _assistant_payload_message_class(
         except Exception:
             continue
         if isinstance(sig, dict) and sig.get("phase") == "final_answer":
+            return True
+    return False
+
+
+def _assistant_payload_message_class(
+    *, payload: dict[str, Any], entry_type: str, source_event: str | None
+) -> str | None:
+    if payload.get("role") != "assistant":
+        return None
+    content = payload.get("content")
+    if not isinstance(content, list):
+        return None
+
+    text_blocks = _assistant_text_blocks(content)
+    if not text_blocks:
+        return None
+
+    if source_event in _PI_END_EVENT_TYPES or entry_type in _PI_END_EVENT_TYPES:
+        return "final_response"
+
+    if payload.get("phase") == "final_answer" or payload.get("end_turn") is True:
+        return "final_response"
+
+    stop_reason = payload.get("stopReason")
+    tool_count, thinking_count = _assistant_item_counts(content)
+    if tool_count <= 0 and thinking_count <= 0:
+        if not isinstance(stop_reason, str) or stop_reason != "toolUse":
             return "final_response"
 
+    if isinstance(stop_reason, str) and stop_reason and stop_reason != "toolUse":
+        return "final_response"
+
+    if _assistant_signature_marks_final(text_blocks):
+        return "final_response"
     return "narration"
 
 
@@ -1254,6 +1292,138 @@ def _normalize_assistant_entry(
     return len(events) > entry_event_count
 
 
+def _normalize_generic_message_entry(
+    state: dict[str, Any],
+    *,
+    entry: dict[str, Any],
+    payload: dict[str, Any],
+    entry_type: str,
+    source_event: str | None,
+) -> bool:
+    events: list[dict[str, Any]] = state["events"]
+    fallback_ts = float(state["fallback_ts"])
+    active_turn_last_tool = state["active_turn_last_tool"]
+    role, text, has_ts = _message_event_info(entry)
+    if role is None or text is None:
+        return False
+
+    if role == "user":
+        active_turn_last_tool = None
+    if has_ts:
+        ts = _entry_ts(payload)
+        if ts is None:
+            ts = _entry_ts(entry)
+        if ts is None:
+            ts = fallback_ts
+        elif ts < fallback_ts:
+            ts = fallback_ts
+    else:
+        ts = fallback_ts
+
+    fallback_ts = float(ts) + 1.0
+    event: dict[str, Any] = {"role": role, "text": text, "ts": float(ts)}
+    if role == "assistant":
+        message_class = _assistant_payload_message_class(
+            payload=payload,
+            entry_type=entry_type,
+            source_event=source_event,
+        )
+        if message_class is not None:
+            event["message_class"] = message_class
+            event["message_id"] = _text_message_id(
+                message_class=message_class,
+                text=text,
+                ts=float(ts),
+            )
+    events.append(event)
+    state["fallback_ts"] = fallback_ts
+    state["active_turn_last_tool"] = active_turn_last_tool
+    return True
+
+
+def _normalize_generic_empty_assistant_entry(
+    state: dict[str, Any],
+    *,
+    entry: dict[str, Any],
+    payload: dict[str, Any],
+    entry_ts: float | None,
+    payload_ts: float | None,
+) -> bool:
+    events: list[dict[str, Any]] = state["events"]
+    fallback_ts = float(state["fallback_ts"])
+    empty_assistant_event = _empty_assistant_message_event(
+        entry,
+        payload,
+        ts=_event_ts_value(preferred_ts=entry_ts or payload_ts, fallback_ts=fallback_ts),
+    )
+    if empty_assistant_event is None:
+        return False
+    events.append(empty_assistant_event)
+    state["fallback_ts"] = float(empty_assistant_event["ts"]) + 0.1
+    return True
+
+
+def _normalize_generic_tool_entry(
+    state: dict[str, Any],
+    *,
+    entry: dict[str, Any],
+    payload: dict[str, Any],
+    entry_type: str,
+    payload_type: str,
+    entry_ts: float | None,
+    payload_ts: float | None,
+) -> bool:
+    if entry_type not in _PI_TOOL_EVENT_TYPES and payload_type not in _PI_TOOL_EVENT_TYPES:
+        return False
+    events: list[dict[str, Any]] = state["events"]
+    meta_delta: dict[str, int] = state["meta_delta"]
+    tool_names: list[str] = state["tool_names"]
+    fallback_ts = float(state["fallback_ts"])
+    active_turn_last_tool = state["active_turn_last_tool"]
+
+    meta_delta["tool"] += 1
+    tool_name = _tool_name(entry, payload)
+    if tool_name is not None:
+        tool_names.append(tool_name)
+        active_turn_last_tool = tool_name
+    event_name = tool_name or entry_type or payload_type
+    if event_name:
+        ts = _event_ts_value(preferred_ts=entry_ts or payload_ts, fallback_ts=fallback_ts)
+        events.append({"type": "tool", "name": event_name, "ts": ts})
+        fallback_ts = ts + 0.1
+    state["fallback_ts"] = fallback_ts
+    state["active_turn_last_tool"] = active_turn_last_tool
+    return True
+
+
+def _normalize_generic_custom_or_fallback_entry(
+    state: dict[str, Any],
+    *,
+    entry: dict[str, Any],
+    payload: dict[str, Any],
+    entry_type: str,
+    entry_ts: float | None,
+    payload_ts: float | None,
+) -> bool:
+    events: list[dict[str, Any]] = state["events"]
+    fallback_ts = float(state["fallback_ts"])
+    if entry_type == "custom_message":
+        ts = _event_ts_value(preferred_ts=entry_ts or payload_ts, fallback_ts=fallback_ts)
+        custom_event = _custom_message_event(payload, ts=ts)
+        if custom_event is not None:
+            events.append(custom_event)
+            state["fallback_ts"] = ts + 0.1
+            return True
+
+    ts = _event_ts_value(preferred_ts=entry_ts or payload_ts, fallback_ts=fallback_ts)
+    fallback_event = _fallback_pi_event(entry, payload, ts=ts)
+    if fallback_event is None:
+        return False
+    events.append(fallback_event)
+    state["fallback_ts"] = ts + 0.1
+    return True
+
+
 def _normalize_generic_entry(
     state: dict[str, Any],
     *,
@@ -1265,91 +1435,45 @@ def _normalize_generic_entry(
     entry_ts: float | None,
     payload_ts: float | None,
 ) -> bool:
-    events: list[dict[str, Any]] = state["events"]
-    meta_delta: dict[str, int] = state["meta_delta"]
-    tool_names: list[str] = state["tool_names"]
-    fallback_ts = float(state["fallback_ts"])
-    active_turn_last_tool = state["active_turn_last_tool"]
-
-    role, text, has_ts = _message_event_info(entry)
-    if role is not None and text is not None:
-        if role == "user":
-            active_turn_last_tool = None
-        if has_ts:
-            ts = _entry_ts(payload)
-            if ts is None:
-                ts = _entry_ts(entry)
-            if ts is None:
-                ts = fallback_ts
-            elif ts < fallback_ts:
-                ts = fallback_ts
-        else:
-            ts = fallback_ts
-        fallback_ts = float(ts) + 1.0
-        event = {"role": role, "text": text, "ts": float(ts)}
-        if role == "assistant":
-            message_class = _assistant_payload_message_class(
-                payload=payload,
-                entry_type=entry_type,
-                source_event=source_event,
-            )
-            if message_class is not None:
-                event["message_class"] = message_class
-                event["message_id"] = _text_message_id(
-                    message_class=message_class,
-                    text=text,
-                    ts=float(ts),
-                )
-        events.append(event)
-        state["fallback_ts"] = fallback_ts
-        state["active_turn_last_tool"] = active_turn_last_tool
+    if _normalize_generic_message_entry(
+        state,
+        entry=entry,
+        payload=payload,
+        entry_type=entry_type,
+        source_event=source_event,
+    ):
         return True
 
-    empty_assistant_event = _empty_assistant_message_event(
-        entry,
-        payload,
-        ts=_event_ts_value(preferred_ts=entry_ts or payload_ts, fallback_ts=fallback_ts),
-    )
-    if empty_assistant_event is not None:
-        events.append(empty_assistant_event)
-        state["fallback_ts"] = float(empty_assistant_event["ts"]) + 0.1
-        state["active_turn_last_tool"] = active_turn_last_tool
+    if _normalize_generic_empty_assistant_entry(
+        state,
+        entry=entry,
+        payload=payload,
+        entry_ts=entry_ts,
+        payload_ts=payload_ts,
+    ):
         return True
 
-    if entry_type in _PI_TOOL_EVENT_TYPES or payload_type in _PI_TOOL_EVENT_TYPES:
-        meta_delta["tool"] += 1
-        tool_name = _tool_name(entry, payload)
-        if tool_name is not None:
-            tool_names.append(tool_name)
-            active_turn_last_tool = tool_name
-        event_name = tool_name or entry_type or payload_type
-        if event_name:
-            ts = _event_ts_value(preferred_ts=entry_ts or payload_ts, fallback_ts=fallback_ts)
-            events.append({"type": "tool", "name": event_name, "ts": ts})
-            fallback_ts = ts + 0.1
-        state["fallback_ts"] = fallback_ts
-        state["active_turn_last_tool"] = active_turn_last_tool
+    if _normalize_generic_tool_entry(
+        state,
+        entry=entry,
+        payload=payload,
+        entry_type=entry_type,
+        payload_type=payload_type,
+        entry_ts=entry_ts,
+        payload_ts=payload_ts,
+    ):
         return True
 
-    if entry_type == "custom_message":
-        ts = _event_ts_value(preferred_ts=entry_ts or payload_ts, fallback_ts=fallback_ts)
-        custom_event = _custom_message_event(payload, ts=ts)
-        if custom_event is not None:
-            events.append(custom_event)
-            state["fallback_ts"] = ts + 0.1
-            state["active_turn_last_tool"] = active_turn_last_tool
-            return True
-
-    ts = _event_ts_value(preferred_ts=entry_ts or payload_ts, fallback_ts=fallback_ts)
-    fallback_event = _fallback_pi_event(entry, payload, ts=ts)
-    if fallback_event is not None:
-        events.append(fallback_event)
-        state["fallback_ts"] = ts + 0.1
-        state["active_turn_last_tool"] = active_turn_last_tool
+    if _normalize_generic_custom_or_fallback_entry(
+        state,
+        entry=entry,
+        payload=payload,
+        entry_type=entry_type,
+        entry_ts=entry_ts,
+        payload_ts=payload_ts,
+    ):
         return True
 
-    state["fallback_ts"] = fallback_ts
-    state["active_turn_last_tool"] = active_turn_last_tool
     return False
 
 
