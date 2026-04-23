@@ -6,6 +6,11 @@ SERVER = ROOT / "server.py"
 VOICE_PUSH = ROOT / "voice_push.py"
 
 
+def _manager_delegate_sources() -> str:
+    paths = sorted((ROOT / "sessions").glob("manager_delegates*.py"))
+    return "\n".join(path.read_text(encoding="utf-8") for path in paths)
+
+
 class TestBackendSeamsSource(unittest.TestCase):
     def test_server_dispatches_http_routes_through_modules(self) -> None:
         source = SERVER.read_text(encoding="utf-8")
@@ -17,7 +22,7 @@ class TestBackendSeamsSource(unittest.TestCase):
 
     def test_server_uses_payload_sidebar_and_pi_bridge_seams(self) -> None:
         source = SERVER.read_text(encoding="utf-8")
-        delegates = (ROOT / "sessions" / "manager_delegates.py").read_text(encoding="utf-8")
+        delegates = _manager_delegate_sources()
         combined = source + "\n" + delegates
         self.assertIn("from .sessions import payloads as _session_payloads", source)
         self.assertIn("from .sessions import live_payloads as _session_live_payloads", source)
@@ -73,7 +78,7 @@ class TestBackendSeamsSource(unittest.TestCase):
 
     def test_server_delegates_session_catalog_identity_lookups(self) -> None:
         source = SERVER.read_text(encoding="utf-8")
-        delegates = (ROOT / "sessions" / "manager_delegates.py").read_text(encoding="utf-8")
+        delegates = _manager_delegate_sources()
         combined = source + "\n" + delegates
         self.assertIn("from .sessions import session_catalog as _session_catalog", source)
         self.assertIn("_session_catalog.service(self).runtime_session_id_for_identifier(session_id)", combined)
@@ -88,7 +93,7 @@ class TestBackendSeamsSource(unittest.TestCase):
 
     def test_server_delegates_session_control_send_and_queue_flows(self) -> None:
         source = SERVER.read_text(encoding="utf-8")
-        delegates = (ROOT / "sessions" / "manager_delegates.py").read_text(encoding="utf-8")
+        delegates = _manager_delegate_sources()
         combined = source + "\n" + delegates
         self.assertIn("from .sessions import manager_delegates as _manager_delegates", source)
         self.assertIn("class SessionManager(_manager_delegates.SessionManagerDelegates)", source)
