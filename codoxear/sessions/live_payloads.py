@@ -1,7 +1,57 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
+
 from ..runtime import ServerRuntime
+
+
+@dataclass(slots=True)
+class SessionLivePayloadService:
+    runtime: ServerRuntime
+    manager: Any
+
+    def session_live_payload(
+        self,
+        session_id: str,
+        *,
+        offset: int = 0,
+        live_offset: int = 0,
+        bridge_offset: int = 0,
+        requests_version: str | None = None,
+    ) -> dict[str, Any]:
+        return session_live_payload(
+            self.runtime,
+            self.manager,
+            session_id,
+            offset=offset,
+            live_offset=live_offset,
+            bridge_offset=bridge_offset,
+            requests_version=requests_version,
+        )
+
+    def pi_live_messages_payload(self, session: Any, *, offset: int = 0) -> dict[str, Any]:
+        return pi_live_messages_payload(
+            self.runtime,
+            self.manager,
+            session,
+            offset=offset,
+        )
+
+    def merge_pi_live_message_events(
+        self,
+        durable_events: list[dict[str, Any]],
+        streamed_events: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        return merge_pi_live_message_events(
+            self.runtime,
+            durable_events,
+            streamed_events,
+        )
+
+
+def service(runtime: ServerRuntime, manager: Any) -> SessionLivePayloadService:
+    return SessionLivePayloadService(runtime, manager)
 
 
 def session_live_payload(

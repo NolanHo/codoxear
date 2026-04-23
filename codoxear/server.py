@@ -1695,7 +1695,7 @@ def _listed_session_row(manager: "SessionManager", session_id: str) -> dict[str,
 def _session_details_payload(
     manager: "SessionManager", session_id: str
 ) -> dict[str, Any]:
-    return _session_payloads.session_details_payload(RUNTIME, manager, session_id)
+    return _session_payloads.service(RUNTIME, manager).session_details_payload(session_id)
 
 
 def _clean_recent_cwd(value: Any) -> str | None:
@@ -2767,7 +2767,7 @@ def _resolved_session_token(
 def _session_context_usage_payload(
     s: Session, token_val: dict[str, Any] | None
 ) -> dict[str, Any] | None:
-    return _session_payloads.session_context_usage_payload(RUNTIME, s, token_val)
+    return _session_payloads.service(RUNTIME).session_context_usage_payload(s, token_val)
 
 
 
@@ -2777,13 +2777,17 @@ def _session_turn_timing_payload(
     *,
     busy: bool,
 ) -> dict[str, Any] | None:
-    return _session_payloads.session_turn_timing_payload(RUNTIME, s, events, busy=busy)
+    return _session_payloads.service(RUNTIME).session_turn_timing_payload(
+        s,
+        events,
+        busy=busy,
+    )
 
 
 def _session_workspace_payload(
     manager: "SessionManager", session_id: str
 ) -> dict[str, Any]:
-    return _session_payloads.session_workspace_payload(RUNTIME, manager, session_id)
+    return _session_payloads.service(RUNTIME, manager).session_workspace_payload(session_id)
 
 
 def _session_live_payload(
@@ -2795,9 +2799,7 @@ def _session_live_payload(
     bridge_offset: int = 0,
     requests_version: str | None = None,
 ) -> dict[str, Any]:
-    return _session_live_payloads.session_live_payload(
-        RUNTIME,
-        manager,
+    return _session_live_payloads.service(RUNTIME, manager).session_live_payload(
         session_id,
         offset=offset,
         live_offset=live_offset,

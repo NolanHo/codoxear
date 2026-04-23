@@ -1,11 +1,61 @@
 from __future__ import annotations
 
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
 from ..runtime import ServerRuntime
 from . import listing as _session_listing
+
+
+@dataclass(slots=True)
+class SessionPayloadService:
+    runtime: ServerRuntime
+    manager: Any | None = None
+
+    def _require_manager(self) -> Any:
+        if self.manager is None:
+            raise RuntimeError("payload service manager is required")
+        return self.manager
+
+    def session_details_payload(self, session_id: str) -> dict[str, Any]:
+        return session_details_payload(self.runtime, self._require_manager(), session_id)
+
+    def session_context_usage_payload(
+        self, s: Any, token_val: dict[str, Any] | None
+    ) -> dict[str, Any] | None:
+        return session_context_usage_payload(self.runtime, s, token_val)
+
+    def session_turn_timing_payload(
+        self,
+        s: Any,
+        events: list[dict[str, Any]],
+        *,
+        busy: bool,
+    ) -> dict[str, Any] | None:
+        return session_turn_timing_payload(self.runtime, s, events, busy=busy)
+
+    def session_diagnostics_payload(
+        self,
+        session_id: str,
+        s: Any,
+        state: dict[str, Any],
+    ) -> dict[str, Any]:
+        return session_diagnostics_payload(
+            self.runtime,
+            self._require_manager(),
+            session_id,
+            s,
+            state,
+        )
+
+    def session_workspace_payload(self, session_id: str) -> dict[str, Any]:
+        return session_workspace_payload(self.runtime, self._require_manager(), session_id)
+
+
+def service(runtime: ServerRuntime, manager: Any | None = None) -> SessionPayloadService:
+    return SessionPayloadService(runtime, manager)
 
 
 def session_details_payload(runtime: ServerRuntime, manager: Any, session_id: str) -> dict[str, Any]:
