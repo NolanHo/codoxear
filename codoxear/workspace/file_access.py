@@ -1,10 +1,126 @@
 from __future__ import annotations
 
+import hashlib
 import os
 import urllib.parse
 from pathlib import Path
 
 from ..runtime import ServerRuntime
+
+
+def file_content_version(raw: bytes) -> str:
+    return hashlib.sha256(raw).hexdigest()
+
+
+def file_extension(path: Path) -> str:
+    suffix = str(path.suffix or "").lower()
+    if not suffix.startswith("."):
+        return ""
+    return suffix[1:]
+
+
+def markdown_kind(runtime: ServerRuntime, path: Path) -> str:
+    return "markdown" if file_extension(path) in runtime.MARKDOWN_EXTENSIONS else "text"
+
+
+def path_looks_textual(runtime: ServerRuntime, path: Path) -> bool:
+    ext = file_extension(path)
+    if ext in runtime.TEXTUAL_EXTENSIONS:
+        return True
+    return str(path.name or "").strip().lower() in runtime.TEXTUAL_FILENAMES
+
+
+def looks_like_text_bytes(raw: bytes) -> bool:
+    if b"\x00" in raw:
+        return False
+    for b in raw:
+        if b < 32 and b not in (9, 10, 12, 13, 27):
+            return False
+    return True
+
+
+def sniff_image_ext(raw: bytes) -> str | None:
+    if len(raw) >= 8 and raw[:8] == b"\x89PNG\r\n\x1a\n":
+        return ".png"
+    if len(raw) >= 3 and raw[:3] == b"\xff\xd8\xff":
+        return ".jpg"
+    if len(raw) >= 12 and raw[:4] == b"RIFF" and raw[8:12] == b"WEBP":
+        return ".webp"
+    return None
+
+
+def image_content_type(path: Path, raw: bytes) -> str | None:
+    if path.suffix.lower() == ".svg":
+        return "image/svg+xml; charset=utf-8"
+    ext = sniff_image_ext(raw)
+    if ext == ".png":
+        return "image/png"
+    if ext == ".jpg":
+        return "image/jpeg"
+    if ext == ".webp":
+        return "image/webp"
+    return None
+
+
+def pdf_content_type(path: Path, raw: bytes) -> str | None:
+    if path.suffix.lower() == ".pdf" or raw.startswith(b"%PDF-"):
+        return "application/pdf"
+    return None
+
+
+def file_kind(path: Path, raw: bytes) -> tuple[str, str | None]:
+    ctype = image_content_type(path, raw)
+    if ctype is not None:
+        return "image", ctype
+    ctype = pdf_content_type(path, raw)
+    if ctype is not None:
+        return "pdf", ctype
+    return "text", None
+
+
+def decode_text_view_for_client(
+    runtime: ServerRuntime,
+    path: Path,
+    raw: bytes,
+) -> tuple[str, bool, str] | None:
+    if b"\x00" in raw:
+        return None
+    try:
+        text = raw.decode("utf-8")
+        editable = True
+    except UnicodeDecodeError:
+        if not path_looks_textual(runtime, path) and not looks_like_text_bytes(raw):
+            return None
+        text = raw.decode("utf-8", errors="replace")
+        editable = False
+    return text, editable, file_content_version(raw)
+
+
+def read_text_file_strict(path: Path, *, max_bytes: int) -> tuple[str, int]:
+    st = path.stat()
+    size = int(st.st_size)
+    if size > max_bytes:
+        raise ValueError(f"file too large (max {max_bytes} bytes)")
+    data = path.read_bytes()
+    if b"\x00" in data:
+        raise ValueError("binary file not supported")
+    text = data.decode("utf-8", errors="replace")
+    return text, size
+
+
+def read_text_file_for_write(path: Path, *, max_bytes: int) -> tuple[str, int, str]:
+    st = path.stat()
+    size = int(st.st_size)
+    if size > max_bytes:
+        raise ValueError(f"file too large (max {max_bytes} bytes)")
+    data = path.read_bytes()
+    if b"\x00" in data:
+        raise ValueError("binary file not supported")
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError("file is not editable as utf-8 text") from exc
+    return text, size, file_content_version(data)
 
 
 def resolve_unique_bare_filename(search_root: Path, raw_path: str) -> Path | None:
@@ -140,7 +256,7 @@ def read_client_file_view(runtime: ServerRuntime, path_obj: Path):
             prefix = f.read(4096)
     except PermissionError as e:
         raise PermissionError("permission denied") from e
-    kind, content_type = sv._file_kind(path_obj, prefix)
+    kind, content_type = file_kind(path_obj, prefix)
     if kind in {"image", "pdf"}:
         return sv.ClientFileView(kind=kind, size=size, content_type=content_type)
     if size > sv.FILE_READ_MAX_BYTES:
@@ -151,12 +267,12 @@ def read_client_file_view(runtime: ServerRuntime, path_obj: Path):
             viewer_max_bytes=sv.FILE_READ_MAX_BYTES,
         )
     raw = path_obj.read_bytes()
-    text_payload = sv._decode_text_view_for_client(path_obj, raw)
+    text_payload = decode_text_view_for_client(runtime, path_obj, raw)
     if text_payload is None:
         return sv.ClientFileView(kind="download_only", size=size, blocked_reason="binary")
     text, editable, version = text_payload
     return sv.ClientFileView(
-        kind=sv._markdown_kind(path_obj),
+        kind=markdown_kind(runtime, path_obj),
         size=size,
         text=text,
         editable=editable,

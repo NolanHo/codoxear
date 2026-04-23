@@ -813,43 +813,8 @@ def _extract_token_update(objs: list[dict[str, Any]]) -> dict[str, Any] | None:
     return _rollout_log._extract_token_update(objs)
 
 
-def _sniff_image_ext(raw: bytes) -> str | None:
-    if len(raw) >= 8 and raw[:8] == b"\x89PNG\r\n\x1a\n":
-        return ".png"
-    if len(raw) >= 3 and raw[:3] == b"\xff\xd8\xff":
-        return ".jpg"
-    if len(raw) >= 12 and raw[:4] == b"RIFF" and raw[8:12] == b"WEBP":
-        return ".webp"
-    return None
-
-
-def _image_content_type(path: Path, raw: bytes) -> str | None:
-    if path.suffix.lower() == ".svg":
-        return "image/svg+xml; charset=utf-8"
-    ext = _sniff_image_ext(raw)
-    if ext == ".png":
-        return "image/png"
-    if ext == ".jpg":
-        return "image/jpeg"
-    if ext == ".webp":
-        return "image/webp"
-    return None
-
-
-def _pdf_content_type(path: Path, raw: bytes) -> str | None:
-    if path.suffix.lower() == ".pdf" or raw.startswith(b"%PDF-"):
-        return "application/pdf"
-    return None
-
-
 def _file_kind(path: Path, raw: bytes) -> tuple[str, str | None]:
-    ctype = _image_content_type(path, raw)
-    if ctype is not None:
-        return "image", ctype
-    ctype = _pdf_content_type(path, raw)
-    if ctype is not None:
-        return "pdf", ctype
-    return "text", None
+    return _workspace_file_access.file_kind(path, raw)
 
 
 def _json_response(
@@ -1022,84 +987,25 @@ def _is_same_password(pw: str) -> bool:
 
 
 def _read_text_file_strict(path: Path, *, max_bytes: int) -> tuple[str, int]:
-    st = path.stat()
-    size = int(st.st_size)
-    if size > max_bytes:
-        raise ValueError(f"file too large (max {max_bytes} bytes)")
-    data = path.read_bytes()
-    if b"\x00" in data:
-        raise ValueError("binary file not supported")
-    text = data.decode("utf-8", errors="replace")
-    return text, size
+    return _workspace_file_access.read_text_file_strict(path, max_bytes=max_bytes)
 
 
 def _file_content_version(raw: bytes) -> str:
-    return hashlib.sha256(raw).hexdigest()
-
-
-def _file_extension(path: Path) -> str:
-    suffix = str(path.suffix or "").lower()
-    if not suffix.startswith("."):
-        return ""
-    return suffix[1:]
+    return _workspace_file_access.file_content_version(raw)
 
 
 def _markdown_kind(path: Path) -> str:
-    return "markdown" if _file_extension(path) in MARKDOWN_EXTENSIONS else "text"
-
-
-def _path_looks_textual(path: Path) -> bool:
-    ext = _file_extension(path)
-    if ext in TEXTUAL_EXTENSIONS:
-        return True
-    return str(path.name or "").strip().lower() in TEXTUAL_FILENAMES
-
-
-def _looks_like_text_bytes(raw: bytes) -> bool:
-    if b"\x00" in raw:
-        return False
-    for b in raw:
-        if b < 32 and b not in (9, 10, 12, 13, 27):
-            return False
-    return True
-
-
-def _decode_text_for_client(raw: bytes) -> tuple[str, bool]:
-    try:
-        return raw.decode("utf-8"), True
-    except UnicodeDecodeError:
-        return raw.decode("utf-8", errors="replace"), False
+    return _workspace_file_access.markdown_kind(RUNTIME, path)
 
 
 def _decode_text_view_for_client(
     path: Path, raw: bytes
 ) -> tuple[str, bool, str] | None:
-    if b"\x00" in raw:
-        return None
-    try:
-        text = raw.decode("utf-8")
-        editable = True
-    except UnicodeDecodeError:
-        if not _path_looks_textual(path) and not _looks_like_text_bytes(raw):
-            return None
-        text = raw.decode("utf-8", errors="replace")
-        editable = False
-    return text, editable, _file_content_version(raw)
+    return _workspace_file_access.decode_text_view_for_client(RUNTIME, path, raw)
 
 
 def _read_text_file_for_write(path: Path, *, max_bytes: int) -> tuple[str, int, str]:
-    st = path.stat()
-    size = int(st.st_size)
-    if size > max_bytes:
-        raise ValueError(f"file too large (max {max_bytes} bytes)")
-    data = path.read_bytes()
-    if b"\x00" in data:
-        raise ValueError("binary file not supported")
-    try:
-        text = data.decode("utf-8")
-    except UnicodeDecodeError as e:
-        raise ValueError("file is not editable as utf-8 text") from e
-    return text, size, _file_content_version(data)
+    return _workspace_file_access.read_text_file_for_write(path, max_bytes=max_bytes)
 
 
 def _safe_expanduser(p: Path) -> Path:
