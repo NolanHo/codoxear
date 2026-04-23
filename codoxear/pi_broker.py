@@ -691,54 +691,71 @@ class PiBroker:
         os.replace(tmp_path, meta_path)
         os.chmod(meta_path, 0o600)
 
+    def _read_rpc_state_snapshot(self, st: State) -> dict[str, Any] | None:
+        try:
+            return st.rpc.get_state()
+        except Exception:
+            return None
+
+    def _apply_rpc_busy_state_locked(
+        self,
+        st: State,
+        *,
+        rpc_state: dict[str, Any] | None,
+    ) -> None:
+        if not isinstance(rpc_state, dict):
+            return
+        st.is_compacting = _extract_is_compacting(rpc_state)
+        rpc_busy = _extract_busy(rpc_state)
+        # After a prompt is sent, Pi may not yet reflect busy=true
+        # in its state. Keep the broker-side busy flag set briefly so
+        # the frontend does not see an idle dip between accepted prompt
+        # and turn start.
+        if st.busy and not rpc_busy and st.prompt_sent_at > 0:
+            elapsed = time.monotonic() - st.prompt_sent_at
+            if elapsed < 5.0:
+                rpc_busy = True
+            else:
+                st.prompt_sent_at = 0.0
+        if rpc_busy:
+            st.busy = True
+            return
+        st.busy = False
+        st.prompt_sent_at = 0.0
+
+    def _sync_rpc_ids_locked(
+        self,
+        st: State,
+        *,
+        rpc_state: dict[str, Any] | None,
+    ) -> bool:
+        rewrite_meta = False
+        state_turn_id = _extract_turn_id(rpc_state) if isinstance(rpc_state, dict) else None
+        if state_turn_id:
+            st.last_turn_id = state_turn_id
+        sid = _extract_session_id(rpc_state) if isinstance(rpc_state, dict) else None
+        if isinstance(sid, str) and sid and sid != st.session_id:
+            st.session_id = sid
+            rewrite_meta = True
+        if self.resume_session_id and (not st.busy) and (not st.last_turn_id):
+            self.resume_session_id = None
+            rewrite_meta = True
+        return rewrite_meta
+
     def _sync_state_from_rpc(self) -> None:
         with self._lock:
             st = self.state
         if not st:
             return
-        rpc_state: dict[str, Any] | None = None
-        try:
-            rpc_state = st.rpc.get_state()
-        except Exception:
-            rpc_state = None
+        rpc_state = self._read_rpc_state_snapshot(st)
         rewrite_meta = False
         with self._lock:
             st2 = self.state
             if not st2:
                 return
-            if isinstance(rpc_state, dict):
-                st2.is_compacting = _extract_is_compacting(rpc_state)
-                rpc_busy = _extract_busy(rpc_state)
-                # After a prompt is sent, Pi may not yet reflect busy=true
-                # in its state.  Keep the broker-side busy flag set for a
-                # grace period so that the frontend doesn't see a premature
-                # idle dip between "prompt accepted" and "turn started".
-                if st2.busy and not rpc_busy and st2.prompt_sent_at > 0:
-                    elapsed = time.monotonic() - st2.prompt_sent_at
-                    if elapsed < 5.0:
-                        rpc_busy = True
-                    else:
-                        st2.prompt_sent_at = 0.0
-                if rpc_busy:
-                    st2.busy = True
-                else:
-                    st2.busy = False
-                    st2.prompt_sent_at = 0.0
+            self._apply_rpc_busy_state_locked(st2, rpc_state=rpc_state)
             self._drain_rpc_output_locked(st2)
-            state_turn_id = (
-                _extract_turn_id(rpc_state) if isinstance(rpc_state, dict) else None
-            )
-            if state_turn_id:
-                st2.last_turn_id = state_turn_id
-            sid = (
-                _extract_session_id(rpc_state) if isinstance(rpc_state, dict) else None
-            )
-            if isinstance(sid, str) and sid and sid != st2.session_id:
-                st2.session_id = sid
-                rewrite_meta = True
-            if self.resume_session_id and (not st2.busy) and (not st2.last_turn_id):
-                self.resume_session_id = None
-                rewrite_meta = True
+            rewrite_meta = self._sync_rpc_ids_locked(st2, rpc_state=rpc_state)
         if rewrite_meta:
             self._write_meta()
 
