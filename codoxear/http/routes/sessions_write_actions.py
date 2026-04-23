@@ -8,14 +8,14 @@ from . import sessions_write_common as _common
 
 def handle_post(runtime: ServerRuntime, handler: Any, path: str) -> bool:
     if path.startswith("/api/sessions/") and path.endswith("/edit"):
-        if not runtime._require_auth(handler):
+        if not runtime.api.require_auth(handler):
             handler._unauthorized()
             return True
         session_id = _common.session_id_from_path(path)
         obj = _common.read_json_object(runtime, handler)
         name = obj.get("name")
         if not isinstance(name, str):
-            runtime._json_response(handler, 400, {"error": "name required"})
+            runtime.api.json_response(handler, 400, {"error": "name required"})
             return True
         try:
             alias, sidebar_meta = runtime.MANAGER.edit_session(
@@ -26,153 +26,153 @@ def handle_post(runtime: ServerRuntime, handler: Any, path: str) -> bool:
                 dependency_session_id=obj.get("dependency_session_id"),
             )
         except KeyError:
-            runtime._json_response(handler, 404, {"error": "unknown session"})
+            runtime.api.json_response(handler, 404, {"error": "unknown session"})
             return True
         except ValueError as exc:
-            runtime._json_response(handler, 400, {"error": str(exc)})
+            runtime.api.json_response(handler, 400, {"error": str(exc)})
             return True
-        runtime._json_response(handler, 200, {"ok": True, "alias": alias, **sidebar_meta})
+        runtime.api.json_response(handler, 200, {"ok": True, "alias": alias, **sidebar_meta})
         return True
 
     if path.startswith("/api/sessions/") and path.endswith("/rename"):
-        session_id = runtime._match_session_route(path, "rename")
+        session_id = runtime.api.match_session_route(path, "rename")
         if session_id is None:
-            runtime._json_response(handler, 404, {"error": "unknown session"})
+            runtime.api.json_response(handler, 404, {"error": "unknown session"})
             return True
-        if not runtime._require_auth(handler):
+        if not runtime.api.require_auth(handler):
             handler._unauthorized()
             return True
         obj = _common.read_json_object(runtime, handler)
         name = obj.get("name")
         if not isinstance(name, str):
-            runtime._json_response(handler, 400, {"error": "name required"})
+            runtime.api.json_response(handler, 400, {"error": "name required"})
             return True
         try:
             alias = runtime.MANAGER.alias_set(session_id, name)
         except KeyError:
-            runtime._json_response(handler, 404, {"error": "unknown session"})
+            runtime.api.json_response(handler, 404, {"error": "unknown session"})
             return True
-        runtime._json_response(handler, 200, {"ok": True, "alias": alias})
+        runtime.api.json_response(handler, 200, {"ok": True, "alias": alias})
         return True
 
     if path.startswith("/api/sessions/") and path.endswith("/focus"):
-        session_id = runtime._match_session_route(path, "focus")
+        session_id = runtime.api.match_session_route(path, "focus")
         if session_id is None:
-            runtime._json_response(handler, 404, {"error": "unknown session"})
+            runtime.api.json_response(handler, 404, {"error": "unknown session"})
             return True
-        if not runtime._require_auth(handler):
+        if not runtime.api.require_auth(handler):
             handler._unauthorized()
             return True
         obj = _common.read_json_object(runtime, handler)
         try:
             focused = runtime.MANAGER.focus_set(session_id, obj.get("focused"))
         except KeyError:
-            runtime._json_response(handler, 404, {"error": "unknown session"})
+            runtime.api.json_response(handler, 404, {"error": "unknown session"})
             return True
         except ValueError as exc:
-            runtime._json_response(handler, 400, {"error": str(exc)})
+            runtime.api.json_response(handler, 400, {"error": str(exc)})
             return True
-        runtime._json_response(handler, 200, {"ok": True, "focused": focused})
+        runtime.api.json_response(handler, 200, {"ok": True, "focused": focused})
         return True
 
     if path.startswith("/api/sessions/") and path.endswith("/send"):
-        session_id = runtime._match_session_route(path, "send")
+        session_id = runtime.api.match_session_route(path, "send")
         if session_id is None:
-            runtime._json_response(handler, 404, {"error": "unknown session"})
+            runtime.api.json_response(handler, 404, {"error": "unknown session"})
             return True
-        if not runtime._require_auth(handler):
+        if not runtime.api.require_auth(handler):
             handler._unauthorized()
             return True
         obj = _common.read_json_object(runtime, handler)
         text = obj.get("text")
         if not isinstance(text, str) or not text.strip():
-            runtime._json_response(handler, 400, {"error": "text required"})
+            runtime.api.json_response(handler, 400, {"error": "text required"})
             return True
         try:
             res = runtime.MANAGER.send(session_id, text)
         except KeyError:
-            runtime._json_response(handler, 404, {"error": "unknown session"})
+            runtime.api.json_response(handler, 404, {"error": "unknown session"})
             return True
         except ValueError as exc:
-            runtime._json_response(handler, 502, {"error": str(exc)})
+            runtime.api.json_response(handler, 502, {"error": str(exc)})
             return True
-        runtime._json_response(handler, 200, res)
+        runtime.api.json_response(handler, 200, res)
         return True
 
     if path.startswith("/api/sessions/") and path.endswith("/ui_response"):
-        session_id = runtime._match_session_route(path, "ui_response")
+        session_id = runtime.api.match_session_route(path, "ui_response")
         if session_id is None:
-            runtime._json_response(handler, 404, {"error": "unknown session"})
+            runtime.api.json_response(handler, 404, {"error": "unknown session"})
             return True
-        if not runtime._require_auth(handler):
+        if not runtime.api.require_auth(handler):
             handler._unauthorized()
             return True
         obj = _common.read_json_object(runtime, handler)
         try:
             runtime.MANAGER.submit_ui_response(session_id, obj)
         except KeyError:
-            runtime._json_response(handler, 404, {"error": "unknown session"})
+            runtime.api.json_response(handler, 404, {"error": "unknown session"})
             return True
         except ValueError as exc:
-            runtime._json_response(handler, 502, {"error": str(exc)})
+            runtime.api.json_response(handler, 502, {"error": str(exc)})
             return True
         durable_session_id = runtime.MANAGER._durable_session_id_for_identifier(session_id) or session_id
         runtime_id = runtime.MANAGER._runtime_session_id_for_identifier(session_id)
-        runtime._publish_session_workspace_invalidate(
+        runtime.api.publish_session_workspace_invalidate(
             durable_session_id,
             runtime_id=runtime_id,
             reason="ui_response",
         )
-        runtime._json_response(handler, 200, {"ok": True})
+        runtime.api.json_response(handler, 200, {"ok": True})
         return True
 
     if path.startswith("/api/sessions/") and path.endswith("/enqueue"):
-        session_id = runtime._match_session_route(path, "enqueue")
+        session_id = runtime.api.match_session_route(path, "enqueue")
         if session_id is None:
-            runtime._json_response(handler, 404, {"error": "unknown session"})
+            runtime.api.json_response(handler, 404, {"error": "unknown session"})
             return True
-        if not runtime._require_auth(handler):
+        if not runtime.api.require_auth(handler):
             handler._unauthorized()
             return True
         obj = _common.read_json_object(runtime, handler)
         text = obj.get("text")
         if not isinstance(text, str) or not text.strip():
-            runtime._json_response(handler, 400, {"error": "text required"})
+            runtime.api.json_response(handler, 400, {"error": "text required"})
             return True
         try:
             res = runtime.MANAGER.enqueue(session_id, text)
         except KeyError:
-            runtime._json_response(handler, 404, {"error": "unknown session"})
+            runtime.api.json_response(handler, 404, {"error": "unknown session"})
             return True
         except ValueError as exc:
-            runtime._json_response(handler, 502, {"error": str(exc)})
+            runtime.api.json_response(handler, 502, {"error": str(exc)})
             return True
-        runtime._json_response(handler, 200, res)
+        runtime.api.json_response(handler, 200, res)
         return True
 
     if path.startswith("/api/sessions/") and path.endswith("/queue/delete"):
-        if not runtime._require_auth(handler):
+        if not runtime.api.require_auth(handler):
             handler._unauthorized()
             return True
         session_id = _common.session_id_from_path(path)
         obj = _common.read_json_object(runtime, handler)
         idx = obj.get("index")
         if not isinstance(idx, int):
-            runtime._json_response(handler, 400, {"error": "index required"})
+            runtime.api.json_response(handler, 400, {"error": "index required"})
             return True
         try:
             res = runtime.MANAGER.queue_delete(session_id, idx)
         except KeyError:
-            runtime._json_response(handler, 404, {"error": "unknown session"})
+            runtime.api.json_response(handler, 404, {"error": "unknown session"})
             return True
         except ValueError as exc:
-            runtime._json_response(handler, 502, {"error": str(exc)})
+            runtime.api.json_response(handler, 502, {"error": str(exc)})
             return True
-        runtime._json_response(handler, 200, res)
+        runtime.api.json_response(handler, 200, res)
         return True
 
     if path.startswith("/api/sessions/") and path.endswith("/queue/update"):
-        if not runtime._require_auth(handler):
+        if not runtime.api.require_auth(handler):
             handler._unauthorized()
             return True
         session_id = _common.session_id_from_path(path)
@@ -180,20 +180,20 @@ def handle_post(runtime: ServerRuntime, handler: Any, path: str) -> bool:
         idx = obj.get("index")
         text = obj.get("text")
         if not isinstance(idx, int):
-            runtime._json_response(handler, 400, {"error": "index required"})
+            runtime.api.json_response(handler, 400, {"error": "index required"})
             return True
         if not isinstance(text, str) or not text.strip():
-            runtime._json_response(handler, 400, {"error": "text required"})
+            runtime.api.json_response(handler, 400, {"error": "text required"})
             return True
         try:
             res = runtime.MANAGER.queue_update(session_id, idx, text)
         except KeyError:
-            runtime._json_response(handler, 404, {"error": "unknown session"})
+            runtime.api.json_response(handler, 404, {"error": "unknown session"})
             return True
         except ValueError as exc:
-            runtime._json_response(handler, 502, {"error": str(exc)})
+            runtime.api.json_response(handler, 502, {"error": str(exc)})
             return True
-        runtime._json_response(handler, 200, res)
+        runtime.api.json_response(handler, 200, res)
         return True
 
     return False

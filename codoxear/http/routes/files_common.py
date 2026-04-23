@@ -10,9 +10,9 @@ from ...runtime import ServerRuntime
 
 def send_inline_blob(runtime: ServerRuntime, handler: Any, path_obj: Path) -> None:
     raw = path_obj.read_bytes()
-    kind, ctype = runtime._file_kind(path_obj, raw)
+    kind, ctype = runtime.api.file_kind(path_obj, raw)
     if kind not in {"image", "pdf"} or ctype is None:
-        runtime._json_response(handler, 400, {"error": "file is not previewable inline"})
+        runtime.api.json_response(handler, 400, {"error": "file is not previewable inline"})
         return
     handler.send_response(200)
     handler.send_header("Content-Type", ctype)
@@ -34,7 +34,7 @@ def read_json_object(
     *,
     limit: int | None = None,
 ) -> dict[str, Any]:
-    body = runtime._read_body(handler, limit=limit or 2 * 1024 * 1024)
+    body = runtime.api.read_body(handler, limit=limit or 2 * 1024 * 1024)
     body_text = body.decode("utf-8")
     if not body_text.strip():
         raise ValueError("empty request body")
@@ -57,6 +57,6 @@ def require_query_value(
 ) -> str | None:
     values = query.get(key)
     if not values or not values[0]:
-        runtime._json_response(handler, 400, {"error": f"{key} required"})
+        runtime.api.json_response(handler, 400, {"error": f"{key} required"})
         return None
     return values[0]

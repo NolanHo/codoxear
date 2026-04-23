@@ -44,7 +44,7 @@ class TestBackendSeamsSource(unittest.TestCase):
 
     def test_server_builds_explicit_runtime_object(self) -> None:
         source = SERVER.read_text(encoding="utf-8")
-        self.assertIn("from .runtime import ServerRuntime, build_server_runtime", source)
+        self.assertIn("from .runtime import RuntimeApi, ServerRuntime, build_server_runtime", source)
         self.assertIn("RUNTIME = MANAGER._runtime", source)
         self.assertIn("build_server_runtime(", source)
 
@@ -69,9 +69,9 @@ class TestBackendSeamsSource(unittest.TestCase):
         self.assertIn("from . import sessions_read_bootstrap as _bootstrap", read_source)
         self.assertIn("from ...sessions import creation as _session_creation", read_bootstrap)
         self.assertIn("_session_creation.read_new_session_defaults(", read_bootstrap)
-        self.assertIn("runtime._session_list_payload(", read_bootstrap)
-        self.assertIn("runtime._first_user_message_preview_from_log", read_bootstrap)
-        self.assertIn("runtime._first_user_message_preview_from_pi_session", read_bootstrap)
+        self.assertIn("runtime.api.session_list_payload(", read_bootstrap)
+        self.assertIn("runtime.api.first_user_message_preview_from_log", read_bootstrap)
+        self.assertIn("runtime.api.first_user_message_preview_from_pi_session", read_bootstrap)
         self.assertIn("from . import sessions_write_create as _create", write_source)
         self.assertIn("from ...sessions import creation as _session_creation", write_create)
         self.assertIn("_session_creation.parse_create_session_request(runtime, obj)", write_create)

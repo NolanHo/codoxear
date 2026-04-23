@@ -21,6 +21,8 @@ def manager_runtime(manager: Any) -> ServerRuntime:
     if event_hub is None:
         raise RuntimeError("manager runtime event hub is not initialized")
 
-    runtime = build_server_runtime(module, manager=manager, event_hub=event_hub)
+    api_factory = getattr(module, "_build_runtime_api", None)
+    api = api_factory() if callable(api_factory) else None
+    runtime = build_server_runtime(module, manager=manager, event_hub=event_hub, api=api)
     manager._runtime = runtime
     return runtime

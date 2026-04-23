@@ -22,7 +22,7 @@ def _normalize_list(runtime: ServerRuntime, rows: list[str]) -> list[str]:
 
 def handle_get(runtime: ServerRuntime, handler: Any, path: str, u: Any) -> bool:
     if path.startswith("/api/sessions/") and path.endswith("/git/changed_files"):
-        if not runtime._require_auth(handler):
+        if not runtime.api.require_auth(handler):
             handler._unauthorized()
             return True
         session_id = _common.session_id_from_path(path)
@@ -32,35 +32,35 @@ def handle_get(runtime: ServerRuntime, handler: Any, path: str, u: Any) -> bool:
         runtime.MANAGER.refresh_session_meta(session_id, strict=False)
         s = runtime.MANAGER.get_session(session_id)
         if not s:
-            runtime._json_response(handler, 404, {"error": "unknown session"})
+            runtime.api.json_response(handler, 404, {"error": "unknown session"})
             return True
-        cwd = runtime._safe_expanduser(Path(s.cwd))
+        cwd = runtime.api.safe_expanduser(Path(s.cwd))
         if not cwd.is_absolute():
             cwd = cwd.resolve()
         try:
-            runtime._require_git_repo(cwd)
+            runtime.api.require_git_repo(cwd)
         except RuntimeError as exc:
-            runtime._json_response(handler, 409, {"error": str(exc)})
+            runtime.api.json_response(handler, 409, {"error": str(exc)})
             return True
-        unstaged = runtime._run_git(
+        unstaged = runtime.api.run_git(
             cwd,
             ["diff", "--name-only"],
             timeout_s=runtime.GIT_DIFF_TIMEOUT_SECONDS,
             max_bytes=64 * 1024,
         ).splitlines()
-        staged = runtime._run_git(
+        staged = runtime.api.run_git(
             cwd,
             ["diff", "--name-only", "--cached"],
             timeout_s=runtime.GIT_DIFF_TIMEOUT_SECONDS,
             max_bytes=64 * 1024,
         ).splitlines()
-        unstaged_numstat = runtime._run_git(
+        unstaged_numstat = runtime.api.run_git(
             cwd,
             ["diff", "--numstat"],
             timeout_s=runtime.GIT_DIFF_TIMEOUT_SECONDS,
             max_bytes=128 * 1024,
         )
-        staged_numstat = runtime._run_git(
+        staged_numstat = runtime.api.run_git(
             cwd,
             ["diff", "--numstat", "--cached"],
             timeout_s=runtime.GIT_DIFF_TIMEOUT_SECONDS,
@@ -75,8 +75,8 @@ def handle_get(runtime: ServerRuntime, handler: Any, path: str, u: Any) -> bool:
                 continue
             seen.add(row)
             merged.append(row)
-        stats = runtime._parse_git_numstat(unstaged_numstat)
-        for path_key, vals in runtime._parse_git_numstat(staged_numstat).items():
+        stats = runtime.api.parse_git_numstat(unstaged_numstat)
+        for path_key, vals in runtime.api.parse_git_numstat(staged_numstat).items():
             prev = stats.get(path_key)
             if prev is None:
                 stats[path_key] = vals
@@ -102,7 +102,7 @@ def handle_get(runtime: ServerRuntime, handler: Any, path: str, u: Any) -> bool:
                     "changed": True,
                 }
             )
-        runtime._json_response(
+        runtime.api.json_response(
             handler,
             200,
             {
@@ -117,7 +117,7 @@ def handle_get(runtime: ServerRuntime, handler: Any, path: str, u: Any) -> bool:
         return True
 
     if path.startswith("/api/sessions/") and path.endswith("/git/diff"):
-        if not runtime._require_auth(handler):
+        if not runtime.api.require_auth(handler):
             handler._unauthorized()
             return True
         session_id = _common.session_id_from_path(path)
@@ -127,40 +127,40 @@ def handle_get(runtime: ServerRuntime, handler: Any, path: str, u: Any) -> bool:
         runtime.MANAGER.refresh_session_meta(session_id, strict=False)
         s = runtime.MANAGER.get_session(session_id)
         if not s:
-            runtime._json_response(handler, 404, {"error": "unknown session"})
+            runtime.api.json_response(handler, 404, {"error": "unknown session"})
             return True
         qs = urllib.parse.parse_qs(u.query)
         path_q = qs.get("path")
         if not path_q or not path_q[0]:
-            runtime._json_response(handler, 400, {"error": "path required"})
+            runtime.api.json_response(handler, 400, {"error": "path required"})
             return True
         rel = path_q[0]
         staged_q = qs.get("staged")
         staged = bool(staged_q and staged_q[0] == "1")
-        cwd = runtime._safe_expanduser(Path(s.cwd))
+        cwd = runtime.api.safe_expanduser(Path(s.cwd))
         if not cwd.is_absolute():
             cwd = cwd.resolve()
         try:
-            runtime._require_git_repo(cwd)
+            runtime.api.require_git_repo(cwd)
         except RuntimeError as exc:
-            runtime._json_response(handler, 409, {"error": str(exc)})
+            runtime.api.json_response(handler, 409, {"error": str(exc)})
             return True
         try:
-            _target, _repo_root, rel = runtime._resolve_git_path(cwd, rel)
+            _target, _repo_root, rel = runtime.api.resolve_git_path(cwd, rel)
         except ValueError as exc:
-            runtime._json_response(handler, 400, {"error": str(exc)})
+            runtime.api.json_response(handler, 400, {"error": str(exc)})
             return True
         args = ["diff", "-U3"]
         if staged:
             args.append("--cached")
         args.extend(["--", rel])
-        diff = runtime._run_git(
+        diff = runtime.api.run_git(
             cwd,
             args,
             timeout_s=runtime.GIT_DIFF_TIMEOUT_SECONDS,
             max_bytes=runtime.GIT_DIFF_MAX_BYTES,
         )
-        runtime._json_response(
+        runtime.api.json_response(
             handler,
             200,
             {
@@ -174,7 +174,7 @@ def handle_get(runtime: ServerRuntime, handler: Any, path: str, u: Any) -> bool:
         return True
 
     if path.startswith("/api/sessions/") and path.endswith("/git/file_versions"):
-        if not runtime._require_auth(handler):
+        if not runtime.api.require_auth(handler):
             handler._unauthorized()
             return True
         session_id = _common.session_id_from_path(path)
@@ -184,32 +184,32 @@ def handle_get(runtime: ServerRuntime, handler: Any, path: str, u: Any) -> bool:
         runtime.MANAGER.refresh_session_meta(session_id, strict=False)
         s = runtime.MANAGER.get_session(session_id)
         if not s:
-            runtime._json_response(handler, 404, {"error": "unknown session"})
+            runtime.api.json_response(handler, 404, {"error": "unknown session"})
             return True
         qs = urllib.parse.parse_qs(u.query)
         path_q = qs.get("path")
         if not path_q or not path_q[0]:
-            runtime._json_response(handler, 400, {"error": "path required"})
+            runtime.api.json_response(handler, 400, {"error": "path required"})
             return True
         rel = path_q[0]
-        cwd = runtime._safe_expanduser(Path(s.cwd))
+        cwd = runtime.api.safe_expanduser(Path(s.cwd))
         if not cwd.is_absolute():
             cwd = cwd.resolve()
         try:
-            runtime._require_git_repo(cwd)
+            runtime.api.require_git_repo(cwd)
         except RuntimeError as exc:
-            runtime._json_response(handler, 409, {"error": str(exc)})
+            runtime.api.json_response(handler, 409, {"error": str(exc)})
             return True
         try:
-            p, _repo_root, rel = runtime._resolve_git_path(cwd, rel)
+            p, _repo_root, rel = runtime.api.resolve_git_path(cwd, rel)
         except ValueError as exc:
-            runtime._json_response(handler, 400, {"error": str(exc)})
+            runtime.api.json_response(handler, 400, {"error": str(exc)})
             return True
         current_text = ""
         current_size = 0
         current_exists = bool(p.exists() and p.is_file())
         if current_exists:
-            current_text, current_size = runtime._read_text_file_strict(
+            current_text, current_size = runtime.api.read_text_file_strict(
                 p,
                 max_bytes=runtime.FILE_READ_MAX_BYTES,
             )
@@ -220,7 +220,7 @@ def handle_get(runtime: ServerRuntime, handler: Any, path: str, u: Any) -> bool:
         base_exists = False
         base_text = ""
         try:
-            base_text = runtime._run_git(
+            base_text = runtime.api.run_git(
                 cwd,
                 ["show", f"HEAD:{rel}"],
                 timeout_s=runtime.GIT_DIFF_TIMEOUT_SECONDS,
@@ -230,7 +230,7 @@ def handle_get(runtime: ServerRuntime, handler: Any, path: str, u: Any) -> bool:
         except RuntimeError:
             base_exists = False
             base_text = ""
-        runtime._json_response(
+        runtime.api.json_response(
             handler,
             200,
             {

@@ -9,7 +9,7 @@ from . import sessions_write_common as _common
 
 def handle_post(runtime: ServerRuntime, handler: Any, path: str) -> bool:
     if path == "/api/cwd_groups/edit":
-        if not runtime._require_auth(handler):
+        if not runtime.api.require_auth(handler):
             handler._unauthorized()
             return True
         try:
@@ -20,13 +20,13 @@ def handle_post(runtime: ServerRuntime, handler: Any, path: str) -> bool:
                 collapsed=obj.get("collapsed"),
             )
         except ValueError as exc:
-            runtime._json_response(handler, 400, {"error": str(exc)})
+            runtime.api.json_response(handler, 400, {"error": str(exc)})
             return True
-        runtime._json_response(handler, 200, {"ok": True, "cwd": cwd, **entry})
+        runtime.api.json_response(handler, 200, {"ok": True, "cwd": cwd, **entry})
         return True
 
     if path == "/api/sessions":
-        if not runtime._require_auth(handler):
+        if not runtime.api.require_auth(handler):
             handler._unauthorized()
             return True
         obj = _common.read_json_object(runtime, handler)
@@ -37,7 +37,7 @@ def handle_post(runtime: ServerRuntime, handler: Any, path: str) -> bool:
             out = {"error": err}
             if err == "cwd required":
                 out["field"] = "cwd"
-            runtime._json_response(handler, 400, out)
+            runtime.api.json_response(handler, 400, out)
             return True
         try:
             res = runtime.MANAGER.spawn_web_session(
@@ -63,66 +63,66 @@ def handle_post(runtime: ServerRuntime, handler: Any, path: str) -> bool:
             response_payload: dict[str, Any] = {"error": str(exc)}
             if str(exc).startswith("cwd "):
                 response_payload["field"] = "cwd"
-            runtime._json_response(handler, 400, response_payload)
+            runtime.api.json_response(handler, 400, response_payload)
             return True
         except KeyError:
-            runtime._json_response(handler, 404, {"error": "unknown session"})
+            runtime.api.json_response(handler, 404, {"error": "unknown session"})
             return True
         response_payload = {"ok": True, **res}
         if alias:
             response_payload["alias"] = alias
-        runtime._publish_sessions_invalidate(reason="session_created")
-        runtime._json_response(handler, 200, response_payload)
+        runtime.api.publish_sessions_invalidate(reason="session_created")
+        runtime.api.json_response(handler, 200, response_payload)
         return True
 
-    session_id = runtime._match_session_route(path, "delete")
+    session_id = runtime.api.match_session_route(path, "delete")
     if session_id is not None:
-        if not runtime._require_auth(handler):
+        if not runtime.api.require_auth(handler):
             handler._unauthorized()
             return True
-        runtime._read_body(handler)
+        runtime.api.read_body(handler)
         ok = runtime.MANAGER.delete_session(session_id)
         if not ok:
-            runtime._json_response(handler, 404, {"error": "unknown session"})
+            runtime.api.json_response(handler, 404, {"error": "unknown session"})
             return True
-        runtime._publish_sessions_invalidate(reason="session_deleted")
-        runtime._json_response(handler, 200, {"ok": True})
+        runtime.api.publish_sessions_invalidate(reason="session_deleted")
+        runtime.api.json_response(handler, 200, {"ok": True})
         return True
 
-    session_id = runtime._match_session_route(path, "handoff")
+    session_id = runtime.api.match_session_route(path, "handoff")
     if session_id is not None:
-        if not runtime._require_auth(handler):
+        if not runtime.api.require_auth(handler):
             handler._unauthorized()
             return True
-        runtime._read_body(handler)
+        runtime.api.read_body(handler)
         try:
             res = runtime.MANAGER.handoff_session(session_id)
         except ValueError as exc:
-            runtime._json_response(handler, 400, {"error": str(exc)})
+            runtime.api.json_response(handler, 400, {"error": str(exc)})
             return True
         except KeyError:
-            runtime._json_response(handler, 404, {"error": "unknown session"})
+            runtime.api.json_response(handler, 404, {"error": "unknown session"})
             return True
-        runtime._publish_sessions_invalidate(reason="session_created")
-        runtime._json_response(handler, 200, {"ok": True, **res})
+        runtime.api.publish_sessions_invalidate(reason="session_created")
+        runtime.api.json_response(handler, 200, {"ok": True, **res})
         return True
 
-    session_id = runtime._match_session_route(path, "restart")
+    session_id = runtime.api.match_session_route(path, "restart")
     if session_id is not None:
-        if not runtime._require_auth(handler):
+        if not runtime.api.require_auth(handler):
             handler._unauthorized()
             return True
-        runtime._read_body(handler)
+        runtime.api.read_body(handler)
         try:
             res = runtime.MANAGER.restart_session(session_id)
         except ValueError as exc:
-            runtime._json_response(handler, 400, {"error": str(exc)})
+            runtime.api.json_response(handler, 400, {"error": str(exc)})
             return True
         except KeyError:
-            runtime._json_response(handler, 404, {"error": "unknown session"})
+            runtime.api.json_response(handler, 404, {"error": "unknown session"})
             return True
-        runtime._publish_sessions_invalidate(reason="session_created")
-        runtime._json_response(handler, 200, {"ok": True, **res})
+        runtime.api.publish_sessions_invalidate(reason="session_created")
+        runtime.api.json_response(handler, 200, {"ok": True, **res})
         return True
 
     return False

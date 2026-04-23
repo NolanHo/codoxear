@@ -65,7 +65,7 @@ from .pi_log import pi_model_context_window as _pi_model_context_window_impl
 from .pi_log import pi_user_text as _pi_user_text
 from .pi_log import read_pi_run_settings as _read_pi_run_settings
 from .pi_log import read_pi_session_id as _read_pi_session_id
-from .runtime import ServerRuntime, build_server_runtime
+from .runtime import RuntimeApi, ServerRuntime, build_server_runtime
 from .sessions import background as _session_background
 from .sessions import lifecycle as _session_lifecycle
 from .sessions import listing as _session_listing
@@ -1528,6 +1528,57 @@ def _supports_web_control(meta: dict[str, Any]) -> bool:
     return meta.get("supports_web_control") is True
 
 
+_RUNTIME_API_EXPORTS = (
+    "clean_harness_cooldown_minutes",
+    "clean_harness_remaining_injections",
+    "clip01",
+    "current_git_branch",
+    "describe_session_cwd",
+    "display_pi_busy",
+    "display_source_path",
+    "display_updated_ts",
+    "durable_session_id_for_live_session",
+    "file_kind",
+    "first_user_message_preview_from_log",
+    "first_user_message_preview_from_pi_session",
+    "historical_session_row",
+    "json_response",
+    "list_resume_candidates_for_cwd",
+    "match_session_route",
+    "metrics_snapshot",
+    "normalize_requested_backend",
+    "parse_git_numstat",
+    "priority_from_elapsed_seconds",
+    "provider_choice_for_backend",
+    "publish_session_live_invalidate",
+    "publish_session_workspace_invalidate",
+    "publish_sessions_invalidate",
+    "read_body",
+    "read_run_settings_from_log",
+    "read_text_file_strict",
+    "record_metric",
+    "require_auth",
+    "require_git_repo",
+    "resolve_dir_target",
+    "resolve_git_path",
+    "run_git",
+    "safe_expanduser",
+    "session_details_payload",
+    "session_list_payload",
+    "session_live_payload",
+    "session_workspace_payload",
+    "state_busy_value",
+    "tmux_available",
+    "todo_snapshot_payload_for_session",
+    "validated_session_state",
+    "workspace_file_access",
+)
+
+
+def _build_runtime_api() -> RuntimeApi:
+    return RuntimeApi(sys.modules[__name__], exports=_RUNTIME_API_EXPORTS)
+
+
 class SessionManager(_manager_delegates.SessionManagerDelegates):
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -1559,6 +1610,7 @@ class SessionManager(_manager_delegates.SessionManagerDelegates):
             sys.modules[__name__],
             manager=self,
             event_hub=EVENT_HUB,
+            api=_build_runtime_api(),
         )
         globals()["MANAGER"] = self
         globals()["RUNTIME"] = self._runtime

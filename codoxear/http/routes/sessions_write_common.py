@@ -7,7 +7,7 @@ from ...runtime import ServerRuntime
 
 
 def read_json_object(runtime: ServerRuntime, handler: Any) -> dict[str, Any]:
-    body = runtime._read_body(handler)
+    body = runtime.api.read_body(handler)
     body_text = body.decode("utf-8")
     if not body_text.strip():
         raise ValueError("empty request body")
