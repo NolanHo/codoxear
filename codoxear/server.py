@@ -1229,10 +1229,6 @@ def _resolve_git_path(cwd: Path, raw_path: str) -> tuple[Path, Path, str]:
     return target, repo_root, rel
 
 
-def _resolve_unique_bare_filename(search_root: Path, raw_path: str) -> Path | None:
-    return _workspace_file_access.resolve_unique_bare_filename(search_root, raw_path)
-
-
 def _resolve_session_relative_child(base: Path, raw_path: str) -> Path:
     rel = str(raw_path or "").strip()
     if not rel:
@@ -1411,10 +1407,6 @@ def _git_repo_root(cwd: Path) -> Path | None:
     if not root:
         return None
     return Path(root).resolve()
-
-
-def _file_search_score(candidate: str, query: str) -> int:
-    return _workspace_file_search.file_search_score(candidate, query)
 
 
 def _push_file_search_match(
@@ -1662,10 +1654,6 @@ def _clean_optional_bool(value: Any) -> bool | None:
 
 def _normalize_session_cwd_row(row: dict[str, Any]) -> dict[str, Any]:
     return _session_listing.service(RUNTIME).normalize_session_cwd_row(row)
-
-
-def _frontend_session_list_row(row: dict[str, Any]) -> dict[str, Any]:
-    return _session_listing.service(RUNTIME).frontend_session_list_row(row)
 
 
 def _session_list_payload(
@@ -1947,24 +1935,12 @@ def _resolve_client_file_path(*, session_id: str, raw_path: str) -> Path:
     )
 
 
-def _inspect_openable_file(path_obj: Path) -> tuple[bytes, int, str, str | None]:
-    return _workspace_file_access.inspect_openable_file(RUNTIME, path_obj)
-
-
 def _read_client_file_view(path_obj: Path) -> ClientFileView:
     return _workspace_file_access.read_client_file_view(RUNTIME, path_obj)
 
 
-def _read_text_or_image(path_obj: Path) -> tuple[str, int, str | None, bytes | None]:
-    return _workspace_file_access.read_text_or_image(RUNTIME, path_obj)
-
-
 def _read_downloadable_file(path_obj: Path) -> tuple[bytes, int]:
     return _workspace_file_access.read_downloadable_file(path_obj)
-
-
-def _inspect_client_path(path_obj: Path) -> tuple[int, str, str | None]:
-    return _workspace_file_access.inspect_client_path(RUNTIME, path_obj)
 
 
 def _download_disposition(path_obj: Path) -> str:

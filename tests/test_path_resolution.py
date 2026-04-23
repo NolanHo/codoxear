@@ -4,8 +4,8 @@ import unittest
 from pathlib import Path
 
 from codoxear.server import _resolve_git_path
-from codoxear.server import _resolve_unique_bare_filename
 from codoxear.server import _resolve_session_path
+from codoxear.workspace.file_access import resolve_unique_bare_filename
 
 
 class TestPathResolution(unittest.TestCase):
@@ -55,7 +55,7 @@ class TestPathResolution(unittest.TestCase):
             target = root / "codoxear" / "server.py"
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text("x", encoding="utf-8")
-            resolved = _resolve_unique_bare_filename(root, "server.py")
+            resolved = resolve_unique_bare_filename(root, "server.py")
             self.assertEqual(resolved, target.resolve())
 
     def test_resolve_unique_bare_filename_ignores_build_duplicates(self) -> None:
@@ -67,7 +67,7 @@ class TestPathResolution(unittest.TestCase):
             dup.parent.mkdir(parents=True, exist_ok=True)
             target.write_text("x", encoding="utf-8")
             dup.write_text("x", encoding="utf-8")
-            resolved = _resolve_unique_bare_filename(root, "server.py")
+            resolved = resolve_unique_bare_filename(root, "server.py")
             self.assertEqual(resolved, target.resolve())
 
     def test_resolve_unique_bare_filename_rejects_ambiguous_match(self) -> None:
@@ -79,4 +79,4 @@ class TestPathResolution(unittest.TestCase):
             b.parent.mkdir(parents=True, exist_ok=True)
             a.write_text("a", encoding="utf-8")
             b.write_text("b", encoding="utf-8")
-            self.assertIsNone(_resolve_unique_bare_filename(root, "app.js"))
+            self.assertIsNone(resolve_unique_bare_filename(root, "app.js"))

@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 
 from codoxear import server
+from codoxear.workspace import file_search as _file_search
 
 
 class TestSessionFileList(unittest.TestCase):
@@ -104,8 +105,8 @@ class TestSessionFileList(unittest.TestCase):
                 server._list_session_directory_entries(root, "missing")
 
     def test_search_score_prefers_closer_basename_matches(self) -> None:
-        best = server._file_search_score("src/app.py", "app")
-        worse = server._file_search_score("docs/reference/application-notes.md", "app")
+        best = _file_search.file_search_score("src/app.py", "app")
+        worse = _file_search.file_search_score("docs/reference/application-notes.md", "app")
 
         self.assertGreater(best, worse)
 

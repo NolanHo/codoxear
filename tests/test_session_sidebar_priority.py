@@ -6,12 +6,13 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
+from codoxear import server
 from codoxear.page_state_sqlite import DurableSessionRecord
 from codoxear.page_state_sqlite import PageStateDB
 from codoxear.server import Session
 from codoxear.server import SessionManager
-from codoxear.server import _frontend_session_list_row
 from codoxear.server import _session_list_payload
+from codoxear.sessions import listing as _session_listing
 
 
 def _make_manager() -> SessionManager:
@@ -106,7 +107,7 @@ class TestSessionSidebarPriority(unittest.TestCase):
         self.assertIsNone(rows[0]["dependency_session_id"])
 
     def test_frontend_session_row_prefers_title_over_first_user_message(self) -> None:
-        row = _frontend_session_list_row(
+        row = _session_listing.service(server.RUNTIME).frontend_session_list_row(
             {
                 "session_id": "sess-1",
                 "title": "Structured title",

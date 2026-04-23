@@ -3,16 +3,15 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from codoxear import server
 from codoxear.server import _download_disposition
-from codoxear.server import _inspect_client_path
-from codoxear.server import _inspect_openable_file
 from codoxear.server import _read_client_file_view
 from codoxear.server import _read_text_file_for_client
 from codoxear.server import _read_text_file_for_write
-from codoxear.server import _read_text_or_image
 from codoxear.server import _read_downloadable_file
 from codoxear.server import _write_new_text_file_atomic
 from codoxear.server import _write_text_file_atomic
+from codoxear.workspace import file_access as _file_access
 
 
 class TestInspectOpenableFile(unittest.TestCase):
@@ -20,7 +19,7 @@ class TestInspectOpenableFile(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / "repo"
             path.mkdir()
-            size, kind, image_ctype = _inspect_client_path(path)
+            size, kind, image_ctype = _file_access.inspect_client_path(server.RUNTIME, path)
             self.assertEqual(size, 0)
             self.assertEqual(kind, "directory")
             self.assertIsNone(image_ctype)
@@ -29,7 +28,7 @@ class TestInspectOpenableFile(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / "note.py"
             path.write_text("print('ok')\n", encoding="utf-8")
-            raw, size, kind, image_ctype = _inspect_openable_file(path)
+            raw, size, kind, image_ctype = _file_access.inspect_openable_file(server.RUNTIME, path)
             self.assertEqual(kind, "text")
             self.assertIsNone(image_ctype)
             self.assertEqual(size, len(raw))
@@ -39,7 +38,7 @@ class TestInspectOpenableFile(unittest.TestCase):
             path = Path(td) / "blob.bin"
             path.write_bytes(b"\x00\x01\x02\x03")
             with self.assertRaisesRegex(ValueError, "binary file not supported"):
-                _inspect_openable_file(path)
+                _file_access.inspect_openable_file(server.RUNTIME, path)
 
     def test_binary_file_is_download_only_for_client_view(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -54,7 +53,7 @@ class TestInspectOpenableFile(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / "large.png"
             path.write_bytes(b"\x89PNG\r\n\x1a\n" + (b"x" * (2 * 1024 * 1024)))
-            size, kind, image_ctype = _inspect_client_path(path)
+            size, kind, image_ctype = _file_access.inspect_client_path(server.RUNTIME, path)
             self.assertGreater(size, 2 * 1024 * 1024)
             self.assertEqual(kind, "image")
             self.assertEqual(image_ctype, "image/png")
@@ -63,7 +62,7 @@ class TestInspectOpenableFile(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / "large.md"
             path.write_text("a" * (2 * 1024 * 1024 + 1), encoding="utf-8")
-            size, kind, image_ctype = _inspect_client_path(path)
+            size, kind, image_ctype = _file_access.inspect_client_path(server.RUNTIME, path)
             self.assertGreater(size, 2 * 1024 * 1024)
             self.assertEqual(kind, "download_only")
             self.assertIsNone(image_ctype)
@@ -75,7 +74,7 @@ class TestInspectOpenableFile(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / "large.png"
             path.write_bytes(b"\x89PNG\r\n\x1a\n" + (b"x" * (2 * 1024 * 1024)))
-            kind, size, image_ctype, raw = _read_text_or_image(path)
+            kind, size, image_ctype, raw = _file_access.read_text_or_image(server.RUNTIME, path)
             self.assertEqual(kind, "image")
             self.assertEqual(image_ctype, "image/png")
             self.assertGreater(size, 2 * 1024 * 1024)
@@ -85,7 +84,7 @@ class TestInspectOpenableFile(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / "note.md"
             path.write_text("hello\n", encoding="utf-8")
-            kind, size, image_ctype, raw = _read_text_or_image(path)
+            kind, size, image_ctype, raw = _file_access.read_text_or_image(server.RUNTIME, path)
             self.assertEqual(kind, "markdown")
             self.assertIsNone(image_ctype)
             self.assertEqual(size, 6)
@@ -96,11 +95,11 @@ class TestInspectOpenableFile(unittest.TestCase):
             path = Path(td) / "paper.pdf"
             raw_in = b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n1 0 obj\n<< /Type /Catalog >>\nendobj\n%%EOF\n"
             path.write_bytes(raw_in)
-            size, kind, content_type = _inspect_client_path(path)
+            size, kind, content_type = _file_access.inspect_client_path(server.RUNTIME, path)
             self.assertEqual(kind, "pdf")
             self.assertEqual(content_type, "application/pdf")
             self.assertEqual(size, len(raw_in))
-            kind2, size2, content_type2, raw = _read_text_or_image(path)
+            kind2, size2, content_type2, raw = _file_access.read_text_or_image(server.RUNTIME, path)
             self.assertEqual(kind2, "pdf")
             self.assertEqual(size2, len(raw_in))
             self.assertEqual(content_type2, "application/pdf")
