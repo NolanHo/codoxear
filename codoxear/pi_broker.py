@@ -841,6 +841,176 @@ class PiBroker:
         if st is not None:
             st.rpc.close()
 
+
+    def _cmd_state(self, conn: socket.socket, _req: dict[str, Any]) -> None:
+        with self._lock:
+            st = self.state
+            if st is not None:
+                self._drain_rpc_output_locked(st)
+            resp = {
+                "busy": bool(st.busy) if st else False,
+                "queue_len": 0,
+                "token": st.token if st else None,
+                "isCompacting": bool(st.is_compacting) if st else False,
+            }
+        _send_socket_json_line(conn, resp)
+
+    def _cmd_tail(self, conn: socket.socket, _req: dict[str, Any]) -> None:
+        with self._lock:
+            st = self.state
+            if st is not None:
+                self._drain_rpc_output_locked(st)
+            resp = {"tail": st.output_tail if st else ""}
+        _send_socket_json_line(conn, resp)
+
+    def _cmd_live_messages(self, conn: socket.socket, req: dict[str, Any]) -> None:
+        raw_offset = req.get("offset")
+        since_offset = int(raw_offset) if isinstance(raw_offset, int) else 0
+        with self._lock:
+            st = self.state
+            if st is not None:
+                self._drain_rpc_output_locked(st)
+                events = [
+                    dict(row.get("event", {}))
+                    for row in st.live_message_events
+                    if int(row.get("offset", 0)) > since_offset
+                    and isinstance(row.get("event"), dict)
+                ]
+                resp = {
+                    "offset": st.live_message_offset,
+                    "events": _coalesce_live_message_events(events),
+                }
+            else:
+                resp = {"offset": 0, "events": []}
+        _send_socket_json_line(conn, resp)
+
+    def _cmd_ui_state(self, conn: socket.socket, _req: dict[str, Any]) -> None:
+        with self._lock:
+            st = self.state
+            if st is not None:
+                self._drain_rpc_output_locked(st)
+                requests = [
+                    request
+                    for request in st.pending_ui_requests.values()
+                    if request.get("status") == "pending"
+                ]
+            else:
+                requests = []
+            resp = {"requests": requests}
+        _send_socket_json_line(conn, resp)
+
+    def _cmd_commands(self, conn: socket.socket, _req: dict[str, Any]) -> None:
+        with self._lock:
+            st = self.state
+            if st is not None:
+                self._drain_rpc_output_locked(st)
+                rpc = st.rpc
+            else:
+                rpc = None
+        if rpc is None:
+            _send_socket_json_line(conn, {"error": "no state"})
+            return
+        _send_socket_json_line(conn, {"commands": rpc.get_commands()})
+
+    def _cmd_ui_response(self, conn: socket.socket, req: dict[str, Any]) -> None:
+        request_id = req.get("id")
+        if not isinstance(request_id, str) or not request_id:
+            _send_socket_json_line(conn, {"error": "id required"})
+            return
+
+        ui_response_kwargs: dict[str, Any] = {}
+        if bool(req.get("cancelled")):
+            ui_response_kwargs["cancelled"] = True
+        else:
+            confirmed = req.get("confirmed")
+            if isinstance(confirmed, bool):
+                ui_response_kwargs["confirmed"] = confirmed
+            else:
+                ui_response_kwargs["value"] = req.get("value")
+
+        with self._lock:
+            st = self.state
+            if not st:
+                _send_socket_json_line(conn, {"error": "no state"})
+                return
+            pending = st.pending_ui_requests.get(request_id)
+            if pending is None:
+                _send_socket_json_line(conn, {"error": "unknown or expired request"})
+                return
+            if pending.get("status") != "pending":
+                _send_socket_json_line(conn, {"error": "request already resolved"})
+                return
+            pending["status"] = "resolved"
+            rpc = st.rpc
+
+        try:
+            rpc.send_ui_response(request_id, **ui_response_kwargs)
+        except Exception:
+            with self._lock:
+                st = self.state
+                current = st.pending_ui_requests.get(request_id) if st else None
+                if (
+                    current is pending
+                    and isinstance(current, dict)
+                    and current.get("status") == "resolved"
+                ):
+                    current["status"] = "pending"
+            raise
+
+        _send_socket_json_line(conn, {"ok": True})
+
+    def _cmd_send(self, conn: socket.socket, req: dict[str, Any]) -> None:
+        text = req.get("text")
+        if not isinstance(text, str) or not text.strip():
+            _send_socket_json_line(conn, {"error": "text required"})
+            return
+        self._submit_terminal_prompt(text)
+        _send_socket_json_line(conn, {"queued": False, "queue_len": 0})
+
+    def _cmd_keys(self, conn: socket.socket, req: dict[str, Any]) -> None:
+        seq_raw = req.get("seq")
+        if not isinstance(seq_raw, str) or not seq_raw:
+            _send_socket_json_line(conn, {"error": "seq required"})
+            return
+        seq = _seq_bytes(seq_raw)
+        with self._lock:
+            st = self.state
+            if not st:
+                _send_socket_json_line(conn, {"error": "no state"})
+                return
+        if seq != b"\x1b":
+            _send_socket_json_line(conn, {"error": f"unsupported key sequence: {seq_raw}"})
+            return
+        self._interrupt_terminal_turn()
+        _send_socket_json_line(conn, {"ok": True, "queued": False, "n": len(seq)})
+
+    def _cmd_shutdown(self, conn: socket.socket, _req: dict[str, Any]) -> None:
+        _send_socket_json_line(conn, {"ok": True})
+        self._close()
+
+    def _dispatch_conn_command(
+        self,
+        conn: socket.socket,
+        cmd: Any,
+        req: dict[str, Any],
+    ) -> bool:
+        handlers = {
+            "state": self._cmd_state,
+            "tail": self._cmd_tail,
+            "live_messages": self._cmd_live_messages,
+            "ui_state": self._cmd_ui_state,
+            "commands": self._cmd_commands,
+            "ui_response": self._cmd_ui_response,
+            "send": self._cmd_send,
+            "keys": self._cmd_keys,
+            "shutdown": self._cmd_shutdown,
+        }
+        handler = handlers.get(cmd)
+        if handler is None:
+            return False
+        handler(conn, req)
+        return True
+
     def _handle_conn(self, conn: socket.socket) -> None:
         f = None
         try:
@@ -850,168 +1020,8 @@ class PiBroker:
                 return
             req = json.loads(line.decode("utf-8"))
             cmd = req.get("cmd")
-
-            if cmd == "state":
-                resp: dict[str, Any]
-                with self._lock:
-                    st = self.state
-                    if st is not None:
-                        self._drain_rpc_output_locked(st)
-                    resp = {
-                        "busy": bool(st.busy) if st else False,
-                        "queue_len": 0,
-                        "token": st.token if st else None,
-                        "isCompacting": bool(st.is_compacting) if st else False,
-                    }
-                _send_socket_json_line(conn, resp)
+            if self._dispatch_conn_command(conn, cmd, req):
                 return
-
-            if cmd == "tail":
-                with self._lock:
-                    st = self.state
-                    if st is not None:
-                        self._drain_rpc_output_locked(st)
-                    resp = {"tail": st.output_tail if st else ""}
-                _send_socket_json_line(conn, resp)
-                return
-
-            if cmd == "live_messages":
-                raw_offset = req.get("offset")
-                since_offset = int(raw_offset) if isinstance(raw_offset, int) else 0
-                with self._lock:
-                    st = self.state
-                    if st is not None:
-                        self._drain_rpc_output_locked(st)
-                        events = [
-                            dict(row.get("event", {}))
-                            for row in st.live_message_events
-                            if int(row.get("offset", 0)) > since_offset
-                            and isinstance(row.get("event"), dict)
-                        ]
-                        resp = {
-                            "offset": st.live_message_offset,
-                            "events": _coalesce_live_message_events(events),
-                        }
-                    else:
-                        resp = {"offset": 0, "events": []}
-                _send_socket_json_line(conn, resp)
-                return
-
-            if cmd == "ui_state":
-                with self._lock:
-                    st = self.state
-                    if st is not None:
-                        self._drain_rpc_output_locked(st)
-                        requests = [
-                            request
-                            for request in st.pending_ui_requests.values()
-                            if request.get("status") == "pending"
-                        ]
-                    else:
-                        requests = []
-                    resp = {"requests": requests}
-                _send_socket_json_line(conn, resp)
-                return
-
-            if cmd == "commands":
-                with self._lock:
-                    st = self.state
-                    if st is not None:
-                        self._drain_rpc_output_locked(st)
-                        rpc = st.rpc
-                    else:
-                        rpc = None
-                if rpc is None:
-                    _send_socket_json_line(conn, {"error": "no state"})
-                    return
-                commands = rpc.get_commands()
-                _send_socket_json_line(conn, {"commands": commands})
-                return
-
-            if cmd == "ui_response":
-                request_id = req.get("id")
-                if not isinstance(request_id, str) or not request_id:
-                    _send_socket_json_line(conn, {"error": "id required"})
-                    return
-                ui_response_kwargs: dict[str, Any] = {}
-                if bool(req.get("cancelled")):
-                    ui_response_kwargs["cancelled"] = True
-                else:
-                    confirmed = req.get("confirmed")
-                    if isinstance(confirmed, bool):
-                        ui_response_kwargs["confirmed"] = confirmed
-                    else:
-                        ui_response_kwargs["value"] = req.get("value")
-                with self._lock:
-                    st = self.state
-                    if not st:
-                        _send_socket_json_line(conn, {"error": "no state"})
-                        return
-                    pending = st.pending_ui_requests.get(request_id)
-                    if pending is None:
-                        _send_socket_json_line(
-                            conn, {"error": "unknown or expired request"}
-                        )
-                        return
-                    if pending.get("status") != "pending":
-                        _send_socket_json_line(
-                            conn, {"error": "request already resolved"}
-                        )
-                        return
-                    pending["status"] = "resolved"
-                    rpc = st.rpc
-                try:
-                    rpc.send_ui_response(request_id, **ui_response_kwargs)
-                except Exception:
-                    with self._lock:
-                        st = self.state
-                        current = st.pending_ui_requests.get(request_id) if st else None
-                        if (
-                            current is pending
-                            and isinstance(current, dict)
-                            and current.get("status") == "resolved"
-                        ):
-                            current["status"] = "pending"
-                    raise
-                _send_socket_json_line(conn, {"ok": True})
-                return
-
-            if cmd == "send":
-                text = req.get("text")
-                if not isinstance(text, str) or not text.strip():
-                    _send_socket_json_line(conn, {"error": "text required"})
-                    return
-                self._submit_terminal_prompt(text)
-                _send_socket_json_line(conn, {"queued": False, "queue_len": 0})
-                return
-
-            if cmd == "keys":
-                seq_raw = req.get("seq")
-                if not isinstance(seq_raw, str) or not seq_raw:
-                    _send_socket_json_line(conn, {"error": "seq required"})
-                    return
-                seq = _seq_bytes(seq_raw)
-                with self._lock:
-                    st = self.state
-                    if not st:
-                        _send_socket_json_line(conn, {"error": "no state"})
-                        return
-                if seq != b"\x1b":
-                    _send_socket_json_line(
-                        conn, {"error": f"unsupported key sequence: {seq_raw}"}
-                    )
-                    return
-                self._interrupt_terminal_turn()
-                _send_socket_json_line(
-                    conn, {"ok": True, "queued": False, "n": len(seq)}
-                )
-                return
-
-            if cmd == "shutdown":
-                _send_socket_json_line(conn, {"ok": True})
-                self._close()
-                return
-
             _send_socket_json_line(conn, {"error": "unknown cmd"})
         except Exception as exc:
             if _socket_peer_disconnected(exc):
