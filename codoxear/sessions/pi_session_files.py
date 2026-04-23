@@ -1,10 +1,108 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from ..runtime import ServerRuntime
+
+
+@dataclass(slots=True)
+class PiSessionFilesService:
+    runtime: ServerRuntime
+
+    def pi_native_session_dir_for_cwd(self, cwd: str | Path) -> Path:
+        return pi_native_session_dir_for_cwd(self.runtime, cwd)
+
+    def pi_new_session_file_for_cwd(self, cwd: str | Path) -> Path:
+        return pi_new_session_file_for_cwd(self.runtime, cwd)
+
+    def write_pi_session_header(
+        self,
+        session_path: Path,
+        *,
+        session_id: str,
+        cwd: str,
+        parent_session: str | None = None,
+        provider: str | None = None,
+        model_id: str | None = None,
+        thinking_level: str | None = None,
+    ) -> None:
+        write_pi_session_header(
+            self.runtime,
+            session_path,
+            session_id=session_id,
+            cwd=cwd,
+            parent_session=parent_session,
+            provider=provider,
+            model_id=model_id,
+            thinking_level=thinking_level,
+        )
+
+    def pi_session_history_glob(self, session_path: Path) -> str:
+        return pi_session_history_glob(session_path)
+
+    def pi_session_has_handoff_history(self, session_path: Path) -> bool:
+        return pi_session_has_handoff_history(session_path)
+
+    def next_pi_handoff_history_path(self, session_path: Path) -> Path:
+        return next_pi_handoff_history_path(session_path)
+
+    def copy_file_atomic(self, source_path: Path, target_path: Path) -> None:
+        copy_file_atomic(self.runtime, source_path, target_path)
+
+    def append_pi_user_message(self, session_path: Path, *, text: str) -> None:
+        append_pi_user_message(self.runtime, session_path, text=text)
+
+    def pi_handoff_message_text(
+        self, *, source_session_id: str, history_path: Path, cwd: str
+    ) -> str:
+        return pi_handoff_message_text(
+            source_session_id=source_session_id,
+            history_path=history_path,
+            cwd=cwd,
+        )
+
+    def write_pi_handoff_session(
+        self,
+        session_path: Path,
+        *,
+        session_id: str,
+        cwd: str,
+        source_session_id: str,
+        history_path: Path,
+        provider: str | None = None,
+        model_id: str | None = None,
+        thinking_level: str | None = None,
+    ) -> None:
+        write_pi_handoff_session(
+            self.runtime,
+            session_path,
+            session_id=session_id,
+            cwd=cwd,
+            source_session_id=source_session_id,
+            history_path=history_path,
+            provider=provider,
+            model_id=model_id,
+            thinking_level=thinking_level,
+        )
+
+    def pi_session_name_from_session_file(
+        self,
+        session_path: Path,
+        *,
+        max_scan_bytes: int = 512 * 1024,
+    ) -> str:
+        return pi_session_name_from_session_file(
+            self.runtime,
+            session_path,
+            max_scan_bytes=max_scan_bytes,
+        )
+
+
+def service(runtime: ServerRuntime) -> PiSessionFilesService:
+    return PiSessionFilesService(runtime)
 
 
 def pi_native_session_dir_for_cwd(runtime: ServerRuntime, cwd: str | Path) -> Path:

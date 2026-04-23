@@ -2,10 +2,109 @@ from __future__ import annotations
 
 import json
 import math
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from ..runtime import ServerRuntime
+
+
+@dataclass(slots=True)
+class SessionResumeCandidatesService:
+    runtime: ServerRuntime
+
+    def fallback_path_mtime(self, path: Path) -> float | None:
+        return fallback_path_mtime(path)
+
+    def last_pi_conversation_ts(self, path: Path) -> float | None:
+        return last_pi_conversation_ts(self.runtime, path)
+
+    def resume_candidate_updated_ts(
+        self,
+        path: Path,
+        *,
+        agent_backend: str,
+    ) -> float | None:
+        return resume_candidate_updated_ts(
+            self.runtime,
+            path,
+            agent_backend=agent_backend,
+        )
+
+    def resume_candidate_from_log(
+        self,
+        log_path: Path,
+        *,
+        agent_backend: str = "codex",
+    ) -> dict[str, Any] | None:
+        return resume_candidate_from_log(
+            self.runtime,
+            log_path,
+            agent_backend=agent_backend,
+        )
+
+    def pi_resume_candidate_from_session_file(
+        self,
+        session_path: Path,
+    ) -> dict[str, Any] | None:
+        return pi_resume_candidate_from_session_file(self.runtime, session_path)
+
+    def discover_pi_session_for_cwd(
+        self,
+        cwd: str,
+        start_ts: float,
+        *,
+        exclude: set[Path] | None = None,
+    ) -> Path | None:
+        return discover_pi_session_for_cwd(
+            self.runtime,
+            cwd,
+            start_ts,
+            exclude=exclude,
+        )
+
+    def resolve_pi_session_path(
+        self,
+        *,
+        thread_id: str | None,
+        cwd: str,
+        start_ts: float,
+        preferred: Path | None = None,
+        exclude: set[Path] | None = None,
+    ) -> tuple[Path | None, str | None]:
+        return resolve_pi_session_path(
+            self.runtime,
+            thread_id=thread_id,
+            cwd=cwd,
+            start_ts=start_ts,
+            preferred=preferred,
+            exclude=exclude,
+        )
+
+    def list_resume_candidates_for_cwd(
+        self,
+        cwd: str,
+        *,
+        limit: int = 12,
+        offset: int = 0,
+        backend: str | None = None,
+        agent_backend: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return list_resume_candidates_for_cwd(
+            self.runtime,
+            cwd,
+            limit=limit,
+            offset=offset,
+            backend=backend,
+            agent_backend=agent_backend,
+        )
+
+    def iter_all_resume_candidates(self, *, limit: int = 200) -> list[dict[str, Any]]:
+        return iter_all_resume_candidates(self.runtime, limit=limit)
+
+
+def service(runtime: ServerRuntime) -> SessionResumeCandidatesService:
+    return SessionResumeCandidatesService(runtime)
 
 
 def fallback_path_mtime(path: Path) -> float | None:

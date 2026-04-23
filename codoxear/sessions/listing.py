@@ -2,10 +2,108 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from ..runtime import ServerRuntime
+
+
+@dataclass(slots=True)
+class SessionListingService:
+    runtime: ServerRuntime
+
+    def session_row_display_name(
+        self, row: dict[str, Any], *, fallback: str = "Session"
+    ) -> str:
+        return session_row_display_name(row, fallback=fallback)
+
+    def normalize_session_cwd_row(self, row: dict[str, Any]) -> dict[str, Any]:
+        return normalize_session_cwd_row(self.runtime, row)
+
+    def frontend_session_list_row(self, row: dict[str, Any]) -> dict[str, Any]:
+        return frontend_session_list_row(self.runtime, row)
+
+    def session_list_group_key(self, row: dict[str, Any]) -> str:
+        return session_list_group_key(self.runtime, row)
+
+    def session_list_payload(
+        self,
+        rows: list[dict[str, Any]],
+        *,
+        group_key: str | None = None,
+        offset: int = 0,
+        limit: int = 100,
+        group_offset: int = 0,
+        group_limit: int = 12,
+    ) -> dict[str, Any]:
+        return session_list_payload(
+            self.runtime,
+            rows,
+            group_key=group_key,
+            offset=offset,
+            limit=limit,
+            group_offset=group_offset,
+            group_limit=group_limit,
+        )
+
+    def historical_session_id(self, backend: str, resume_session_id: str) -> str:
+        return historical_session_id(self.runtime, backend, resume_session_id)
+
+    def parse_historical_session_id(self, session_id: str) -> tuple[str, str] | None:
+        return parse_historical_session_id(self.runtime, session_id)
+
+    def historical_session_row(self, session_id: str) -> dict[str, Any] | None:
+        return historical_session_row(self.runtime, session_id)
+
+    def historical_sidebar_items(
+        self,
+        *,
+        live_resume_keys: set[tuple[str, str]],
+        now_ts: float,
+    ) -> list[dict[str, Any]]:
+        return historical_sidebar_items(
+            self.runtime,
+            live_resume_keys=live_resume_keys,
+            now_ts=now_ts,
+        )
+
+    def resume_preview_from_text(self, text: str, *, max_chars: int = 120) -> str:
+        return resume_preview_from_text(text, max_chars=max_chars)
+
+    def user_message_text(self, payload: dict[str, Any]) -> str:
+        return user_message_text(payload)
+
+    def is_scaffold_user_text(self, text: str) -> bool:
+        return is_scaffold_user_text(text)
+
+    def first_user_message_preview_from_log(
+        self,
+        log_path: Path,
+        *,
+        max_scan_bytes: int = 256 * 1024,
+    ) -> str:
+        return first_user_message_preview_from_log(
+            self.runtime,
+            log_path,
+            max_scan_bytes=max_scan_bytes,
+        )
+
+    def first_user_message_preview_from_pi_session(
+        self,
+        session_path: Path,
+        *,
+        max_scan_bytes: int = 256 * 1024,
+    ) -> str:
+        return first_user_message_preview_from_pi_session(
+            self.runtime,
+            session_path,
+            max_scan_bytes=max_scan_bytes,
+        )
+
+
+def service(runtime: ServerRuntime) -> SessionListingService:
+    return SessionListingService(runtime)
 
 
 def session_row_display_name(

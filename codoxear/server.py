@@ -1661,11 +1661,11 @@ def _clean_optional_bool(value: Any) -> bool | None:
 
 
 def _normalize_session_cwd_row(row: dict[str, Any]) -> dict[str, Any]:
-    return _session_listing.normalize_session_cwd_row(RUNTIME, row)
+    return _session_listing.service(RUNTIME).normalize_session_cwd_row(row)
 
 
 def _frontend_session_list_row(row: dict[str, Any]) -> dict[str, Any]:
-    return _session_listing.frontend_session_list_row(RUNTIME, row)
+    return _session_listing.service(RUNTIME).frontend_session_list_row(row)
 
 
 def _session_list_payload(
@@ -1677,8 +1677,7 @@ def _session_list_payload(
     group_offset: int = 0,
     group_limit: int = SESSION_LIST_RECENT_GROUP_LIMIT,
 ) -> dict[str, Any]:
-    return _session_listing.session_list_payload(
-        RUNTIME,
+    return _session_listing.service(RUNTIME).session_list_payload(
         rows,
         group_key=group_key,
         offset=offset,
@@ -2214,15 +2213,18 @@ def _patch_metadata_pi_binding(sock: Path, session_path: Path) -> None:
 def _resume_candidate_from_log(
     log_path: Path, *, agent_backend: str = "codex"
 ) -> dict[str, Any] | None:
-    return _resume_candidates.resume_candidate_from_log(RUNTIME, log_path, agent_backend=agent_backend)
+    return _resume_candidates.service(RUNTIME).resume_candidate_from_log(
+        log_path,
+        agent_backend=agent_backend,
+    )
 
 
 def _pi_native_session_dir_for_cwd(cwd: str | Path) -> Path:
-    return _pi_session_files.pi_native_session_dir_for_cwd(RUNTIME, cwd)
+    return _pi_session_files.service(RUNTIME).pi_native_session_dir_for_cwd(cwd)
 
 
 def _pi_new_session_file_for_cwd(cwd: str | Path) -> Path:
-    return _pi_session_files.pi_new_session_file_for_cwd(RUNTIME, cwd)
+    return _pi_session_files.service(RUNTIME).pi_new_session_file_for_cwd(cwd)
 
 
 def _write_pi_session_header(
@@ -2235,19 +2237,27 @@ def _write_pi_session_header(
     model_id: str | None = None,
     thinking_level: str | None = None,
 ) -> None:
-    return _pi_session_files.write_pi_session_header(RUNTIME, session_path, session_id=session_id, cwd=cwd, parent_session=parent_session, provider=provider, model_id=model_id, thinking_level=thinking_level)
+    return _pi_session_files.service(RUNTIME).write_pi_session_header(
+        session_path,
+        session_id=session_id,
+        cwd=cwd,
+        parent_session=parent_session,
+        provider=provider,
+        model_id=model_id,
+        thinking_level=thinking_level,
+    )
 
 
 def _pi_session_has_handoff_history(session_path: Path) -> bool:
-    return _pi_session_files.pi_session_has_handoff_history(session_path)
+    return _pi_session_files.service(RUNTIME).pi_session_has_handoff_history(session_path)
 
 
 def _next_pi_handoff_history_path(session_path: Path) -> Path:
-    return _pi_session_files.next_pi_handoff_history_path(session_path)
+    return _pi_session_files.service(RUNTIME).next_pi_handoff_history_path(session_path)
 
 
 def _copy_file_atomic(source_path: Path, target_path: Path) -> None:
-    return _pi_session_files.copy_file_atomic(RUNTIME, source_path, target_path)
+    return _pi_session_files.service(RUNTIME).copy_file_atomic(source_path, target_path)
 
 
 def _write_pi_handoff_session(
@@ -2261,14 +2271,22 @@ def _write_pi_handoff_session(
     model_id: str | None = None,
     thinking_level: str | None = None,
 ) -> None:
-    return _pi_session_files.write_pi_handoff_session(RUNTIME, session_path, session_id=session_id, cwd=cwd, source_session_id=source_session_id, history_path=history_path, provider=provider, model_id=model_id, thinking_level=thinking_level)
+    return _pi_session_files.service(RUNTIME).write_pi_handoff_session(
+        session_path,
+        session_id=session_id,
+        cwd=cwd,
+        source_session_id=source_session_id,
+        history_path=history_path,
+        provider=provider,
+        model_id=model_id,
+        thinking_level=thinking_level,
+    )
 
 
 def _pi_session_name_from_session_file(
     session_path: Path, *, max_scan_bytes: int = 512 * 1024
 ) -> str:
-    return _pi_session_files.pi_session_name_from_session_file(
-        RUNTIME,
+    return _pi_session_files.service(RUNTIME).pi_session_name_from_session_file(
         session_path,
         max_scan_bytes=max_scan_bytes,
     )
@@ -2276,13 +2294,19 @@ def _pi_session_name_from_session_file(
 
 
 def _pi_resume_candidate_from_session_file(session_path: Path) -> dict[str, Any] | None:
-    return _resume_candidates.pi_resume_candidate_from_session_file(RUNTIME, session_path)
+    return _resume_candidates.service(RUNTIME).pi_resume_candidate_from_session_file(
+        session_path
+    )
 
 
 def _discover_pi_session_for_cwd(
     cwd: str, start_ts: float, *, exclude: set[Path] | None = None
 ) -> Path | None:
-    return _resume_candidates.discover_pi_session_for_cwd(RUNTIME, cwd, start_ts, exclude=exclude)
+    return _resume_candidates.service(RUNTIME).discover_pi_session_for_cwd(
+        cwd,
+        start_ts,
+        exclude=exclude,
+    )
 
 
 def _resolve_pi_session_path(
@@ -2293,7 +2317,13 @@ def _resolve_pi_session_path(
     preferred: Path | None = None,
     exclude: set[Path] | None = None,
 ) -> tuple[Path | None, str | None]:
-    return _resume_candidates.resolve_pi_session_path(RUNTIME, thread_id=thread_id, cwd=cwd, start_ts=start_ts, preferred=preferred, exclude=exclude)
+    return _resume_candidates.service(RUNTIME).resolve_pi_session_path(
+        thread_id=thread_id,
+        cwd=cwd,
+        start_ts=start_ts,
+        preferred=preferred,
+        exclude=exclude,
+    )
 
 
 def _safe_path_mtime(path: Path) -> float | None:
@@ -2311,30 +2341,38 @@ def _list_resume_candidates_for_cwd(
     backend: str | None = None,
     agent_backend: str | None = None,
 ) -> list[dict[str, Any]]:
-    return _resume_candidates.list_resume_candidates_for_cwd(RUNTIME, cwd, limit=limit, offset=offset, backend=backend, agent_backend=agent_backend)
+    return _resume_candidates.service(RUNTIME).list_resume_candidates_for_cwd(
+        cwd,
+        limit=limit,
+        offset=offset,
+        backend=backend,
+        agent_backend=agent_backend,
+    )
 
 
 def _iter_all_resume_candidates(*, limit: int = 200) -> list[dict[str, Any]]:
-    return _resume_candidates.iter_all_resume_candidates(RUNTIME, limit=limit)
+    return _resume_candidates.service(RUNTIME).iter_all_resume_candidates(limit=limit)
 
 
 def _historical_session_id(backend: str, resume_session_id: str) -> str:
-    return _session_listing.historical_session_id(RUNTIME, backend, resume_session_id)
+    return _session_listing.service(RUNTIME).historical_session_id(
+        backend,
+        resume_session_id,
+    )
 
 
 def _parse_historical_session_id(session_id: str) -> tuple[str, str] | None:
-    return _session_listing.parse_historical_session_id(RUNTIME, session_id)
+    return _session_listing.service(RUNTIME).parse_historical_session_id(session_id)
 
 
 def _historical_session_row(session_id: str) -> dict[str, Any] | None:
-    return _session_listing.historical_session_row(RUNTIME, session_id)
+    return _session_listing.service(RUNTIME).historical_session_row(session_id)
 
 
 def _historical_sidebar_items(
     *, live_resume_keys: set[tuple[str, str]], now_ts: float
 ) -> list[dict[str, Any]]:
-    return _session_listing.historical_sidebar_items(
-        RUNTIME,
+    return _session_listing.service(RUNTIME).historical_sidebar_items(
         live_resume_keys=live_resume_keys,
         now_ts=now_ts,
     )
@@ -2343,8 +2381,7 @@ def _historical_sidebar_items(
 def _first_user_message_preview_from_log(
     log_path: Path, *, max_scan_bytes: int = 256 * 1024
 ) -> str:
-    return _session_listing.first_user_message_preview_from_log(
-        RUNTIME,
+    return _session_listing.service(RUNTIME).first_user_message_preview_from_log(
         log_path,
         max_scan_bytes=max_scan_bytes,
     )
@@ -2353,8 +2390,7 @@ def _first_user_message_preview_from_log(
 def _first_user_message_preview_from_pi_session(
     session_path: Path, *, max_scan_bytes: int = 256 * 1024
 ) -> str:
-    return _session_listing.first_user_message_preview_from_pi_session(
-        RUNTIME,
+    return _session_listing.service(RUNTIME).first_user_message_preview_from_pi_session(
         session_path,
         max_scan_bytes=max_scan_bytes,
     )
