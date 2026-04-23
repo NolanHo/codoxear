@@ -423,6 +423,179 @@ def _coalesce_live_message_events(rows: list[dict[str, Any]]) -> list[dict[str, 
     return coalesced
 
 
+def _drain_rpc_stderr_into_tail(st: "State") -> None:
+    stderr_lines: list[str] = []
+    drain_stderr = getattr(st.rpc, "drain_stderr_lines", None)
+    if callable(drain_stderr):
+        try:
+            raw_stderr_lines = drain_stderr()
+            if isinstance(raw_stderr_lines, list):
+                stderr_lines = [
+                    line
+                    for line in raw_stderr_lines
+                    if isinstance(line, str) and line
+                ]
+            else:
+                stderr_lines = []
+        except Exception:
+            stderr_lines = []
+    for line in stderr_lines:
+        suffix = "" if line.endswith("\n") else "\n"
+        st.output_tail = (st.output_tail + f"[stderr] {line}{suffix}")[-st.output_tail_max :]
+
+
+def _drain_rpc_events(st: "State") -> list[dict[str, Any]]:
+    try:
+        events = st.rpc.drain_events()
+    except Exception:
+        return []
+    return events if isinstance(events, list) else []
+
+
+def _handle_message_delta_event(
+    st: "State",
+    event: dict[str, Any],
+    *,
+    event_type: str,
+    event_turn_id: str | None,
+    stream_id: str,
+) -> None:
+    if event_type != "message.delta":
+        return
+    delta = event.get("delta") if isinstance(event.get("delta"), str) else ""
+    if not delta:
+        return
+    snapshot = st.live_message_snapshots.get(stream_id)
+    if snapshot is None:
+        snapshot = {
+            "role": "assistant",
+            "text": "",
+            "streaming": True,
+            "stream_id": stream_id,
+            "turn_id": event_turn_id,
+            "ts": _live_event_ts(st, event),
+        }
+        st.live_message_snapshots[stream_id] = snapshot
+    snapshot["text"] = f"{snapshot.get('text') or ''}{delta}"
+    snapshot["turn_id"] = event_turn_id
+    _append_live_message_event(st, dict(snapshot))
+
+
+def _handle_retry_and_compaction_events(
+    st: "State",
+    event: dict[str, Any],
+    *,
+    event_type: str,
+) -> None:
+    retry_event = _retry_live_event(st, event)
+    if retry_event is not None:
+        _append_live_message_event(st, retry_event)
+
+    compaction_event = _compaction_live_event(st, event)
+    if compaction_event is None:
+        return
+    _append_live_message_event(st, compaction_event)
+    if event_type == "compaction_start":
+        st.is_compacting = True
+        st.busy = True
+    elif event_type == "compaction_end":
+        st.is_compacting = False
+        if (not st.last_turn_id) and st.prompt_sent_at <= 0.0 and event.get("willRetry") is not True:
+            st.busy = False
+
+
+def _handle_ui_request_events(st: "State", event: dict[str, Any], *, event_type: str) -> None:
+    if event_type == "extension_ui_request":
+        _record_ui_request(st, event)
+    for request_id in _resolved_ui_request_ids(event):
+        st.pending_ui_requests.pop(request_id, None)
+
+
+def _clear_pending_ui_requests_for_terminal_match(
+    st: "State",
+    *,
+    event_type: str,
+    event_turn_id: str | None,
+) -> None:
+    terminal_event_matches_active_turn = (
+        event_type in _TERMINAL_TURN_EVENT_TYPES
+        and (
+            (bool(event_turn_id) and st.last_turn_id == event_turn_id)
+            or ((not event_turn_id) and (not st.last_turn_id) and st.prompt_sent_at <= 0.0)
+        )
+    )
+    if terminal_event_matches_active_turn:
+        st.pending_ui_requests.clear()
+
+
+def _emit_terminal_turn_events(
+    st: "State",
+    event: dict[str, Any],
+    *,
+    event_type: str,
+    stream_id: str,
+) -> None:
+    if event_type not in _TERMINAL_TURN_EVENT_TYPES:
+        return
+    snapshot = st.live_message_snapshots.get(stream_id)
+    has_snapshot_text = bool(
+        snapshot is not None
+        and isinstance(snapshot.get("text"), str)
+        and snapshot.get("text")
+    )
+    if has_snapshot_text and snapshot is not None:
+        completed_snapshot = dict(snapshot)
+        completed_snapshot["completed"] = True
+        _append_live_message_event(st, completed_snapshot)
+    terminal_event = _terminal_turn_live_event(
+        st,
+        event,
+        has_snapshot_text=has_snapshot_text,
+    )
+    if terminal_event is None:
+        return
+    empty_output_key = _empty_output_terminal_event_key(st, event)
+    if empty_output_key is None or empty_output_key != st.last_empty_output_event_key:
+        _append_live_message_event(st, terminal_event)
+        if empty_output_key is not None:
+            st.last_empty_output_event_key = empty_output_key
+
+
+def _append_output_tail_from_event(st: "State", event: dict[str, Any]) -> None:
+    output = _event_output_text(event)
+    if output:
+        st.output_tail = (st.output_tail + output)[-st.output_tail_max :]
+
+
+def _apply_turn_busy_state_transition(
+    st: "State",
+    event: dict[str, Any],
+    *,
+    event_type: str,
+    event_turn_id: str | None,
+) -> None:
+    if not event_turn_id:
+        if (
+            event_type in _TERMINAL_TURN_EVENT_TYPES
+            and (not st.last_turn_id)
+            and st.prompt_sent_at <= 0.0
+        ):
+            st.busy = False
+            st.prompt_sent_at = 0.0
+            st.last_turn_id = None
+        return
+    if event_type in _TERMINAL_TURN_EVENT_TYPES:
+        if st.last_turn_id == event_turn_id:
+            st.busy = False
+            st.prompt_sent_at = 0.0
+        if st.last_turn_id == event_turn_id:
+            st.last_turn_id = None
+        return
+    st.busy = True
+    st.prompt_sent_at = 0.0
+    st.last_turn_id = event_turn_id
+
+
 @dataclass
 class State:
     session_id: str | None
@@ -570,131 +743,49 @@ class PiBroker:
             self._write_meta()
 
     def _drain_rpc_output_locked(self, st: State) -> None:
-        stderr_lines: list[str] = []
-        drain_stderr = getattr(st.rpc, "drain_stderr_lines", None)
-        if callable(drain_stderr):
-            try:
-                raw_stderr_lines = drain_stderr()
-                if isinstance(raw_stderr_lines, list):
-                    stderr_lines = [
-                        line
-                        for line in raw_stderr_lines
-                        if isinstance(line, str) and line
-                    ]
-                else:
-                    stderr_lines = []
-            except Exception:
-                stderr_lines = []
-        for line in stderr_lines:
-            suffix = "" if line.endswith("\n") else "\n"
-            st.output_tail = (st.output_tail + f"[stderr] {line}{suffix}")[
-                -st.output_tail_max :
-            ]
-        try:
-            events = st.rpc.drain_events()
-        except Exception:
-            events = []
-        for event in events:
+        _drain_rpc_stderr_into_tail(st)
+        for event in _drain_rpc_events(st):
+            if not isinstance(event, dict):
+                continue
             event_type = _extract_event_type(event)
             event_turn_id = _extract_turn_id(event)
             stream_id = _live_stream_id(event_turn_id)
+
             token_update = _pi_token_update(event)
             if token_update is not None:
                 st.token = token_update
-            if event_type == "message.delta":
-                delta = (
-                    event.get("delta") if isinstance(event.get("delta"), str) else ""
-                )
-                if delta:
-                    snapshot = st.live_message_snapshots.get(stream_id)
-                    if snapshot is None:
-                        snapshot = {
-                            "role": "assistant",
-                            "text": "",
-                            "streaming": True,
-                            "stream_id": stream_id,
-                            "turn_id": event_turn_id,
-                            "ts": _live_event_ts(st, event),
-                        }
-                        st.live_message_snapshots[stream_id] = snapshot
-                    snapshot["text"] = f"{snapshot.get('text') or ''}{delta}"
-                    snapshot["turn_id"] = event_turn_id
-                    _append_live_message_event(st, dict(snapshot))
-            retry_event = _retry_live_event(st, event)
-            if retry_event is not None:
-                _append_live_message_event(st, retry_event)
-            compaction_event = _compaction_live_event(st, event)
-            if compaction_event is not None:
-                _append_live_message_event(st, compaction_event)
-                if event_type == "compaction_start":
-                    st.is_compacting = True
-                    st.busy = True
-                elif event_type == "compaction_end":
-                    st.is_compacting = False
-                    if (not st.last_turn_id) and st.prompt_sent_at <= 0.0 and event.get("willRetry") is not True:
-                        st.busy = False
-            if event_type == "extension_ui_request":
-                _record_ui_request(st, event)
-            for request_id in _resolved_ui_request_ids(event):
-                st.pending_ui_requests.pop(request_id, None)
-            terminal_event_matches_active_turn = (
-                event_type in _TERMINAL_TURN_EVENT_TYPES
-                and (
-                    (bool(event_turn_id) and st.last_turn_id == event_turn_id)
-                    or (
-                        (not event_turn_id)
-                        and (not st.last_turn_id)
-                        and st.prompt_sent_at <= 0.0
-                    )
-                )
+
+            _handle_message_delta_event(
+                st,
+                event,
+                event_type=event_type,
+                event_turn_id=event_turn_id,
+                stream_id=stream_id,
             )
-            if terminal_event_matches_active_turn:
-                st.pending_ui_requests.clear()
-            if event_type in _TERMINAL_TURN_EVENT_TYPES:
-                snapshot = st.live_message_snapshots.get(stream_id)
-                has_snapshot_text = bool(
-                    snapshot is not None
-                    and isinstance(snapshot.get("text"), str)
-                    and snapshot.get("text")
-                )
-                if has_snapshot_text and snapshot is not None:
-                    completed_snapshot = dict(snapshot)
-                    completed_snapshot["completed"] = True
-                    _append_live_message_event(st, completed_snapshot)
-                terminal_event = _terminal_turn_live_event(
-                    st,
-                    event,
-                    has_snapshot_text=has_snapshot_text,
-                )
-                if terminal_event is not None:
-                    empty_output_key = _empty_output_terminal_event_key(st, event)
-                    if empty_output_key is None or empty_output_key != st.last_empty_output_event_key:
-                        _append_live_message_event(st, terminal_event)
-                        if empty_output_key is not None:
-                            st.last_empty_output_event_key = empty_output_key
-            output = _event_output_text(event)
-            if output:
-                st.output_tail = (st.output_tail + output)[-st.output_tail_max :]
-            if not event_turn_id:
-                if (
-                    event_type in _TERMINAL_TURN_EVENT_TYPES
-                    and (not st.last_turn_id)
-                    and st.prompt_sent_at <= 0.0
-                ):
-                    st.busy = False
-                    st.prompt_sent_at = 0.0
-                    st.last_turn_id = None
-                continue
-            if event_type in _TERMINAL_TURN_EVENT_TYPES:
-                if st.last_turn_id == event_turn_id:
-                    st.busy = False
-                    st.prompt_sent_at = 0.0
-                if st.last_turn_id == event_turn_id:
-                    st.last_turn_id = None
-                continue
-            st.busy = True
-            st.prompt_sent_at = 0.0
-            st.last_turn_id = event_turn_id
+            _handle_retry_and_compaction_events(
+                st,
+                event,
+                event_type=event_type,
+            )
+            _handle_ui_request_events(st, event, event_type=event_type)
+            _clear_pending_ui_requests_for_terminal_match(
+                st,
+                event_type=event_type,
+                event_turn_id=event_turn_id,
+            )
+            _emit_terminal_turn_events(
+                st,
+                event,
+                event_type=event_type,
+                stream_id=stream_id,
+            )
+            _append_output_tail_from_event(st, event)
+            _apply_turn_busy_state_transition(
+                st,
+                event,
+                event_type=event_type,
+                event_turn_id=event_turn_id,
+            )
 
     def _sync_output_from_rpc(self) -> None:
         with self._lock:
