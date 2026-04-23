@@ -606,6 +606,139 @@ describe("ConversationPane", () => {
     expect(root.textContent).toContain("proc_1");
   });
 
+  it("renders write tool_result as structured path and bytes fields", () => {
+    const sessionsStore = createStaticStore(
+      { items: [], activeSessionId: "sess-write-tool", loading: false, newSessionDefaults: null },
+      { refresh: () => Promise.resolve(), select: () => undefined },
+    );
+    const messagesStore = createStaticStore(
+      {
+        bySessionId: {
+          "sess-write-tool": [
+            {
+              type: "tool_result",
+              name: "write",
+              text: "Successfully wrote 20824 bytes to scripts/tools/bench_issue432_mixed_queue.py",
+              ts: 100,
+            },
+          ],
+        },
+        offsetsBySessionId: { "sess-write-tool": 1 },
+        loading: false,
+      },
+      { loadInitial: () => Promise.resolve(), poll: () => Promise.resolve() },
+    );
+
+    root = document.createElement("div");
+    document.body.appendChild(root);
+    render(
+      <AppProviders sessionsStore={sessionsStore as any} messagesStore={messagesStore as any}>
+        <ConversationPane />
+      </AppProviders>,
+      root,
+    );
+
+    const token = root.querySelector(".machineTraceToken.tool_result") as HTMLButtonElement | null;
+    expect(token).not.toBeNull();
+
+    act(() => {
+      token?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+
+    expect(root.textContent).toContain("Bytes");
+    expect(root.textContent).toContain("20824");
+    expect(root.textContent).toContain("scripts/tools/bench_issue432_mixed_queue.py");
+  });
+
+  it("renders context_tag tool_result as structured tag metadata", () => {
+    const sessionsStore = createStaticStore(
+      { items: [], activeSessionId: "sess-context-tag", loading: false, newSessionDefaults: null },
+      { refresh: () => Promise.resolve(), select: () => undefined },
+    );
+    const messagesStore = createStaticStore(
+      {
+        bySessionId: {
+          "sess-context-tag": [
+            {
+              type: "tool_result",
+              name: "context_tag",
+              text: "Created tag 'issue141-actor-inventory-start' at 09582f3d",
+              ts: 100,
+            },
+          ],
+        },
+        offsetsBySessionId: { "sess-context-tag": 1 },
+        loading: false,
+      },
+      { loadInitial: () => Promise.resolve(), poll: () => Promise.resolve() },
+    );
+
+    root = document.createElement("div");
+    document.body.appendChild(root);
+    render(
+      <AppProviders sessionsStore={sessionsStore as any} messagesStore={messagesStore as any}>
+        <ConversationPane />
+      </AppProviders>,
+      root,
+    );
+
+    const token = root.querySelector(".machineTraceToken.tool_result") as HTMLButtonElement | null;
+    expect(token).not.toBeNull();
+
+    act(() => {
+      token?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+
+    expect(root.textContent).toContain("Tag");
+    expect(root.textContent).toContain("issue141-actor-inventory-start");
+    expect(root.textContent).toContain("Target");
+    expect(root.textContent).toContain("09582f3d");
+  });
+
+  it("renders read tool_result as raw code block output", () => {
+    const sessionsStore = createStaticStore(
+      { items: [], activeSessionId: "sess-read-raw", loading: false, newSessionDefaults: null },
+      { refresh: () => Promise.resolve(), select: () => undefined },
+    );
+    const messagesStore = createStaticStore(
+      {
+        bySessionId: {
+          "sess-read-raw": [
+            {
+              type: "tool_result",
+              name: "read",
+              text: "- [x] line-one\\n<raw>&token",
+              ts: 100,
+            },
+          ],
+        },
+        offsetsBySessionId: { "sess-read-raw": 1 },
+        loading: false,
+      },
+      { loadInitial: () => Promise.resolve(), poll: () => Promise.resolve() },
+    );
+
+    root = document.createElement("div");
+    document.body.appendChild(root);
+    render(
+      <AppProviders sessionsStore={sessionsStore as any} messagesStore={messagesStore as any}>
+        <ConversationPane />
+      </AppProviders>,
+      root,
+    );
+
+    const token = root.querySelector(".machineTraceToken.tool_result") as HTMLButtonElement | null;
+    expect(token).not.toBeNull();
+
+    act(() => {
+      token?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+
+    const code = root.querySelector(".machineTraceDetail.tool_result .messageCardPre code");
+    expect(code?.textContent).toContain("- [x] line-one");
+    expect(code?.textContent).toContain("<raw>&token");
+  });
+
   it("renders manage_todo_list tool_result details as todo cards", () => {
     const sessionsStore = createStaticStore(
       { items: [], activeSessionId: "sess-manage-todo", loading: false, newSessionDefaults: null },
@@ -1183,7 +1316,7 @@ describe("ConversationPane", () => {
       await Promise.resolve();
     });
 
-    expect(root.querySelector("[data-testid='machine-trace-detail'] .messageBody")?.textContent).toContain('{"ok":true,"path":"ConversationPane.tsx"}');
+    expect(root.querySelector("[data-testid='machine-trace-detail']")?.textContent).toContain('{"ok":true,"path":"ConversationPane.tsx"}');
     expect(toolToken?.getAttribute("aria-expanded")).toBe("false");
     expect(toolResultToken?.getAttribute("aria-expanded")).toBe("true");
   });

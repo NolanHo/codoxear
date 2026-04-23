@@ -1135,6 +1135,16 @@ function isBashTool(name: unknown): boolean {
   return name === "bash" || name.startsWith("bashExecution");
 }
 
+function isRawCodeToolOutput(name: unknown): boolean {
+  if (typeof name !== "string") {
+    return false;
+  }
+  if (isBashTool(name)) {
+    return true;
+  }
+  return name === "read" || name === "grep" || name === "find" || name === "ls" || name === "context_log";
+}
+
 function todoStatusClass(status: unknown): string {
   if (typeof status !== "string") {
     return "unknown";
@@ -1185,6 +1195,112 @@ function renderTodoItemsList(items: TodoSnapshotItem[]) {
       ))}
     </ul>
   );
+}
+
+function stripTrailingPeriod(value: string): string {
+  return value.endsWith(".") ? value.slice(0, -1) : value;
+}
+
+function parseWriteResult(text: string): { bytes: string; path: string } | null {
+  const match = text.match(/^Successfully wrote\s+(\d+)\s+bytes\s+to\s+(.+)$/);
+  if (!match) {
+    return null;
+  }
+  return { bytes: match[1] || "", path: stripTrailingPeriod((match[2] || "").trim()) };
+}
+
+function parseEditResult(text: string, details: Record<string, unknown> | null): { path: string; blocks: string; firstChangedLine: string | null } | null {
+  const match = text.match(/^Successfully replaced(?:\s+(\d+)\s+block\(s\)|\s+text)\s+in\s+(.+)$/);
+  if (!match) {
+    return null;
+  }
+  const firstChangedLine = typeof details?.firstChangedLine === "number" ? String(details.firstChangedLine) : null;
+  return {
+    path: stripTrailingPeriod((match[2] || "").trim()),
+    blocks: (match[1] || "1").trim(),
+    firstChangedLine,
+  };
+}
+
+function parseContextTagResult(text: string): { tag: string; target: string } | null {
+  const match = text.match(/^Created tag '([^']+)' at\s+([0-9a-fA-F]+)$/);
+  if (!match) {
+    return null;
+  }
+  return { tag: match[1] || "", target: match[2] || "" };
+}
+
+function renderStructuredToolResult(event: MessageEvent) {
+  const text = firstNonEmptyText(event.text);
+  if (!text) {
+    return null;
+  }
+  const details = asRecord(event.details);
+
+  if (event.name === "write") {
+    const parsed = parseWriteResult(text);
+    if (!parsed) {
+      return null;
+    }
+    return (
+      <div className="grid grid-cols-2 gap-2">
+        <div className="messageMetaItem rounded-xl bg-background/70 p-3 text-sm">
+          <span className="block text-xs uppercase tracking-wide text-muted-foreground">Bytes</span>
+          <strong>{parsed.bytes}</strong>
+        </div>
+        <div className="messageMetaItem rounded-xl bg-background/70 p-3 text-sm col-span-2">
+          <span className="block text-xs uppercase tracking-wide text-muted-foreground">Path</span>
+          <strong>{parsed.path}</strong>
+        </div>
+      </div>
+    );
+  }
+
+  if (event.name === "edit") {
+    const parsed = parseEditResult(text, details);
+    if (!parsed) {
+      return null;
+    }
+    return (
+      <div className="grid grid-cols-2 gap-2">
+        <div className="messageMetaItem rounded-xl bg-background/70 p-3 text-sm">
+          <span className="block text-xs uppercase tracking-wide text-muted-foreground">Blocks Changed</span>
+          <strong>{parsed.blocks}</strong>
+        </div>
+        {parsed.firstChangedLine ? (
+          <div className="messageMetaItem rounded-xl bg-background/70 p-3 text-sm">
+            <span className="block text-xs uppercase tracking-wide text-muted-foreground">First Changed Line</span>
+            <strong>{parsed.firstChangedLine}</strong>
+          </div>
+        ) : null}
+        <div className="messageMetaItem rounded-xl bg-background/70 p-3 text-sm col-span-2">
+          <span className="block text-xs uppercase tracking-wide text-muted-foreground">Path</span>
+          <strong>{parsed.path}</strong>
+        </div>
+      </div>
+    );
+  }
+
+  if (event.name === "context_tag") {
+    const parsed = parseContextTagResult(text);
+    if (!parsed) {
+      return null;
+    }
+    return (
+      <div className="grid grid-cols-2 gap-2">
+        <div className="messageMetaItem rounded-xl bg-background/70 p-3 text-sm">
+          <span className="block text-xs uppercase tracking-wide text-muted-foreground">Tag</span>
+          <strong>{parsed.tag}</strong>
+        </div>
+        <div className="messageMetaItem rounded-xl bg-background/70 p-3 text-sm">
+          <span className="block text-xs uppercase tracking-wide text-muted-foreground">Target</span>
+          <strong>{parsed.target}</strong>
+        </div>
+      </div>
+    );
+  }
+
+  return null;
 }
 
 function hasTrailingUnresolvedTool(events: MessageEvent[]) {
@@ -1339,8 +1455,9 @@ function renderMachineTraceDetail(event: MessageEvent, kind: CompactTraceKind, o
   const details = processDetails(event);
   const process = asRecord(details?.process);
   const todoItems = todoItemsFromDetails(event.details);
+  const structured = renderStructuredToolResult(event);
   const isProcessResult = event.name === "process";
-  const isBash = isBashTool(event.name);
+  const isRawCode = isRawCodeToolOutput(event.name);
   const isTodoToolResult = event.name === "manage_todo_list" && todoItems.length > 0;
   return (
     <div className={cn("machineTraceDetailBody space-y-3", isProcessResult && "processToolDetail")}> 
@@ -1367,9 +1484,10 @@ function renderMachineTraceDetail(event: MessageEvent, kind: CompactTraceKind, o
           ) : null}
         </div>
       ) : null}
+      {structured}
       {isTodoToolResult ? renderTodoItemsList(todoItems) : null}
-      {body ? (isBash ? renderCodeBlock(body) : renderRichText(body, "messageBody", options)) : null}
-      {!isTodoToolResult && detailsText ? renderCodeBlock(detailsText) : null}
+      {body ? (isRawCode ? renderCodeBlock(body) : renderRichText(body, "messageBody", options)) : null}
+      {!isTodoToolResult && !structured && detailsText ? renderCodeBlock(detailsText) : null}
     </div>
   );
 }
@@ -1565,16 +1683,18 @@ function renderSystemCard(event: MessageEvent, kind: string, options: MarkdownRe
   const title = firstNonEmptyText(event.summary, event.name);
   const body = firstNonEmptyText(event.text, event.context, event.question, title === event.summary ? "" : event.summary);
   const detailsText = event.details ? JSON.stringify(event.details, null, 2) : "";
-  const isTool = kind === "tool" || kind === "tool_result";
-  const isBash = isTool && isBashTool(event.name);
-  const todoItems = kind === "tool_result" && event.name === "manage_todo_list" ? todoItemsFromDetails(event.details) : [];
+  const isToolResult = kind === "tool_result";
+  const isRawCode = (kind === "tool" || kind === "tool_result") && isRawCodeToolOutput(event.name);
+  const structured = isToolResult ? renderStructuredToolResult(event) : null;
+  const todoItems = isToolResult && event.name === "manage_todo_list" ? todoItemsFromDetails(event.details) : [];
 
   return (
     <MessageSurface kind={kind}>
       {renderCardHeader(kind, title || undefined, undefined, event.ts)}
+      {structured}
       {todoItems.length ? renderTodoItemsList(todoItems) : null}
-      {body ? (isBash ? renderCodeBlock(body) : renderRichText(body, "messageBody", options)) : null}
-      {!todoItems.length && detailsText ? renderCodeBlock(detailsText) : null}
+      {body ? (isRawCode ? renderCodeBlock(body) : renderRichText(body, "messageBody", options)) : null}
+      {!todoItems.length && !structured && detailsText ? renderCodeBlock(detailsText) : null}
     </MessageSurface>
   );
 }
