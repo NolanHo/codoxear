@@ -1736,40 +1736,37 @@ def _track_claude_todo_list_timestamp(
     latest_ts_by_list[task_list_id] = max(latest_ts_by_list.get(task_list_id, ts), ts)
 
 
-def _apply_claude_todo_custom_entry(
+def _apply_claude_todo_state_custom_entry(
     tracker: dict[str, Any],
     *,
     entry: dict[str, Any],
+) -> None:
+    custom_type = _non_empty_string(entry.get("customType"))
+    if custom_type != "claude-todo-v2-state":
+        return
+    data = entry.get("data")
+    if not isinstance(data, dict) or not isinstance(data.get("panelEnabled"), bool):
+        return
+    ts = _entry_ts(entry)
+    latest_state_ts = tracker["latest_state_ts"]
+    if ts is None or (latest_state_ts is not None and ts < latest_state_ts):
+        return
+    tracker["latest_state_ts"] = ts
+    tracker["latest_state_enabled"] = bool(data.get("panelEnabled"))
+
+
+def _apply_claude_todo_task_assignment(
+    tracker: dict[str, Any],
+    *,
+    details: dict[str, Any],
     payload: dict[str, Any],
-    entry_type: str,
-) -> bool:
-    if entry_type == "custom":
-        custom_type = _non_empty_string(entry.get("customType"))
-        if custom_type == "claude-todo-v2-state":
-            data = entry.get("data")
-            if isinstance(data, dict) and isinstance(data.get("panelEnabled"), bool):
-                ts = _entry_ts(entry)
-                latest_state_ts = tracker["latest_state_ts"]
-                if ts is not None and (latest_state_ts is None or ts >= latest_state_ts):
-                    tracker["latest_state_ts"] = ts
-                    tracker["latest_state_enabled"] = bool(data.get("panelEnabled"))
-        return True
-
-    if entry_type != "custom_message":
-        return False
-
-    custom_type = _non_empty_string(payload.get("customType"))
-    if custom_type != "claude-todo-v2-task-assignment":
-        return True
-    details = payload.get("details")
-    if not isinstance(details, dict):
-        return True
-
+    entry: dict[str, Any],
+) -> None:
     task_id = _non_empty_string(details.get("taskId"))
     task_list_id = _non_empty_string(details.get("taskListId"))
     subject = _non_empty_string(details.get("subject"))
     if task_id is None or task_list_id is None or subject is None:
-        return True
+        return
 
     task = _ensure_claude_todo_task(tracker, task_list_id, task_id)
     task["title"] = subject
@@ -1792,7 +1789,111 @@ def _apply_claude_todo_custom_entry(
         payload=payload,
         entry=entry,
     )
+
+
+def _apply_claude_todo_custom_entry(
+    tracker: dict[str, Any],
+    *,
+    entry: dict[str, Any],
+    payload: dict[str, Any],
+    entry_type: str,
+) -> bool:
+    if entry_type == "custom":
+        _apply_claude_todo_state_custom_entry(tracker, entry=entry)
+        return True
+
+    if entry_type != "custom_message":
+        return False
+
+    custom_type = _non_empty_string(payload.get("customType"))
+    if custom_type != "claude-todo-v2-task-assignment":
+        return True
+    details = payload.get("details")
+    if not isinstance(details, dict):
+        return True
+
+    _apply_claude_todo_task_assignment(
+        tracker,
+        details=details,
+        payload=payload,
+        entry=entry,
+    )
     return True
+
+
+def _apply_claude_todo_write_result(
+    tracker: dict[str, Any],
+    *,
+    details_map: dict[str, Any],
+    payload: dict[str, Any],
+    entry: dict[str, Any],
+) -> None:
+    new_todos = details_map.get("newTodos")
+    if not isinstance(new_todos, list):
+        return
+    snapshot = _normalize_claude_todo_write_snapshot(
+        [todo for todo in new_todos if isinstance(todo, dict)]
+    )
+    if not snapshot["items"]:
+        return
+    ts = _entry_ts(payload)
+    if ts is None:
+        ts = _entry_ts(entry)
+    latest_write_ts = tracker["latest_write_ts"]
+    if ts is None or (latest_write_ts is not None and ts < latest_write_ts):
+        return
+    tracker["latest_write_ts"] = ts
+    tracker["latest_write_snapshot"] = snapshot
+
+
+def _apply_claude_todo_task_create_result(
+    tracker: dict[str, Any],
+    *,
+    details_map: dict[str, Any],
+    payload: dict[str, Any],
+    entry: dict[str, Any],
+) -> None:
+    task_payload = details_map.get("task")
+    task_list_id = _non_empty_string(details_map.get("taskListId"))
+    if not isinstance(task_payload, dict) or task_list_id is None:
+        return
+    task_id = _non_empty_string(task_payload.get("id"))
+    subject = _non_empty_string(task_payload.get("subject"))
+    if task_id is None or subject is None:
+        return
+    task_state = _ensure_claude_todo_task(tracker, task_list_id, task_id)
+    task_state["title"] = subject
+    _track_claude_todo_list_timestamp(
+        tracker,
+        task_list_id=task_list_id,
+        payload=payload,
+        entry=entry,
+    )
+
+
+def _apply_claude_todo_task_update_result(
+    tracker: dict[str, Any],
+    *,
+    details_map: dict[str, Any],
+    payload: dict[str, Any],
+    entry: dict[str, Any],
+) -> None:
+    task_id = _non_empty_string(details_map.get("taskId"))
+    task_list_id = _non_empty_string(details_map.get("taskListId"))
+    if task_id is None or task_list_id is None:
+        return
+    task_state = _ensure_claude_todo_task(tracker, task_list_id, task_id)
+    status_change = details_map.get("statusChange")
+    if isinstance(status_change, dict):
+        normalized_status = _normalize_claude_todo_status(status_change.get("to"))
+        if normalized_status is not None:
+            task_state["status"] = normalized_status
+    _track_claude_todo_list_timestamp(
+        tracker,
+        task_list_id=task_list_id,
+        payload=payload,
+        entry=entry,
+    )
 
 
 def _apply_claude_todo_tool_result_entry(
@@ -1809,56 +1910,25 @@ def _apply_claude_todo_tool_result_entry(
         return
 
     if tool_name == "TodoWrite":
-        new_todos = details_map.get("newTodos")
-        if not isinstance(new_todos, list):
-            return
-        snapshot = _normalize_claude_todo_write_snapshot(
-            [todo for todo in new_todos if isinstance(todo, dict)]
-        )
-        if not snapshot["items"]:
-            return
-        ts = _entry_ts(payload)
-        if ts is None:
-            ts = _entry_ts(entry)
-        latest_write_ts = tracker["latest_write_ts"]
-        if ts is not None and (latest_write_ts is None or ts >= latest_write_ts):
-            tracker["latest_write_ts"] = ts
-            tracker["latest_write_snapshot"] = snapshot
-        return
-
-    if tool_name == "TaskCreate":
-        task_payload = details_map.get("task")
-        task_list_id = _non_empty_string(details_map.get("taskListId"))
-        if not isinstance(task_payload, dict) or task_list_id is None:
-            return
-        task_id = _non_empty_string(task_payload.get("id"))
-        subject = _non_empty_string(task_payload.get("subject"))
-        if task_id is None or subject is None:
-            return
-        task_state = _ensure_claude_todo_task(tracker, task_list_id, task_id)
-        task_state["title"] = subject
-        _track_claude_todo_list_timestamp(
+        _apply_claude_todo_write_result(
             tracker,
-            task_list_id=task_list_id,
+            details_map=details_map,
             payload=payload,
             entry=entry,
         )
         return
-
-    if tool_name == "TaskUpdate":
-        task_id = _non_empty_string(details_map.get("taskId"))
-        task_list_id = _non_empty_string(details_map.get("taskListId"))
-        if task_id is None or task_list_id is None:
-            return
-        task_state = _ensure_claude_todo_task(tracker, task_list_id, task_id)
-        status_change = details_map.get("statusChange")
-        if isinstance(status_change, dict):
-            normalized_status = _normalize_claude_todo_status(status_change.get("to"))
-            if normalized_status is not None:
-                task_state["status"] = normalized_status
-        _track_claude_todo_list_timestamp(
+    if tool_name == "TaskCreate":
+        _apply_claude_todo_task_create_result(
             tracker,
-            task_list_id=task_list_id,
+            details_map=details_map,
+            payload=payload,
+            entry=entry,
+        )
+        return
+    if tool_name == "TaskUpdate":
+        _apply_claude_todo_task_update_result(
+            tracker,
+            details_map=details_map,
             payload=payload,
             entry=entry,
         )
