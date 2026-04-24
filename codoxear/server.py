@@ -5340,10 +5340,11 @@ class SessionManager:
                 reasoning_effort=thinking_level,
                 create_in_tmux=create_in_tmux,
             )
-            launched_session_id = (
-                _clean_optional_text(spawn_res.get("session_id")) or new_session_id
-            )
-            launched = self._wait_for_live_session(launched_session_id)
+            # The handoff file is created with `new_session_id` up front, so this
+            # is the only stable durable id. Early spawn metadata can still report
+            # only the runtime id until Pi publishes the resumed session id.
+            launched = self._wait_for_live_session(new_session_id)
+            launched_session_id = self._durable_session_id_for_session(launched)
             launched_runtime_id = launched.session_id
             alias = self._copy_session_ui_identity(
                 source_session_id=session_id,
