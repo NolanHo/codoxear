@@ -248,7 +248,7 @@ describe("Composer", () => {
 
   it("shows current active model and effort for pi sessions", () => {
     renderComposer({
-      items: [{ session_id: "sess-1", agent_backend: "pi", busy: false, model: "gpt-5.4", reasoning_effort: "high" }],
+      items: [{ session_id: "sess-1", runtime_id: "rt-1", agent_backend: "pi", busy: false, model: "gpt-5.4", reasoning_effort: "high" }],
     });
 
     const modelCurrent = getRoot().querySelector("[data-testid='composer-model-current']");
@@ -258,7 +258,7 @@ describe("Composer", () => {
 
   it("falls back to diagnostics model when session summary model is missing", () => {
     renderComposer({
-      items: [{ session_id: "sess-1", agent_backend: "pi", busy: false, model: null, reasoning_effort: null }],
+      items: [{ session_id: "sess-1", runtime_id: "rt-1", agent_backend: "pi", busy: false, model: null, reasoning_effort: null }],
       diagnostics: { model: "gpt-5.4", reasoning_effort: "high" },
       sessionUiSessionId: "sess-1",
     });
@@ -271,7 +271,7 @@ describe("Composer", () => {
 
   it("falls back to latest /model user command when backend model fields are empty", () => {
     renderComposer({
-      items: [{ session_id: "sess-1", agent_backend: "pi", busy: false, model: null, reasoning_effort: null }],
+      items: [{ session_id: "sess-1", runtime_id: "rt-1", agent_backend: "pi", busy: false, model: null, reasoning_effort: null }],
       diagnostics: null,
       messageEventsBySessionId: {
         "sess-1": [
@@ -285,11 +285,21 @@ describe("Composer", () => {
     expect(modelCurrent?.textContent).not.toContain("unknown");
   });
 
+  it("hides model switch controls for historical pi sessions", () => {
+    renderComposer({
+      items: [{ session_id: "history:pi:sess-1", agent_backend: "pi", busy: false, historical: true, model: "gpt-5.4" }],
+      activeSessionId: "history:pi:sess-1",
+    });
+
+    expect(getRoot().querySelector("[data-testid='composer-model-switch']")).toBeNull();
+    expect(getRoot().querySelector("[data-testid='composer-model-input']")).toBeNull();
+  });
+
   it("switches model via backend model endpoint instead of chat message", async () => {
     const switchSessionModel = vi.spyOn(api, "switchSessionModel").mockResolvedValue({ ok: true, model: "gpt-5.4" } as any);
     const sendMessage = vi.spyOn(api, "sendMessage").mockResolvedValue({ ok: true, session_id: "sess-1" } as any);
     renderComposer({
-      items: [{ session_id: "sess-1", agent_backend: "pi", busy: false, model: "gpt-5" }],
+      items: [{ session_id: "sess-1", runtime_id: "rt-1", agent_backend: "pi", busy: false, model: "gpt-5" }],
       newSessionDefaults: {
         backends: {
           pi: {
@@ -313,7 +323,7 @@ describe("Composer", () => {
 
     await flushEffects();
 
-    expect(switchSessionModel).toHaveBeenCalledWith("sess-1", { model: "gpt-5.4" });
+    expect(switchSessionModel).toHaveBeenCalledWith("sess-1", { model: "gpt-5.4" }, "rt-1");
     expect(sendMessage).not.toHaveBeenCalledWith("sess-1", "/model gpt-5.4");
   });
 

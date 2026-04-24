@@ -4001,6 +4001,7 @@ class TestPiBackendRouting(unittest.TestCase):
         cases = [
             ("/api/sessions//rename", b'{"name":"alias"}'),
             ("/api/sessions//focus", b'{"focused":true}'),
+            ("/api/sessions//model", b'{"model":"gpt-5.4"}'),
             ("/api/sessions//send", b'{"text":"hello"}'),
             ("/api/sessions//ui_response", b'{"id":"ui-1","value":"x"}'),
             ("/api/sessions//enqueue", b'{"text":"later"}'),
@@ -4018,6 +4019,31 @@ class TestPiBackendRouting(unittest.TestCase):
                     handler.wfile.getvalue().decode("utf-8"),
                     '{"error":"unknown session"}',
                 )
+
+    def test_model_route_calls_set_session_model(self) -> None:
+        handler = _HandlerHarness(
+            "/api/sessions/pi-session/model",
+            body=json.dumps({"model": "gpt-5.4"}).encode("utf-8"),
+        )
+
+        with (
+            patch("codoxear.server.MANAGER") as manager,
+            patch("codoxear.server._require_auth", return_value=True),
+        ):
+            manager.set_session_model.return_value = {
+                "ok": True,
+                "model": "gpt-5.4",
+                "provider": "openai",
+            }
+            manager._durable_session_id_for_identifier.return_value = "pi-session"
+            manager._runtime_session_id_for_identifier.return_value = "runtime-1"
+
+            Handler.do_POST(handler)  # type: ignore[arg-type]
+
+        self.assertEqual(handler.status, 200)
+        payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(payload, {"ok": True, "model": "gpt-5.4", "provider": "openai"})
+        manager.set_session_model.assert_called_once_with("pi-session", model="gpt-5.4", provider=None)
 
     def test_ui_response_route_does_not_fallback_to_send_for_live_pi_rpc_session(
         self,
@@ -4502,14 +4528,14 @@ class TestPiBackendRouting(unittest.TestCase):
                         "busy": True,
                         "queue_len": 2,
                         "alias": "Active",
+                        "provider_choice": "openai-api",
+                        "model": "gpt-5.4",
+                        "reasoning_effort": "high",
+                        "service_tier": "fast",
                     }
                 ],
             },
         )
-        self.assertNotIn("model", payload["sessions"][0])
-        self.assertNotIn("provider_choice", payload["sessions"][0])
-        self.assertNotIn("reasoning_effort", payload["sessions"][0])
-        self.assertNotIn("service_tier", payload["sessions"][0])
         self.assertNotIn("priority_offset", payload["sessions"][0])
         self.assertNotIn("snooze_until", payload["sessions"][0])
         self.assertNotIn("dependency_session_id", payload["sessions"][0])

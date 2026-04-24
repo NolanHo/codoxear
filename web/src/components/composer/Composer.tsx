@@ -501,14 +501,15 @@ export function Composer({ compactMobile = false }: ComposerProps = {}) {
   const modelSwitching = activeSessionId ? modelSwitchingBySessionId[activeSessionId] === true : false;
   const modelError = activeSessionId ? modelErrorBySessionId[activeSessionId] ?? "" : "";
   const modelDraftTrimmed = modelDraft.trim();
+  const activeSessionIsHistoricalPi = activeSessionIsPi && activeSession?.historical === true;
+  const activeSessionHasLivePiControl = Boolean(activeSessionIsPi && !activeSessionIsHistoricalPi && activeSessionRuntimeId);
   const modelSwitchDisabled = !activeSessionId
-    || !activeSessionIsPi
+    || !activeSessionHasLivePiControl
     || activeSessionPending
     || sending
     || modelSwitching
     || !modelDraftTrimmed
     || modelDraftTrimmed === activeModel;
-  const activeSessionIsHistoricalPi = activeSessionIsPi && activeSession?.historical === true;
   const activeAttachmentCount = activeSessionId ? attachedFilesBySessionId[activeSessionId] ?? 0 : 0;
   const attachmentsSupported = Boolean(activeSessionId && activeSession?.agent_backend !== "pi");
   const slashQuery = getSlashDraftQuery(draft);
@@ -1062,7 +1063,7 @@ export function Composer({ compactMobile = false }: ComposerProps = {}) {
         className="composerCard rounded-[1.5rem] border-border/70 bg-card/95 shadow-lg shadow-primary/5 backdrop-blur-sm"
       >
         <CardContent className="p-3 sm:p-4 space-y-2">
-          {activeSessionId && activeSessionIsPi ? (
+          {activeSessionId && activeSessionHasLivePiControl ? (
             <div className={cn("composerModelRow", compactMobile && "compactMobile")}>
               <div className="composerModelCurrent" data-testid="composer-model-current">
                 <span className="composerModelLabel">Model</span>

@@ -133,6 +133,10 @@ def set_session_model(
         if s.backend != "pi":
             raise ValueError("model switch is only supported for pi sessions")
         sock = s.sock_path
+        cached_provider = sv._clean_optional_text(s.model_provider)
+    if provider_name is None:
+        resolved_provider, _preferred_auth_method, _resolved_model, _resolved_effort = sv._resolved_session_run_settings(s)
+        provider_name = cached_provider or resolved_provider
     request: dict[str, Any] = {"cmd": "set_model", "model": model_id}
     if provider_name is not None:
         request["provider"] = provider_name

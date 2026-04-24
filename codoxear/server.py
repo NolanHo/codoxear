@@ -4394,9 +4394,12 @@ def _resolved_session_run_settings(
         and s.log_path is not None
         and s.log_path.exists()
     ):
-        log_provider, log_model, log_effort = _read_run_settings_from_log(
-            s.log_path, agent_backend=s.agent_backend
-        )
+        try:
+            log_provider, log_model, log_effort = _read_run_settings_from_log(
+                s.log_path, agent_backend=s.agent_backend
+            )
+        except (FileNotFoundError, ValueError):
+            log_provider = log_model = log_effort = None
         if model_provider is None:
             model_provider = log_provider
         if model is None:
@@ -7381,16 +7384,6 @@ class SessionManager:
         if float(getattr(self, "_last_discover_ts", 0.0) or 0.0) <= 0.0:
             self._discover_existing_if_stale(force=True)
         self._update_meta_counters()
-        state_by_runtime: dict[str, dict[str, Any] | None] = {}
-        with self._lock:
-            runtime_ids = list(self._sessions.keys())
-        for runtime_id in runtime_ids:
-            try:
-                state_by_runtime[runtime_id] = _validated_session_state(
-                    self.get_state(runtime_id)
-                )
-            except (KeyError, ValueError):
-                state_by_runtime[runtime_id] = None
         files_dirty = False
         sidebar_dirty = False
         now_ts = time.time()
@@ -7577,15 +7570,6 @@ class SessionManager:
                         pass
                 durable_session_id = ref[1] if ref is not None else self._durable_session_id_for_session(s)
                 resolved_model_provider, resolved_preferred_auth_method, resolved_model, resolved_reasoning_effort = _resolved_session_run_settings(s)
-                state_provider, state_model, state_effort = _run_settings_from_state(
-                    state_by_runtime.get(s.session_id)
-                )
-                if resolved_model_provider is None:
-                    resolved_model_provider = state_provider
-                if resolved_model is None:
-                    resolved_model = state_model
-                if resolved_reasoning_effort is None:
-                    resolved_reasoning_effort = state_effort
                 if s.model_provider is None:
                     s.model_provider = resolved_model_provider
                 if s.preferred_auth_method is None:
