@@ -121,9 +121,9 @@ def session_live_payload(
         before=0,
     )
     state = manager.get_state(session_id)
-    busy, _broker_busy = sv.api.display_session_busy(manager, session_id, s, state)
+    busy, _broker_busy = sv.api.session_display.service(sv).display_session_busy(manager, session_id, s, state)
     state_token = state.get("token") if isinstance(state, dict) else None
-    token_val = sv.api.resolved_session_token(
+    token_val = sv.api.session_display.service(sv).resolved_session_token(
         s,
         state_token if isinstance(state_token, dict) else None,
     )
@@ -138,7 +138,7 @@ def session_live_payload(
     merged_events = events if isinstance(events, list) else []
     next_live_offset = max(0, int(live_offset))
     next_bridge_offset = max(0, int(bridge_offset))
-    if sv.api.session_supports_live_pi_ui(s):
+    if sv.api.session_display.service(sv).session_supports_live_pi_ui(s):
         streamed_payload = pi_live_messages_payload(runtime, manager, s, offset=live_offset)
         next_live_offset = int(streamed_payload.get("offset", max(0, int(live_offset))) or max(0, int(live_offset)))
         merged_events = merge_pi_live_message_events(
@@ -147,14 +147,14 @@ def session_live_payload(
             [item for item in (streamed_payload.get("events") or []) if isinstance(item, dict)],
         )
     bridge_events, next_bridge_offset = manager.bridge_events_since(
-        sv.api.durable_session_id_for_live_session(s),
+        sv.api.session_display.service(sv).durable_session_id_for_live_session(s),
         offset=bridge_offset,
     )
     if bridge_events:
         merged_events = [*merged_events, *bridge_events]
     payload: dict[str, Any] = {
         "ok": True,
-        "session_id": sv.api.durable_session_id_for_live_session(s),
+        "session_id": sv.api.session_display.service(sv).durable_session_id_for_live_session(s),
         "runtime_id": s.session_id,
         "offset": int(page.get("offset", max(0, int(offset))) or 0),
         "live_offset": next_live_offset,
@@ -178,7 +178,7 @@ def session_live_payload(
 
 def pi_live_messages_payload(runtime: ServerRuntime, manager: Any, session: Any, *, offset: int = 0) -> dict[str, Any]:
     sv = runtime
-    if not sv.api.session_supports_live_pi_ui(session):
+    if not sv.api.session_display.service(sv).session_supports_live_pi_ui(session):
         return {"offset": max(0, int(offset)), "events": []}
     try:
         payload = manager.sock_call(

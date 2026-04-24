@@ -223,7 +223,7 @@ def _discover_one_socket(
         log_path=log_path,
         sock_path=sock,
         session_path=session_path,
-        busy=sv.api.state_busy_value(resp),
+        busy=sv.api.session_display.service(sv).state_busy_value(resp),
         queue_len=queue_len,
         token=resp.get("token") if isinstance(resp.get("token"), (dict, type(None))) else None,
         meta_thinking=0,

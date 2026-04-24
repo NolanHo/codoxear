@@ -1,8 +1,161 @@
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 from pathlib import Path
+from types import FunctionType
 from typing import Any
+
+from ..runtime import ServerRuntime
+
+
+def _runtime_wrapper(runtime: ServerRuntime, name: str) -> Any | None:
+    module = getattr(runtime, "module", None)
+    if module is None:
+        return None
+    wrapper = getattr(module, name, None)
+    if not callable(wrapper):
+        return None
+    if (
+        isinstance(wrapper, FunctionType)
+        and getattr(wrapper, "__module__", None) == getattr(module, "__name__", None)
+        and getattr(wrapper, "__name__", None) == name
+    ):
+        return None
+    return wrapper
+
+
+@dataclass(slots=True)
+class SessionDisplayService:
+    runtime: ServerRuntime
+
+    def session_supports_live_pi_ui(self, session: Any) -> bool:
+        wrapper = _runtime_wrapper(self.runtime, "_session_supports_live_pi_ui")
+        if wrapper is not None:
+            return wrapper(session)
+        return session_supports_live_pi_ui(session)
+
+    def is_attention_worthy_session_event(self, event: dict[str, Any]) -> bool:
+        wrapper = _runtime_wrapper(self.runtime, "_is_attention_worthy_session_event")
+        if wrapper is not None:
+            return wrapper(event)
+        return is_attention_worthy_session_event(event)
+
+    def attention_updated_ts_from_events(
+        self,
+        events: list[dict[str, Any]],
+    ) -> float | None:
+        wrapper = _runtime_wrapper(self.runtime, "_attention_updated_ts_from_events")
+        if wrapper is not None:
+            return wrapper(events)
+        return attention_updated_ts_from_events(events)
+
+    def last_attention_ts_from_pi_tail(
+        self,
+        session_path: Path | None,
+        *,
+        max_scan_bytes: int = 8 * 1024 * 1024,
+    ) -> float | None:
+        wrapper = _runtime_wrapper(self.runtime, "_last_attention_ts_from_pi_tail")
+        if wrapper is not None:
+            return wrapper(session_path, max_scan_bytes=max_scan_bytes)
+        return last_attention_ts_from_pi_tail(
+            self.runtime,
+            session_path,
+            max_scan_bytes=max_scan_bytes,
+        )
+
+    def display_updated_ts(self, session: Any) -> float:
+        wrapper = _runtime_wrapper(self.runtime, "_display_updated_ts")
+        if wrapper is not None:
+            return wrapper(session)
+        return display_updated_ts(session)
+
+    def session_row_dedupe_key(self, row: dict[str, Any]) -> str:
+        wrapper = _runtime_wrapper(self.runtime, "_session_row_dedupe_key")
+        if wrapper is not None:
+            return wrapper(row)
+        return session_row_dedupe_key(self.runtime, row)
+
+    def display_source_path(self, session: Any) -> str | None:
+        wrapper = _runtime_wrapper(self.runtime, "_display_source_path")
+        if wrapper is not None:
+            return wrapper(session)
+        return display_source_path(session)
+
+    def durable_session_id_for_live_session(self, session: Any) -> str:
+        wrapper = _runtime_wrapper(self.runtime, "_durable_session_id_for_live_session")
+        if wrapper is not None:
+            return wrapper(session)
+        return durable_session_id_for_live_session(self.runtime, session)
+
+    def display_pi_busy(self, session: Any, *, broker_busy: bool) -> bool:
+        wrapper = _runtime_wrapper(self.runtime, "_display_pi_busy")
+        if wrapper is not None:
+            return wrapper(session, broker_busy=broker_busy)
+        return display_pi_busy(self.runtime, session, broker_busy=broker_busy)
+
+    def validated_session_state(
+        self,
+        state: dict[str, Any] | Any,
+    ) -> dict[str, Any]:
+        wrapper = _runtime_wrapper(self.runtime, "_validated_session_state")
+        if wrapper is not None:
+            return wrapper(state)
+        return validated_session_state(state)
+
+    def state_busy_value(self, state: dict[str, Any]) -> bool:
+        wrapper = _runtime_wrapper(self.runtime, "_state_busy_value")
+        if wrapper is not None:
+            return wrapper(state)
+        return state_busy_value(state)
+
+    def state_queue_len_value(self, state: dict[str, Any]) -> int:
+        wrapper = _runtime_wrapper(self.runtime, "_state_queue_len_value")
+        if wrapper is not None:
+            return wrapper(state)
+        return state_queue_len_value(state)
+
+    def display_session_busy(
+        self,
+        manager: Any,
+        session_id: str,
+        session: Any,
+        state: dict[str, Any],
+    ) -> tuple[bool, bool]:
+        wrapper = _runtime_wrapper(self.runtime, "_display_session_busy")
+        if wrapper is not None:
+            return wrapper(manager, session_id, session, state)
+        return display_session_busy(
+            self.runtime,
+            manager,
+            session_id,
+            session,
+            state,
+        )
+
+    def resolved_session_run_settings(
+        self,
+        session: Any,
+    ) -> tuple[str | None, str | None, str | None, str | None]:
+        wrapper = _runtime_wrapper(self.runtime, "_resolved_session_run_settings")
+        if wrapper is not None:
+            return wrapper(session)
+        return resolved_session_run_settings(self.runtime, session)
+
+    def resolved_session_token(
+        self,
+        session: Any,
+        token: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        wrapper = _runtime_wrapper(self.runtime, "_resolved_session_token")
+        if wrapper is not None:
+            return wrapper(session, token=token)
+        return resolved_session_token(self.runtime, session, token=token)
+
+
+def service(runtime: ServerRuntime) -> SessionDisplayService:
+    return SessionDisplayService(runtime)
 
 
 def session_supports_live_pi_ui(session: Any) -> bool:

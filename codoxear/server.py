@@ -1456,24 +1456,23 @@ BridgeOutboundRequest = _session_models.BridgeOutboundRequest
 
 
 def _session_supports_live_pi_ui(session: Session) -> bool:
-    return _session_display.session_supports_live_pi_ui(session)
+    return _session_display.service(RUNTIME).session_supports_live_pi_ui(session)
 
 
 def _is_attention_worthy_session_event(event: dict[str, Any]) -> bool:
-    return _session_display.is_attention_worthy_session_event(event)
+    return _session_display.service(RUNTIME).is_attention_worthy_session_event(event)
 
 
 
 def _attention_updated_ts_from_events(events: list[dict[str, Any]]) -> float | None:
-    return _session_display.attention_updated_ts_from_events(events)
+    return _session_display.service(RUNTIME).attention_updated_ts_from_events(events)
 
 
 
 def _last_attention_ts_from_pi_tail(
     session_path: Path | None, *, max_scan_bytes: int = 8 * 1024 * 1024
 ) -> float | None:
-    return _session_display.last_attention_ts_from_pi_tail(
-        RUNTIME,
+    return _session_display.service(RUNTIME).last_attention_ts_from_pi_tail(
         session_path,
         max_scan_bytes=max_scan_bytes,
     )
@@ -1481,42 +1480,41 @@ def _last_attention_ts_from_pi_tail(
 
 
 def _display_updated_ts(s: Session) -> float:
-    return _session_display.display_updated_ts(s)
+    return _session_display.service(RUNTIME).display_updated_ts(s)
 
 
 def _session_row_dedupe_key(row: dict[str, Any]) -> str:
-    return _session_display.session_row_dedupe_key(RUNTIME, row)
+    return _session_display.service(RUNTIME).session_row_dedupe_key(row)
 
 
 def _display_source_path(s: Session) -> str | None:
-    return _session_display.display_source_path(s)
+    return _session_display.service(RUNTIME).display_source_path(s)
 
 
 def _durable_session_id_for_live_session(s: Session) -> str:
-    return _session_display.durable_session_id_for_live_session(RUNTIME, s)
+    return _session_display.service(RUNTIME).durable_session_id_for_live_session(s)
 
 
 def _display_pi_busy(s: Session, *, broker_busy: bool) -> bool:
-    return _session_display.display_pi_busy(RUNTIME, s, broker_busy=broker_busy)
+    return _session_display.service(RUNTIME).display_pi_busy(s, broker_busy=broker_busy)
 
 
 def _validated_session_state(state: dict[str, Any] | Any) -> dict[str, Any]:
-    return _session_display.validated_session_state(state)
+    return _session_display.service(RUNTIME).validated_session_state(state)
 
 
 def _state_busy_value(state: dict[str, Any]) -> bool:
-    return _session_display.state_busy_value(state)
+    return _session_display.service(RUNTIME).state_busy_value(state)
 
 
 def _state_queue_len_value(state: dict[str, Any]) -> int:
-    return _session_display.state_queue_len_value(state)
+    return _session_display.service(RUNTIME).state_queue_len_value(state)
 
 
 def _display_session_busy(
     manager: "SessionManager", session_id: str, s: Session, state: dict[str, Any]
 ) -> tuple[bool, bool]:
-    return _session_display.display_session_busy(
-        RUNTIME,
+    return _session_display.service(RUNTIME).display_session_busy(
         manager,
         session_id,
         s,
@@ -1527,13 +1525,13 @@ def _display_session_busy(
 def _resolved_session_run_settings(
     s: Session,
 ) -> tuple[str | None, str | None, str | None, str | None]:
-    return _session_display.resolved_session_run_settings(RUNTIME, s)
+    return _session_display.service(RUNTIME).resolved_session_run_settings(s)
 
 
 def _resolved_session_token(
     s: Session, token: dict[str, Any] | None = None
 ) -> dict[str, Any] | None:
-    return _session_display.resolved_session_token(RUNTIME, s, token=token)
+    return _session_display.service(RUNTIME).resolved_session_token(s, token=token)
 
 
 def _session_context_usage_payload(

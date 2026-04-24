@@ -51,7 +51,7 @@ def get_ui_state(runtime: ServerRuntime, manager: Any, session_id: str) -> dict[
             session=session,
         )
     if resp.get("error") == "unknown cmd":
-        if runtime.api.session_supports_live_pi_ui(session):
+        if runtime.api.session_display.service(runtime).session_supports_live_pi_ui(session):
             raise ValueError("live ui interactions are unavailable for this pi session")
         return {"requests": []}
     error = resp.get("error")
@@ -121,7 +121,7 @@ def submit_ui_response(runtime: ServerRuntime, manager: Any, session_id: str, pa
             session=session,
         )
     if resp.get("error") == "unknown cmd":
-        if runtime.api.session_supports_live_pi_ui(session):
+        if runtime.api.session_display.service(runtime).session_supports_live_pi_ui(session):
             raise ValueError("live ui responses are unavailable for this pi session")
         if payload.get("cancelled") is True:
             manager.inject_keys(runtime_id, "\\x1b")

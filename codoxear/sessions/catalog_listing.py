@@ -91,7 +91,7 @@ def _build_live_item(
             )
         )
         if should_refresh_attention or (session.last_chat_ts is None and (not session.last_chat_history_scanned)):
-            conv_ts = sv.api.last_attention_ts_from_pi_tail(session.session_path)
+            conv_ts = sv.api.session_display.service(sv).last_attention_ts_from_pi_tail(session.session_path)
             session.last_chat_history_scanned = True
             session.pi_attention_scan_activity_ts = activity_ts
             if isinstance(conv_ts, (int, float)):
@@ -101,7 +101,7 @@ def _build_live_item(
                     else max(float(session.last_chat_ts), float(conv_ts))
                 )
 
-    updated_ts = sv.api.display_updated_ts(session)
+    updated_ts = sv.api.session_display.service(sv).display_updated_ts(session)
     canonical_cwd = sv.api.canonical_session_cwd(session.cwd)
     cwd_recent = sv.api.clean_recent_cwd(canonical_cwd)
     recent_map = getattr(manager, "_recent_cwds", None)
@@ -403,7 +403,7 @@ def _build_output_rows(manager: Any, sv: Any, items: list[dict[str, Any]]) -> li
         state_busy = bool(it.get("state_busy"))
         if not log_exists and it.get("backend") == "pi":
             s_obj = manager._sessions.get(sid)
-            busy_out = sv.api.display_pi_busy(s_obj, broker_busy=state_busy) if s_obj is not None else state_busy
+            busy_out = sv.api.session_display.service(sv).display_pi_busy(s_obj, broker_busy=state_busy) if s_obj is not None else state_busy
         elif not log_exists:
             busy_out = False
         else:
@@ -436,7 +436,7 @@ def _sort_and_dedupe_rows(sv: Any, rows: list[dict[str, Any]]) -> list[dict[str,
     deduped: list[dict[str, Any]] = []
     seen_row_keys: set[str] = set()
     for item in rows:
-        row_key = sv.api.session_row_dedupe_key(item)
+        row_key = sv.api.session_display.service(sv).session_row_dedupe_key(item)
         if row_key in seen_row_keys:
             continue
         seen_row_keys.add(row_key)

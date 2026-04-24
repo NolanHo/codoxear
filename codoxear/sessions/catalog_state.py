@@ -15,7 +15,7 @@ def refresh_session_state(
     sv = manager_runtime(manager)
     try:
         resp = manager.sock_call(sock_path, {"cmd": "state"}, timeout_s=timeout_s)
-        sv.api.validated_session_state(resp)
+        sv.api.session_display.service(sv).validated_session_state(resp)
     except Exception as exc:
         return False, exc
 
@@ -26,8 +26,8 @@ def refresh_session_state(
     with manager._lock:
         session = manager._sessions.get(session_id)
         if session:
-            next_busy = sv.api.state_busy_value(resp)
-            next_queue_len = sv.api.state_queue_len_value(resp)
+            next_busy = sv.api.session_display.service(sv).state_busy_value(resp)
+            next_queue_len = sv.api.session_display.service(sv).state_queue_len_value(resp)
             next_token = (
                 resp.get("token") if isinstance(resp.get("token"), dict) else session.token
             )

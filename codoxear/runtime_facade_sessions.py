@@ -61,7 +61,7 @@ class RuntimeFacadeSessionMixin:
         session = self.manager.get_session(session_id)
         if not session:
             raise KeyError("unknown session")
-        state = self.api.validated_session_state(self.manager.get_state(session_id))
+        state = self.api.session_display.service(self.runtime).validated_session_state(self.manager.get_state(session_id))
         return _session_payloads.service(self.runtime, self.manager).session_diagnostics_payload(
             session_id,
             session,

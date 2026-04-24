@@ -128,7 +128,7 @@ def get_state(manager: Any, session_id: str) -> dict[str, Any]:
     }
     try:
         resp = sock_call(manager, sock, {"cmd": "state"}, timeout_s=1.5)
-        sv.api.validated_session_state(resp)
+        sv.api.session_display.service(sv).validated_session_state(resp)
     except Exception:
         if not sv.api.pid_alive(session.broker_pid) and not sv.api.pid_alive(session.codex_pid):
             _discard_dead_runtime(manager, runtime_id, sock, clear_state=True)
@@ -136,8 +136,8 @@ def get_state(manager: Any, session_id: str) -> dict[str, Any]:
         return cached_state
     session2 = manager.get_session(runtime_id)
     if session2 is not None:
-        session2.busy = sv.api.state_busy_value(resp)
-        session2.queue_len = sv.api.state_queue_len_value(resp)
+        session2.busy = sv.api.session_display.service(sv).state_busy_value(resp)
+        session2.queue_len = sv.api.session_display.service(sv).state_queue_len_value(resp)
         if "token" in resp:
             tok = resp.get("token")
             if isinstance(tok, dict):

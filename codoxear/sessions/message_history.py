@@ -282,11 +282,11 @@ def update_pi_last_chat_ts(
     sv = _runtime(manager)
     if not events:
         return
-    if not any(sv.api.is_attention_worthy_session_event(event) for event in events):
+    if not any(sv.api.session_display.service(sv).is_attention_worthy_session_event(event) for event in events):
         return
     latest_chat_ts = sv.api.session_file_activity_ts(session_path)
     if latest_chat_ts is None:
-        latest_chat_ts = sv.api.attention_updated_ts_from_events(events)
+        latest_chat_ts = sv.api.session_display.service(sv).attention_updated_ts_from_events(events)
     if latest_chat_ts is None:
         return
     with manager._lock:
@@ -530,7 +530,7 @@ def mark_log_delta(
     if durable_session_id is not None and (new_events or token_update is not None or model is not None or reasoning_effort is not None):
         sv.api.event_publish.service(sv).publish_session_live_invalidate(durable_session_id, runtime_id=session_id, reason="log_delta")
         sv.api.event_publish.service(sv).publish_session_workspace_invalidate(durable_session_id, runtime_id=session_id, reason="log_delta")
-        if any(sv.api.is_attention_worthy_session_event(event) for event in new_events):
+        if any(sv.api.session_display.service(sv).is_attention_worthy_session_event(event) for event in new_events):
             sv.api.event_publish.service(sv).publish_sessions_invalidate(reason="conversation_changed")
 
 
@@ -713,7 +713,7 @@ def get_messages_page(
                         before=0,
                     )
                     update_pi_last_chat_ts(manager, session_id, events, session_path=session.session_path)
-        pi_busy = sv.api.display_pi_busy(session, broker_busy=sv.api.state_busy_value(state))
+        pi_busy = sv.api.session_display.service(sv).display_pi_busy(session, broker_busy=sv.api.session_display.service(sv).state_busy_value(state))
         return {
             "thread_id": session.thread_id,
             "log_path": str(session.session_path) if session.session_path is not None else None,
@@ -771,7 +771,7 @@ def get_messages_page(
     if token_update is not None and session2 is not None:
         session2.token = token_update
     idle_val = idle_from_log(manager, session_id)
-    busy_val = sv.api.state_busy_value(state) or (not bool(idle_val))
+    busy_val = sv.api.session_display.service(sv).state_busy_value(state) or (not bool(idle_val))
     token_val = state_token if state_token is not None else token_update if isinstance(token_update, dict) else None
     return {
         "thread_id": session.thread_id,

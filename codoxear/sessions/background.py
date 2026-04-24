@@ -344,11 +344,11 @@ def maybe_drain_outbound_request(manager: Any, runtime_id: str) -> bool:
         session2 = manager._sessions.get(runtime_id)
         if session2 is not None:
             if isinstance(resp, dict) and isinstance(resp.get("busy"), bool):
-                session2.busy = sv.api.state_busy_value(resp)
+                session2.busy = sv.api.session_display.service(sv).state_busy_value(resp)
             if isinstance(resp, dict):
                 queue_len_raw = resp.get("queue_len")
                 if type(queue_len_raw) is int and int(queue_len_raw) >= 0:
-                    session2.queue_len = sv.api.state_queue_len_value(resp)
+                    session2.queue_len = sv.api.session_display.service(sv).state_queue_len_value(resp)
             session2.pi_idle_activity_ts = None
             if session2.backend == "pi":
                 activity_ts = sv.api.touch_session_file(session2.session_path)
@@ -533,8 +533,8 @@ def harness_sweep(manager: Any) -> None:
                 raise ValueError("invalid broker state response")
             if "busy" not in st or "queue_len" not in st:
                 raise ValueError("invalid broker state response")
-            busy = sv.api.state_busy_value(st)
-            ql = sv.api.state_queue_len_value(st)
+            busy = sv.api.session_display.service(sv).state_busy_value(st)
+            ql = sv.api.session_display.service(sv).state_queue_len_value(st)
             if busy or ql > 0 or manager.queue_len(sid) > 0:
                 continue
             last = sv.api.last_chat_role_ts_from_tail(
@@ -628,7 +628,7 @@ def maybe_drain_session_queue(
             if session0:
                 session0.queue_idle_since = None
         return False
-    if sv.api.state_busy_value(st) or int(queue_len_raw) > 0:
+    if sv.api.session_display.service(sv).state_busy_value(st) or int(queue_len_raw) > 0:
         with manager._lock:
             session0 = manager._sessions.get(session_id)
             if session0:

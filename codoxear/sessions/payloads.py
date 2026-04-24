@@ -81,7 +81,7 @@ def session_context_usage_payload(runtime: ServerRuntime, s: Any, token_val: dic
     if s.backend != "pi":
         return None
     context_window = None
-    model_provider, _preferred_auth_method, model, _reasoning_effort = sv.api.resolved_session_run_settings(s)
+    model_provider, _preferred_auth_method, model, _reasoning_effort = sv.api.session_display.service(sv).resolved_session_run_settings(s)
     if model_provider is not None and model is not None:
         context_window = sv.api.pi_model_context_window(model_provider, model)
     if (not isinstance(context_window, int) or context_window <= 0) and isinstance(token_val, dict):
@@ -146,28 +146,28 @@ def session_turn_timing_payload(
 
 def session_diagnostics_payload(runtime: ServerRuntime, manager: Any, session_id: str, s: Any, state: dict[str, Any]) -> dict[str, Any]:
     sv = runtime
-    state = sv.api.validated_session_state(state)
+    state = sv.api.session_display.service(sv).validated_session_state(state)
     st_token = state.get("token")
-    token_val = sv.api.resolved_session_token(
+    token_val = sv.api.session_display.service(sv).resolved_session_token(
         s,
         st_token if isinstance(st_token, dict) else None,
     )
-    model_provider, preferred_auth_method, model, reasoning_effort = sv.api.resolved_session_run_settings(s)
+    model_provider, preferred_auth_method, model, reasoning_effort = sv.api.session_display.service(sv).resolved_session_run_settings(s)
     service_tier = s.service_tier
     sidebar_meta = manager.sidebar_meta_get(session_id)
     cwd_path = sv.api.safe_expanduser(Path(s.cwd))
     if not cwd_path.is_absolute():
         cwd_path = cwd_path.resolve()
     git_branch = sv.api.current_git_branch(cwd_path)
-    updated_ts = sv.api.display_updated_ts(s)
+    updated_ts = sv.api.session_display.service(sv).display_updated_ts(s)
     elapsed_s = max(0.0, time.time() - updated_ts)
     time_priority = sv.api.priority_from_elapsed_seconds(elapsed_s)
     base_priority = sv.api.clip01(time_priority + float(sidebar_meta["priority_offset"]))
     blocked = sidebar_meta["dependency_session_id"] is not None
     snoozed = sidebar_meta["snooze_until"] is not None and float(sidebar_meta["snooze_until"]) > time.time()
     final_priority = 0.0 if (snoozed or blocked) else base_priority
-    busy, broker_busy = sv.api.display_session_busy(manager, session_id, s, state)
-    durable_session_id = sv.api.durable_session_id_for_live_session(s)
+    busy, broker_busy = sv.api.session_display.service(sv).display_session_busy(manager, session_id, s, state)
+    durable_session_id = sv.api.session_display.service(sv).durable_session_id_for_live_session(s)
     turn_timing = session_turn_timing_payload(
         runtime,
         s,
@@ -186,7 +186,7 @@ def session_diagnostics_payload(runtime: ServerRuntime, manager: Any, session_id
         "start_ts": float(s.start_ts),
         "updated_ts": updated_ts,
         "log_path": str(s.log_path) if s.log_path is not None else None,
-        "session_file_path": sv.api.display_source_path(s),
+        "session_file_path": sv.api.session_display.service(sv).display_source_path(s),
         "broker_pid": int(s.broker_pid),
         "codex_pid": int(s.codex_pid),
         "busy": bool(busy),
@@ -239,7 +239,7 @@ def session_workspace_payload(runtime: ServerRuntime, manager: Any, session_id: 
     diagnostics = session_diagnostics_payload(runtime, manager, session_id, s, manager.get_state(session_id))
     return {
         "ok": True,
-        "session_id": sv.api.durable_session_id_for_live_session(s),
+        "session_id": sv.api.session_display.service(sv).durable_session_id_for_live_session(s),
         "runtime_id": s.session_id,
         "diagnostics": diagnostics,
         "queue": {"items": manager.queue_list(session_id)},
