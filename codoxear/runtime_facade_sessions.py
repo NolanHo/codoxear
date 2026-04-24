@@ -49,10 +49,16 @@ class RuntimeFacadeSessionMixin:
         )
 
     def session_workspace_payload(self, session_id: str) -> dict[str, Any]:
-        return self.api.session_workspace_payload(self.manager, session_id)
+        return self.api.session_payloads.service(
+            self.runtime,
+            self.manager,
+        ).session_workspace_payload(session_id)
 
     def session_details_payload(self, session_id: str) -> dict[str, Any]:
-        return self.api.session_details_payload(self.manager, session_id)
+        return self.api.session_payloads.service(
+            self.runtime,
+            self.manager,
+        ).session_details_payload(session_id)
 
     def session_diagnostics_payload(self, session_id: str) -> dict[str, Any]:
         from .sessions import payloads as _session_payloads

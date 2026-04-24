@@ -165,8 +165,15 @@ def session_live_payload(
         "events": merged_events,
         "requests_version": current_requests_version,
         "token": token_val,
-        "context_usage": sv.api.session_context_usage_payload(s, token_val),
-        "turn_timing": sv.api.session_turn_timing_payload(s, merged_events, busy=bool(busy)),
+        "context_usage": sv.api.session_payloads.service(sv).session_context_usage_payload(
+            s,
+            token_val,
+        ),
+        "turn_timing": sv.api.session_payloads.service(sv).session_turn_timing_payload(
+            s,
+            merged_events,
+            busy=bool(busy),
+        ),
         "transport_state": s.bridge_transport_state,
         "transport_error": s.bridge_transport_error,
     }
