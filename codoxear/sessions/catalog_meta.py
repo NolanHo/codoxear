@@ -64,7 +64,7 @@ def refresh_session_meta(manager: Any, session_id: str, *, strict: bool = True) 
             )
             if session_path is not None and session_path_source in {"exact", "discovered"}:
                 session_path_discovered = True
-                sv.api.patch_metadata_session_path(
+                sv.api.metadata_patch.service(sv).patch_metadata_session_path(
                     sock,
                     session_path,
                     force=preferred_session_path is not None and preferred_session_path != session_path,
@@ -124,7 +124,11 @@ def refresh_session_meta(manager: Any, session_id: str, *, strict: bool = True) 
             session_path = new_sp
             if new_sp_source in {"exact", "discovered"}:
                 session_path_discovered = True
-            sv.api.patch_metadata_session_path(sock, new_sp, force=True)
+            sv.api.metadata_patch.service(sv).patch_metadata_session_path(
+                sock,
+                new_sp,
+                force=True,
+            )
 
     with manager._lock:
         current = manager._sessions.get(session_id)

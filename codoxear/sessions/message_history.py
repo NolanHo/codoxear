@@ -669,7 +669,10 @@ def get_messages_page(
                 session.session_path = discovered
                 if discovered_source in {"exact", "discovered"}:
                     session.pi_session_path_discovered = True
-                sv.api.patch_metadata_session_path(session.sock_path, discovered)
+                sv.api.metadata_patch.service(sv).patch_metadata_session_path(
+                    session.sock_path,
+                    discovered,
+                )
         if session.session_path is not None and session.session_path.exists():
             if init and offset == 0:
                 events, new_off, has_older, next_before, diag = ensure_pi_chat_index(
@@ -704,7 +707,11 @@ def get_messages_page(
                     newer_sp_source == "exact" or (newer_sp_mtime is not None and newer_sp_mtime > sp_mtime)
                 ):
                     session.session_path = newer_sp
-                    sv.api.patch_metadata_session_path(session.sock_path, newer_sp, force=True)
+                    sv.api.metadata_patch.service(sv).patch_metadata_session_path(
+                        session.sock_path,
+                        newer_sp,
+                        force=True,
+                    )
                     manager.reset_log_caches(session, meta_log_off=0)
                     events, new_off, has_older, next_before, diag = ensure_pi_chat_index(
                         manager,

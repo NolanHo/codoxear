@@ -75,6 +75,8 @@ from .sessions import manager_delegates as _manager_delegates
 from .sessions import message_history as _message_history
 from .sessions import metadata_patch as _session_metadata_patch
 from .sessions import models as _session_models
+
+_metadata_patch = _session_metadata_patch
 from .sessions import page_state as _page_state
 from .sessions import payloads as _session_payloads
 from .sessions import pi_session_files as _pi_session_files

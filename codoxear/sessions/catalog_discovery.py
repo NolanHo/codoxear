@@ -99,7 +99,10 @@ def _discover_one_socket(
                 supports_live_ui = True
             if ui_protocol_version is None and supports_live_ui is True:
                 ui_protocol_version = 1
-            sv.api.patch_metadata_pi_binding(sock, inferred_pi_session_path)
+            sv.api.metadata_patch.service(sv).patch_metadata_pi_binding(
+                sock,
+                inferred_pi_session_path,
+            )
 
         if backend == "pi":
             if transport != "pi-rpc":
@@ -136,7 +139,7 @@ def _discover_one_socket(
                 )
                 if session_path is not None and session_path_source in {"exact", "discovered"}:
                     session_path_discovered = True
-                    sv.api.patch_metadata_session_path(
+                    sv.api.metadata_patch.service(sv).patch_metadata_session_path(
                         sock,
                         session_path,
                         force=preferred_session_path is not None and preferred_session_path != session_path,
