@@ -174,6 +174,22 @@ function getDiagnosticsTurnTiming(diagnostics: Record<string, unknown> | null | 
   return timing && typeof timing === "object" ? timing as TurnTimingPayload : null;
 }
 
+function getDiagnosticsModel(diagnostics: Record<string, unknown> | null | undefined) {
+  if (!diagnostics || typeof diagnostics !== "object") {
+    return "";
+  }
+  const model = (diagnostics as { model?: unknown }).model;
+  return typeof model === "string" ? model.trim() : "";
+}
+
+function getDiagnosticsReasoningEffort(diagnostics: Record<string, unknown> | null | undefined) {
+  if (!diagnostics || typeof diagnostics !== "object") {
+    return "";
+  }
+  const effort = (diagnostics as { reasoning_effort?: unknown }).reasoning_effort;
+  return typeof effort === "string" ? effort.trim() : "";
+}
+
 function formatElapsedSeconds(totalSeconds: number) {
   const seconds = Math.max(0, Math.round(totalSeconds));
   const hours = Math.floor(seconds / 3600);
@@ -388,8 +404,14 @@ export function Composer({ compactMobile = false }: ComposerProps = {}) {
   const activeSessionPending = activeSession?.pending_startup === true;
   const activeSessionBusy = Boolean(activeSession && (activeSession.busy || (activeSessionId ? busyBySessionId[activeSessionId] === true : false)));
   const activeSessionIsPi = activeSession?.agent_backend === "pi";
-  const activeModel = typeof activeSession?.model === "string" ? activeSession.model.trim() : "";
-  const activeReasoningEffort = typeof activeSession?.reasoning_effort === "string" ? activeSession.reasoning_effort.trim() : "";
+  const diagnosticsModel = sessionUiSessionId === activeSessionId ? getDiagnosticsModel(diagnostics) : "";
+  const diagnosticsReasoningEffort = sessionUiSessionId === activeSessionId ? getDiagnosticsReasoningEffort(diagnostics) : "";
+  const activeModel = typeof activeSession?.model === "string" && activeSession.model.trim()
+    ? activeSession.model.trim()
+    : diagnosticsModel;
+  const activeReasoningEffort = typeof activeSession?.reasoning_effort === "string" && activeSession.reasoning_effort.trim()
+    ? activeSession.reasoning_effort.trim()
+    : diagnosticsReasoningEffort;
   const modelChoices = useMemo(() => modelChoicesForSession(newSessionDefaults ?? null, activeSession), [newSessionDefaults, activeSession]);
   const modelDraft = activeSessionId
     ? (typeof modelDraftBySessionId[activeSessionId] === "string" ? modelDraftBySessionId[activeSessionId] : activeModel)

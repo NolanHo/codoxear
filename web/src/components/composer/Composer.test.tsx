@@ -256,6 +256,19 @@ describe("Composer", () => {
     expect(modelCurrent?.textContent).toContain("high");
   });
 
+  it("falls back to diagnostics model when session summary model is missing", () => {
+    renderComposer({
+      items: [{ session_id: "sess-1", agent_backend: "pi", busy: false, model: null, reasoning_effort: null }],
+      diagnostics: { model: "gpt-5.4", reasoning_effort: "high" },
+      sessionUiSessionId: "sess-1",
+    });
+
+    const modelCurrent = getRoot().querySelector("[data-testid='composer-model-current']");
+    expect(modelCurrent?.textContent).toContain("gpt-5.4");
+    expect(modelCurrent?.textContent).toContain("high");
+    expect(modelCurrent?.textContent).not.toContain("unknown");
+  });
+
   it("switches model by sending slash command", async () => {
     const sendMessage = vi.spyOn(api, "sendMessage").mockResolvedValue({ ok: true, session_id: "sess-1" } as any);
     renderComposer({

@@ -2743,6 +2743,16 @@ select {
   color: color-mix(in srgb, var(--text-muted) 88%, var(--text));
 }
 
+:root[data-theme="dark"] .composerModelInput {
+  background: var(--chrome-elevated);
+  border-color: var(--chrome-border);
+  color: var(--text);
+}
+
+:root[data-theme="dark"] .composerModelCurrent {
+  color: var(--text-muted);
+}
+
 :root[data-theme="dark"] .sessionCardSurface,
 :root[data-theme="dark"] .composerQueueButton,
 :root[data-theme="dark"] .composerInterruptButton,
