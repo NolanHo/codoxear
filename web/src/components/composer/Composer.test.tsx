@@ -269,6 +269,22 @@ describe("Composer", () => {
     expect(modelCurrent?.textContent).not.toContain("unknown");
   });
 
+  it("falls back to latest /model user command when backend model fields are empty", () => {
+    renderComposer({
+      items: [{ session_id: "sess-1", agent_backend: "pi", busy: false, model: null, reasoning_effort: null }],
+      diagnostics: null,
+      messageEventsBySessionId: {
+        "sess-1": [
+          { role: "user", text: "/model gpt-5.4", ts: 100 },
+        ],
+      },
+    });
+
+    const modelCurrent = getRoot().querySelector("[data-testid='composer-model-current']");
+    expect(modelCurrent?.textContent).toContain("gpt-5.4");
+    expect(modelCurrent?.textContent).not.toContain("unknown");
+  });
+
   it("switches model by sending slash command", async () => {
     const sendMessage = vi.spyOn(api, "sendMessage").mockResolvedValue({ ok: true, session_id: "sess-1" } as any);
     renderComposer({

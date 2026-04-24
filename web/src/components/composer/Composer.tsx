@@ -223,6 +223,72 @@ function getTurnElapsedLabelFromTiming(timing: TurnTimingPayload | null | undefi
   return `Turn ${formatElapsedSeconds(elapsedSeconds)}`;
 }
 
+function normalizeModelValue(value: unknown) {
+  if (typeof value !== "string") {
+    return "";
+  }
+  return value.trim().replace(/[),.;]+$/, "");
+}
+
+function parseModelFromUserCommand(text: unknown) {
+  if (typeof text !== "string") {
+    return "";
+  }
+  const match = text.trim().match(/^\/model\s+([^\s]+)/i);
+  return normalizeModelValue(match?.[1] ?? "");
+}
+
+function parseModelFromEventText(text: unknown) {
+  if (typeof text !== "string") {
+    return "";
+  }
+  const patterns = [
+    /switched to\s+([^\s.,;]+)/i,
+    /model(?:\s+changed)?\s*(?:to|:)\s*([^\s.,;]+)/i,
+    /modelId\s*[=:]\s*([^\s.,;]+)/i,
+  ];
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    const candidate = normalizeModelValue(match?.[1] ?? "");
+    if (candidate) {
+      return candidate;
+    }
+  }
+  return "";
+}
+
+function getModelFromEvents(events: MessageEvent[] | undefined) {
+  if (!Array.isArray(events) || events.length === 0) {
+    return "";
+  }
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
+    if (!event || event.display === false) {
+      continue;
+    }
+    const details = event.details && typeof event.details === "object" ? event.details as Record<string, unknown> : null;
+    const detailModel = normalizeModelValue(details?.model ?? details?.modelId);
+    if (detailModel) {
+      return detailModel;
+    }
+    if (event.role === "user") {
+      const commandModel = parseModelFromUserCommand(event.text);
+      if (commandModel) {
+        return commandModel;
+      }
+    }
+    const summaryModel = parseModelFromEventText(event.summary);
+    if (summaryModel) {
+      return summaryModel;
+    }
+    const textModel = parseModelFromEventText(event.text);
+    if (textModel) {
+      return textModel;
+    }
+  }
+  return "";
+}
+
 function getTurnElapsedLabel(events: MessageEvent[], busy: boolean, nowMs: number) {
   let latestUserTsMs: number | null = null;
   let latestFollowupTsMs: number | null = null;
@@ -404,11 +470,13 @@ export function Composer({ compactMobile = false }: ComposerProps = {}) {
   const activeSessionPending = activeSession?.pending_startup === true;
   const activeSessionBusy = Boolean(activeSession && (activeSession.busy || (activeSessionId ? busyBySessionId[activeSessionId] === true : false)));
   const activeSessionIsPi = activeSession?.agent_backend === "pi";
+  const activeEvents = activeSessionId ? bySessionId[activeSessionId] ?? [] : [];
   const diagnosticsModel = sessionUiSessionId === activeSessionId ? getDiagnosticsModel(diagnostics) : "";
   const diagnosticsReasoningEffort = sessionUiSessionId === activeSessionId ? getDiagnosticsReasoningEffort(diagnostics) : "";
+  const eventsModel = useMemo(() => getModelFromEvents(activeEvents), [activeEvents]);
   const activeModel = typeof activeSession?.model === "string" && activeSession.model.trim()
     ? activeSession.model.trim()
-    : diagnosticsModel;
+    : (diagnosticsModel || eventsModel);
   const activeReasoningEffort = typeof activeSession?.reasoning_effort === "string" && activeSession.reasoning_effort.trim()
     ? activeSession.reasoning_effort.trim()
     : diagnosticsReasoningEffort;
@@ -531,7 +599,16 @@ export function Composer({ compactMobile = false }: ComposerProps = {}) {
     if (!activeSessionId) {
       return;
     }
-    if (typeof modelDraftBySessionId[activeSessionId] === "string") {
+    const currentDraft = modelDraftBySessionId[activeSessionId];
+    if (typeof currentDraft === "string") {
+      if (!activeModel || currentDraft === activeModel) {
+        return;
+      }
+      if (currentDraft.trim().length > 0) {
+        return;
+      }
+    }
+    if (!activeModel) {
       return;
     }
     setModelDraftBySessionId((value) => ({
