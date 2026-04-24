@@ -68,11 +68,14 @@ class RuntimeFacadeSessionMixin:
         if not session:
             raise KeyError("unknown session")
         state = self.api.session_display.service(self.runtime).validated_session_state(self.manager.get_state(session_id))
-        return _session_payloads.service(self.runtime, self.manager).session_diagnostics_payload(
+        payload = _session_payloads.service(self.runtime, self.manager).session_diagnostics_payload(
             session_id,
             session,
             state,
         )
+        payload.pop("context_usage", None)
+        payload.pop("turn_timing", None)
+        return payload
 
     def session_queue_payload(self, session_id: str) -> dict[str, Any]:
         queue = self.manager.queue_list(session_id)

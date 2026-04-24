@@ -58,21 +58,23 @@ def _build_live_item(
     )
 
     log_exists = bool(session.log_path is not None and session.log_path.exists())
-    if log_exists and session.log_path is not None and (
-        session.model_provider is None or session.model is None or session.reasoning_effort is None
+    if (
+        session.model_provider is None
+        or session.model is None
+        or session.reasoning_effort is None
     ):
         try:
-            log_provider, log_model, log_effort = sv.api.session_settings.service(sv).read_run_settings_from_log(
-                session.log_path, agent_backend=session.agent_backend
+            resolved_provider, _preferred_auth_method, resolved_model, resolved_effort = (
+                sv.api.session_display.service(sv).resolved_session_run_settings(session)
             )
         except (FileNotFoundError, ValueError):
-            log_provider = log_model = log_effort = None
+            resolved_provider = resolved_model = resolved_effort = None
         if session.model_provider is None:
-            session.model_provider = log_provider
+            session.model_provider = resolved_provider
         if session.model is None:
-            session.model = log_model
+            session.model = resolved_model
         if session.reasoning_effort is None:
-            session.reasoning_effort = log_effort
+            session.reasoning_effort = resolved_effort
 
     if session.last_chat_ts is None and log_exists and session.log_path is not None and (not session.last_chat_history_scanned):
         conv_ts = sv.api.last_conversation_ts_from_tail(session.log_path)

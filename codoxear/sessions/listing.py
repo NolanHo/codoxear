@@ -180,6 +180,15 @@ def frontend_session_list_row(
         "model",
         "reasoning_effort",
         "service_tier",
+        "owned",
+        "transport",
+        "title",
+        "first_user_message",
+        "git_branch",
+        "blocked",
+        "snoozed",
+        "historical",
+        "pending_startup",
     )
     return {key: normalized[key] for key in keys if key in normalized}
 

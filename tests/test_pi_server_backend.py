@@ -639,6 +639,41 @@ class TestPiBackendRouting(unittest.TestCase):
         )
         manager.get_session_commands.assert_called_once_with("pi-session")
 
+    def test_get_session_commands_injects_resume_builtin_when_broker_omits_it(
+        self,
+    ) -> None:
+        mgr = _make_manager()
+        with tempfile.TemporaryDirectory() as td:
+            sock = Path(td) / "pi.sock"
+            sock.touch()
+            mgr._sessions["pi-session"] = Session(
+                session_id="pi-session",
+                thread_id="pi-thread-001",
+                agent_backend="pi",
+                backend="pi",
+                broker_pid=3333,
+                codex_pid=4444,
+                owned=True,
+                start_ts=123.0,
+                cwd="/tmp",
+                log_path=None,
+                sock_path=sock,
+                session_path=Path(td) / "pi-session.jsonl",
+                transport="pi-rpc",
+                supports_live_ui=True,
+                ui_protocol_version=1,
+            )
+
+            mgr._sock_call = lambda *_args, **_kwargs: {
+                "commands": [{"name": "reload", "description": "Reload Pi"}]
+            }  # type: ignore[method-assign]
+
+            payload = mgr.get_session_commands("pi-session")
+
+        names = [item.get("name") for item in payload["commands"]]
+        self.assertIn("reload", names)
+        self.assertIn("resume", names)
+
     def test_get_session_commands_legacy_broker_unknown_cmd_falls_back_to_empty(
         self,
     ) -> None:
@@ -3808,6 +3843,72 @@ class TestPiBackendRouting(unittest.TestCase):
         self.assertEqual(handler.status, 502)
         self.assertIn("busy", payload["error"])
 
+    def test_diagnostics_route_omits_workspace_only_fields(self) -> None:
+        handler = _HandlerHarness("/api/sessions/pi-session/diagnostics")
+        with tempfile.TemporaryDirectory() as td:
+            session_path = Path(td) / "pi-session.jsonl"
+            _write_jsonl(
+                session_path,
+                [
+                    {"type": "session", "id": "pi-session-001", "cwd": td},
+                    {
+                        "type": "message",
+                        "timestamp": "2026-04-19T18:20:08.000Z",
+                        "message": {
+                            "role": "assistant",
+                            "provider": "openai",
+                            "model": "gpt-5.4",
+                            "usage": {"totalTokens": 196077},
+                            "content": [{"type": "text", "text": "done"}],
+                        },
+                    },
+                ],
+            )
+            session = Session(
+                session_id="pi-session",
+                thread_id="pi-thread-001",
+                agent_backend="pi",
+                backend="pi",
+                broker_pid=3333,
+                codex_pid=4444,
+                owned=True,
+                start_ts=123.0,
+                cwd=td,
+                log_path=None,
+                sock_path=Path(td) / "pi.sock",
+                session_path=session_path,
+            )
+
+            with (
+                patch("codoxear.server._require_auth", return_value=True),
+                patch("codoxear.server.MANAGER") as manager,
+                patch("codoxear.server._current_git_branch", return_value=None),
+                patch(
+                    "codoxear.server._pi_messages.read_latest_pi_todo_snapshot",
+                    return_value=None,
+                ),
+            ):
+                manager.refresh_session_meta.return_value = None
+                manager.get_session.return_value = session
+                manager.get_state.return_value = {
+                    "busy": False,
+                    "queue_len": 1,
+                    "token": None,
+                }
+                manager.queue_len.return_value = 1
+                manager.sidebar_meta_get.return_value = {
+                    "priority_offset": 0.0,
+                    "snooze_until": None,
+                    "dependency_session_id": None,
+                }
+
+                Handler.do_GET(handler)  # type: ignore[arg-type]
+
+        payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(handler.status, 200)
+        self.assertNotIn("context_usage", payload)
+        self.assertNotIn("turn_timing", payload)
+
     def test_workspace_route_returns_diagnostics_and_queue_only(self) -> None:
         handler = _HandlerHarness("/api/sessions/pi-session/workspace")
         session = Session(
@@ -4619,6 +4720,15 @@ class TestPiBackendRouting(unittest.TestCase):
                     "queue_len": 2,
                     "focused": True,
                     "alias": "Active",
+                    "owned": True,
+                    "transport": "pi-rpc",
+                    "title": "Pinned title",
+                    "first_user_message": "Initial prompt",
+                    "git_branch": "main",
+                    "blocked": False,
+                    "snoozed": False,
+                    "historical": False,
+                    "pending_startup": False,
                     "files": ["large", "unused"],
                     "log_path": "/tmp/session.jsonl",
                     "token": {"used": 123},
@@ -4656,6 +4766,15 @@ class TestPiBackendRouting(unittest.TestCase):
                         "queue_len": 2,
                         "focused": True,
                         "alias": "Active",
+                        "owned": True,
+                        "transport": "pi-rpc",
+                        "title": "Pinned title",
+                        "first_user_message": "Initial prompt",
+                        "git_branch": "main",
+                        "blocked": False,
+                        "snoozed": False,
+                        "historical": False,
+                        "pending_startup": False,
                         "provider_choice": "openai-api",
                         "model": "gpt-5.4",
                         "reasoning_effort": "high",

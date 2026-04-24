@@ -19,6 +19,7 @@ _PI_BUILTIN_COMMANDS = [
         "description": "Thinking level, theme, message delivery, transport",
         "source": "builtin",
     },
+    {"name": "resume", "description": "Pick from previous sessions", "source": "builtin"},
     {"name": "new", "description": "Start a new session", "source": "builtin"},
     {"name": "name", "description": "Set session display name", "source": "builtin"},
     {"name": "session", "description": "Show session info", "source": "builtin"},
