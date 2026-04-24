@@ -306,6 +306,91 @@ class SessionManagerRuntimeDelegates:
     def get_state(self, session_id: str) -> dict[str, Any]:
         return _sv(self).api.session_transport.service(self).get_state(session_id)
 
+    def resolve_pi_bridge_session(
+        self,
+        session_id: str,
+        *,
+        unsupported_message: str,
+    ) -> tuple[str, Any]:
+        runtime_id = self.runtime_session_id_for_identifier(session_id)
+        if runtime_id is None:
+            raise KeyError("unknown session")
+        self.refresh_session_meta(runtime_id, strict=False)
+        session = self.get_session(runtime_id)
+        if session is None:
+            raise KeyError("unknown session")
+        if session.backend != "pi":
+            raise ValueError(unsupported_message)
+        return runtime_id, session
+
+    def sock_call(
+        self,
+        sock_path: Any,
+        req: dict[str, Any],
+        timeout_s: float = 2.0,
+    ) -> dict[str, Any]:
+        return self._sock_call(sock_path, req, timeout_s=timeout_s)
+
+    def discard_runtime_session(
+        self,
+        runtime_id: str,
+        *,
+        sock_path: Any | None = None,
+    ) -> None:
+        with self._lock:
+            self._sessions.pop(runtime_id, None)
+        self._clear_deleted_session_state(runtime_id)
+        if sock_path is None:
+            return
+        sv = _sv(self)
+        sv.api.unlink_quiet(sock_path)
+        sv.api.unlink_quiet(sock_path.with_suffix(".json"))
+
+    def pi_commands_cache_get(
+        self,
+        runtime_id: str,
+        *,
+        thread_id: str | None,
+        session_path_key: str | None,
+        now_ts: float,
+    ) -> list[dict[str, Any]] | None:
+        ttl = _sv(self).api.PI_COMMANDS_CACHE_TTL_SECONDS
+        with self._lock:
+            cache = getattr(self, "_pi_commands_cache", None)
+            cached = cache.get(runtime_id) if isinstance(cache, dict) else None
+        if not isinstance(cached, dict):
+            return None
+        cached_ts = cached.get("ts")
+        if not isinstance(cached_ts, (int, float)) or (now_ts - float(cached_ts)) >= ttl:
+            return None
+        if cached.get("thread_id") != thread_id or cached.get("session_path") != session_path_key:
+            return None
+        commands = cached.get("commands")
+        if not isinstance(commands, list):
+            return None
+        return list(commands)
+
+    def pi_commands_cache_put(
+        self,
+        runtime_id: str,
+        *,
+        thread_id: str | None,
+        session_path_key: str | None,
+        commands: list[dict[str, Any]],
+        now_ts: float,
+    ) -> None:
+        with self._lock:
+            cache = getattr(self, "_pi_commands_cache", None)
+            if not isinstance(cache, dict):
+                self._pi_commands_cache = {}
+                cache = self._pi_commands_cache
+            cache[runtime_id] = {
+                "ts": now_ts,
+                "thread_id": thread_id,
+                "session_path": session_path_key,
+                "commands": list(commands),
+            }
+
     def voice_delivery_available(self) -> bool:
         return getattr(self, "_voice_push", None) is not None
 
