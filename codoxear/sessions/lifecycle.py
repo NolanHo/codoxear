@@ -207,8 +207,15 @@ def refresh_durable_session_catalog(manager: Any, *, force: bool = False) -> Non
     rows: dict[Any, Any] = {}
     for ref in sorted(refs):
         record = manager.catalog_record_for_ref(ref)
+        existing_record = existing.get(ref)
         if record is None:
-            record = existing.get(ref)
+            record = existing_record
+        elif (
+            existing_record is not None
+            and not getattr(record, "title", None)
+            and getattr(existing_record, "title", None)
+        ):
+            record.title = existing_record.title
         if record is not None:
             rows[ref] = record
     db.save_sessions(rows)

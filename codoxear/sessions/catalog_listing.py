@@ -164,29 +164,6 @@ def _build_live_item(
         cwd_path = cwd_path.resolve()
     git_branch = sv.api.current_git_branch(cwd_path)
 
-    if not session.title:
-        try:
-            if ref is not None:
-                record = manager.catalog_record_for_ref(ref)
-                record_title = sv.api.clean_optional_text(
-                    getattr(record, "title", None)
-                )
-                if record_title:
-                    session.title = record_title
-            if (
-                not session.title
-                and session.backend == "pi"
-                and session.session_path is not None
-                and session.session_path.exists()
-            ):
-                title = sv.api.pi_session_files.service(sv).pi_session_name_from_session_file(
-                    session.session_path
-                )
-                if title:
-                    session.title = title
-        except Exception:
-            pass
-
     if session.first_user_message is None:
         try:
             preview = ""
@@ -208,8 +185,24 @@ def _build_live_item(
                 record_title = sv.api.clean_optional_text(
                     getattr(record, "title", None)
                 )
+                if (not record_title) and hasattr(getattr(manager, "_page_state_db", None), "load_sessions"):
+                    existing_record = manager._page_state_db.load_sessions().get(record_ref)
+                    record_title = sv.api.clean_optional_text(
+                        getattr(existing_record, "title", None)
+                    )
                 if record_title:
                     session.title = record_title
+            if (
+                not session.title
+                and session.backend == "pi"
+                and session.session_path is not None
+                and session.session_path.exists()
+            ):
+                title = sv.api.pi_session_files.service(sv).pi_session_name_from_session_file(
+                    session.session_path
+                )
+                if title:
+                    session.title = title
         except Exception:
             pass
     row = {
