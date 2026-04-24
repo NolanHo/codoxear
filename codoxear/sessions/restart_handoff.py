@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..agent_backend import normalize_agent_backend
+from .runtime_access import manager_runtime
 
 
 def _clean_optional_text(value: Any) -> str | None:
@@ -26,8 +27,7 @@ def restart_session(manager: Any, session_id: str) -> dict[str, Any]:
         if isinstance(listed_row, dict) and listed_row.get("pending_startup"):
             raise ValueError("session is still starting")
         raise KeyError("unknown session")
-    with manager._lock:
-        source = manager._sessions.get(runtime_id)
+    source = manager.get_session(runtime_id)
     if source is None:
         raise KeyError("unknown session")
     if normalize_agent_backend(source.backend, default=source.agent_backend) != "pi":
@@ -39,13 +39,15 @@ def restart_session(manager: Any, session_id: str) -> dict[str, Any]:
     if cwd is None:
         raise ValueError("session is missing cwd")
 
-    sv = manager._runtime
-    durable_session_id = manager._durable_session_id_for_session(source)
+    sv = manager_runtime(manager)
+    durable_session_id = manager.durable_session_id_for_session(source)
     ref = ("pi", durable_session_id)
     create_in_tmux = (source.transport or "").strip().lower() == "tmux"
-    preserved_state = manager._capture_runtime_bound_restart_state(runtime_id, ref)
+    preserved_state = manager.capture_runtime_bound_restart_state(runtime_id, ref)
     db = getattr(manager, "_page_state_db", None)
-    restore_record = db.load_sessions().get(ref) if isinstance(db, sv.api.PageStateDB) else None
+    restore_record = (
+        db.load_sessions().get(ref) if isinstance(db, sv.api.PageStateDB) else None
+    )
     if restore_record is None:
         restore_record = sv.api.DurableSessionRecord(
             backend="pi",
@@ -58,7 +60,7 @@ def restart_session(manager: Any, session_id: str) -> dict[str, Any]:
             updated_at=sv.api.safe_path_mtime(source_path),
             pending_startup=False,
         )
-    manager._persist_durable_session_record(
+    manager.persist_durable_session_record(
         sv.api.DurableSessionRecord(
             backend="pi",
             session_id=durable_session_id,
@@ -67,19 +69,23 @@ def restart_session(manager: Any, session_id: str) -> dict[str, Any]:
             title=restore_record.title,
             first_user_message=restore_record.first_user_message,
             created_at=restore_record.created_at,
-            updated_at=max(restore_record.updated_at, sv.api.safe_path_mtime(source_path)),
+            updated_at=max(
+                restore_record.updated_at,
+                sv.api.safe_path_mtime(source_path),
+            ),
             pending_startup=True,
         )
     )
-    manager._stage_runtime_bound_restart_state(runtime_id, ref, preserved_state)
+    manager.stage_runtime_bound_restart_state(runtime_id, ref, preserved_state)
     if not manager.kill_session(runtime_id):
-        manager._restore_runtime_bound_restart_state(runtime_id, ref, preserved_state)
-        manager._persist_durable_session_record(restore_record)
+        manager.restore_runtime_bound_restart_state(runtime_id, ref, preserved_state)
+        manager.persist_durable_session_record(restore_record)
         raise RuntimeError("failed to stop source session for restart")
-    sv.api.unlink_quiet(source.sock_path)
-    sv.api.unlink_quiet(source.sock_path.with_suffix(".json"))
-    with manager._lock:
-        manager._sessions.pop(runtime_id, None)
+    manager.discard_runtime_session(
+        runtime_id,
+        sock_path=source.sock_path,
+        clear_state=False,
+    )
     sv.api.publish_sessions_invalidate(reason="session_created")
 
     provider = _clean_optional_text(source.model_provider)
@@ -96,7 +102,7 @@ def restart_session(manager: Any, session_id: str) -> dict[str, Any]:
             create_in_tmux=create_in_tmux,
         )
     except Exception:
-        manager._persist_durable_session_record(restore_record)
+        manager.persist_durable_session_record(restore_record)
         sv.api.publish_sessions_invalidate(reason="session_created")
         raise
 
@@ -106,8 +112,12 @@ def restart_session(manager: Any, session_id: str) -> dict[str, Any]:
     payload["previous_runtime_id"] = runtime_id
     launched_runtime_id = _clean_optional_text(payload.get("runtime_id"))
     if launched_runtime_id is not None:
-        manager._restore_runtime_bound_restart_state(launched_runtime_id, ref, preserved_state)
-        manager._persist_durable_session_record(
+        manager.restore_runtime_bound_restart_state(
+            launched_runtime_id,
+            ref,
+            preserved_state,
+        )
+        manager.persist_durable_session_record(
             sv.api.DurableSessionRecord(
                 backend="pi",
                 session_id=durable_session_id,
@@ -116,13 +126,16 @@ def restart_session(manager: Any, session_id: str) -> dict[str, Any]:
                 title=restore_record.title,
                 first_user_message=restore_record.first_user_message,
                 created_at=restore_record.created_at,
-                updated_at=max(restore_record.updated_at, sv.api.safe_path_mtime(source_path)),
+                updated_at=max(
+                    restore_record.updated_at,
+                    sv.api.safe_path_mtime(source_path),
+                ),
                 pending_startup=False,
             )
         )
     else:
         sv.api.threading.Thread(
-            target=manager._finalize_pending_pi_restart_state,
+            target=manager.finalize_pending_pi_restart_state,
             kwargs={
                 "durable_session_id": durable_session_id,
                 "ref": ref,
@@ -140,8 +153,7 @@ def handoff_session(manager: Any, session_id: str) -> dict[str, Any]:
         if isinstance(listed_row, dict) and listed_row.get("pending_startup"):
             raise ValueError("session is still starting")
         raise KeyError("unknown session")
-    with manager._lock:
-        source = manager._sessions.get(runtime_id)
+    source = manager.get_session(runtime_id)
     if source is None:
         raise KeyError("unknown session")
     if normalize_agent_backend(source.backend, default=source.agent_backend) != "pi":
@@ -153,8 +165,8 @@ def handoff_session(manager: Any, session_id: str) -> dict[str, Any]:
     if cwd is None:
         raise ValueError("session is missing cwd")
 
-    sv = manager._runtime
-    source_session_id = manager._durable_session_id_for_session(source)
+    sv = manager_runtime(manager)
+    source_session_id = manager.durable_session_id_for_session(source)
     history_path = sv.api.next_pi_handoff_history_path(source_path)
     new_session_id = str(sv.api.uuid.uuid4())
     new_session_path = sv.api.pi_new_session_file_for_cwd(cwd)
@@ -188,10 +200,12 @@ def handoff_session(manager: Any, session_id: str) -> dict[str, Any]:
             reasoning_effort=thinking_level,
             create_in_tmux=create_in_tmux,
         )
-        launched_session_id = _clean_optional_text(spawn_res.get("session_id")) or new_session_id
-        launched = manager._wait_for_live_session(launched_session_id)
+        launched_session_id = (
+            _clean_optional_text(spawn_res.get("session_id")) or new_session_id
+        )
+        launched = manager.wait_for_live_session(launched_session_id)
         launched_runtime_id = launched.session_id
-        alias = manager._copy_session_ui_identity(
+        alias = manager.copy_session_ui_identity(
             source_session_id=session_id,
             target_session_id=launched_session_id,
         )

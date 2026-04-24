@@ -147,17 +147,23 @@ class SessionManagerLifecycleDelegates:
     def _page_state_ref_for_session_id(self, session_id: str):
         return self.page_state_ref_for_session_id(session_id)
 
+    def persist_durable_session_record(self, row: Any) -> None:
+        self._persist_durable_session_record(row)
+
     def _persist_durable_session_record(self, row: Any) -> None:
         db = getattr(self, "_page_state_db", None)
         if isinstance(db, _sv(self).api.PageStateDB):
             db.upsert_session(row)
+
+    def delete_durable_session_record(self, ref: Any | None) -> None:
+        self._delete_durable_session_record(ref)
 
     def _delete_durable_session_record(self, ref: Any | None) -> None:
         db = getattr(self, "_page_state_db", None)
         if ref is not None and isinstance(db, _sv(self).api.PageStateDB):
             db.delete_session(ref)
 
-    def _wait_for_live_session(
+    def wait_for_live_session(
         self,
         durable_session_id: str,
         *,
@@ -168,7 +174,18 @@ class SessionManagerLifecycleDelegates:
             timeout_s=timeout_s,
         )
 
-    def _copy_session_ui_identity(
+    def _wait_for_live_session(
+        self,
+        durable_session_id: str,
+        *,
+        timeout_s: float = 8.0,
+    ):
+        return self.wait_for_live_session(
+            durable_session_id,
+            timeout_s=timeout_s,
+        )
+
+    def copy_session_ui_identity(
         self,
         *,
         source_session_id: str,
@@ -179,14 +196,48 @@ class SessionManagerLifecycleDelegates:
             target_session_id=target_session_id,
         )
 
-    def _capture_runtime_bound_restart_state(self, runtime_id: str, ref: Any) -> dict[str, Any]:
+    def _copy_session_ui_identity(
+        self,
+        *,
+        source_session_id: str,
+        target_session_id: str,
+    ) -> str | None:
+        return self.copy_session_ui_identity(
+            source_session_id=source_session_id,
+            target_session_id=target_session_id,
+        )
+
+    def capture_runtime_bound_restart_state(self, runtime_id: str, ref: Any) -> dict[str, Any]:
         return _sv(self).api.session_lifecycle.service(self).capture_runtime_bound_restart_state(runtime_id, ref)
 
-    def _stage_runtime_bound_restart_state(self, runtime_id: str, ref: Any, state: dict[str, Any]) -> None:
+    def _capture_runtime_bound_restart_state(self, runtime_id: str, ref: Any) -> dict[str, Any]:
+        return self.capture_runtime_bound_restart_state(runtime_id, ref)
+
+    def stage_runtime_bound_restart_state(self, runtime_id: str, ref: Any, state: dict[str, Any]) -> None:
         _sv(self).api.session_lifecycle.service(self).stage_runtime_bound_restart_state(runtime_id, ref, state)
 
-    def _restore_runtime_bound_restart_state(self, runtime_id: str, ref: Any, state: dict[str, Any]) -> None:
+    def _stage_runtime_bound_restart_state(self, runtime_id: str, ref: Any, state: dict[str, Any]) -> None:
+        self.stage_runtime_bound_restart_state(runtime_id, ref, state)
+
+    def restore_runtime_bound_restart_state(self, runtime_id: str, ref: Any, state: dict[str, Any]) -> None:
         _sv(self).api.session_lifecycle.service(self).restore_runtime_bound_restart_state(runtime_id, ref, state)
+
+    def _restore_runtime_bound_restart_state(self, runtime_id: str, ref: Any, state: dict[str, Any]) -> None:
+        self.restore_runtime_bound_restart_state(runtime_id, ref, state)
+
+    def finalize_pending_pi_restart_state(
+        self,
+        *,
+        durable_session_id: str,
+        ref: Any,
+        state: dict[str, Any],
+        timeout_s: float = 8.0,
+    ) -> None:
+        try:
+            session = self.wait_for_live_session(durable_session_id, timeout_s=timeout_s)
+        except Exception:
+            return
+        self.restore_runtime_bound_restart_state(session.session_id, ref, state)
 
     def _finalize_pending_pi_restart_state(
         self,
@@ -196,11 +247,12 @@ class SessionManagerLifecycleDelegates:
         state: dict[str, Any],
         timeout_s: float = 8.0,
     ) -> None:
-        try:
-            session = self._wait_for_live_session(durable_session_id, timeout_s=timeout_s)
-        except Exception:
-            return
-        self._restore_runtime_bound_restart_state(session.session_id, ref, state)
+        self.finalize_pending_pi_restart_state(
+            durable_session_id=durable_session_id,
+            ref=ref,
+            state=state,
+            timeout_s=timeout_s,
+        )
 
     def restart_session(self, session_id: str) -> dict[str, Any]:
         return _sv(self).api.session_control.service(self).restart_session(session_id)
