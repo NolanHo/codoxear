@@ -91,7 +91,7 @@ class RuntimeFacadeSessionMixin:
         self.manager.refresh_session_meta(session_id, strict=False)
         dt_meta_ms = (time.perf_counter() - t0_meta) * 1000.0
         session = self.manager.get_session(session_id)
-        historical_row = self.api.historical_session_row(session_id)
+        historical_row = self.api.session_listing.service(self.runtime).historical_session_row(session_id)
         if (not session) and historical_row is None:
             raise KeyError("unknown session")
         payload = self.manager.get_messages_page(
@@ -314,7 +314,7 @@ class RuntimeFacadeSessionMixin:
         group_offset: int,
         group_limit: int,
     ) -> dict[str, Any]:
-        return self.api.session_list_payload(
+        return self.api.session_listing.service(self.runtime).session_list_payload(
             self.manager.list_sessions(),
             group_key=group_key,
             offset=offset,
@@ -381,9 +381,9 @@ class RuntimeFacadeSessionMixin:
             log_path_raw = row.get("log_path")
             session_path_raw = row.get("session_path")
             if isinstance(log_path_raw, str) and log_path_raw:
-                preview = self.api.first_user_message_preview_from_log(Path(log_path_raw))
+                preview = self.api.session_listing.service(self.runtime).first_user_message_preview_from_log(Path(log_path_raw))
             elif isinstance(session_path_raw, str) and session_path_raw:
-                preview = self.api.first_user_message_preview_from_pi_session(Path(session_path_raw))
+                preview = self.api.session_listing.service(self.runtime).first_user_message_preview_from_pi_session(Path(session_path_raw))
             row["alias"] = alias
             row["first_user_message"] = preview
         return {

@@ -175,9 +175,9 @@ def _build_live_item(
         try:
             preview = ""
             if session.backend == "pi" and session.session_path is not None and session.session_path.exists():
-                preview = sv.api.first_user_message_preview_from_pi_session(session.session_path)
+                preview = sv.api.session_listing.service(sv).first_user_message_preview_from_pi_session(session.session_path)
             elif log_exists and session.log_path is not None:
-                preview = sv.api.first_user_message_preview_from_log(session.log_path)
+                preview = sv.api.session_listing.service(sv).first_user_message_preview_from_log(session.log_path)
             if preview:
                 session.first_user_message = preview
         except Exception:
@@ -292,7 +292,7 @@ def _collect_recovered_catalog_items(
         if (backend, durable_session_id) in live_resume_keys:
             continue
 
-        session_row_id = durable_session_id if record.pending_startup else sv.api.historical_session_id(backend, durable_session_id)
+        session_row_id = durable_session_id if record.pending_startup else sv.api.session_listing.service(sv).historical_session_id(backend, durable_session_id)
         if hidden_sessions.intersection(
             manager.hidden_session_keys(
                 session_row_id,
@@ -396,7 +396,7 @@ def _build_output_rows(manager: Any, sv: Any, items: list[dict[str, Any]]) -> li
         sid = str(it["session_id"])
         agent_backend = normalize_agent_backend(it.get("agent_backend"), default="codex")
         if it.get("historical"):
-            out.append(sv.api.normalize_session_cwd_row(dict(it)))
+            out.append(sv.api.session_listing.service(sv).normalize_session_cwd_row(dict(it)))
             continue
 
         log_exists = bool(it.get("log_exists"))
@@ -417,7 +417,7 @@ def _build_output_rows(manager: Any, sv: Any, items: list[dict[str, Any]]) -> li
         it2.pop("log_exists", None)
         it2.pop("state_busy", None)
         it2["busy"] = bool(busy_out)
-        out.append(sv.api.normalize_session_cwd_row(it2))
+        out.append(sv.api.session_listing.service(sv).normalize_session_cwd_row(it2))
 
     return out
 
@@ -487,7 +487,7 @@ def list_sessions(manager: Any) -> list[dict[str, Any]]:
         sidebar_dirty = bool(sidebar_dirty or recovered_sidebar_dirty)
 
         if bool(getattr(manager, "_include_historical_sessions", False)):
-            for hist in sv.api.historical_sidebar_items(live_resume_keys=live_resume_keys, now_ts=now_ts):
+            for hist in sv.api.session_listing.service(sv).historical_sidebar_items(live_resume_keys=live_resume_keys, now_ts=now_ts):
                 if hidden_sessions.intersection(
                     manager.hidden_session_keys(
                         hist.get("session_id"),

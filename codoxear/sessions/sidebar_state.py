@@ -329,7 +329,7 @@ class SidebarStateFacade:
             keys.add(f"thread:{backend_clean}:{thread_clean}")
         if resume_clean:
             keys.add(f"resume:{backend_clean}:{resume_clean}")
-            keys.add(sv.api.historical_session_id(backend_clean, resume_clean))
+            keys.add(sv.api.session_listing.service(sv).historical_session_id(backend_clean, resume_clean))
         return keys
 
     def session_is_hidden(

@@ -96,7 +96,7 @@ def get_session_commands(runtime: ServerRuntime, manager: Any, session_id: str) 
         thread_id=session.thread_id,
         session_path_key=session_path_key,
         commands=list(payload.get("commands", [])),
-        now_ts=time.time(),
+        now_ts=now_ts,
     )
     return dict(payload)
 

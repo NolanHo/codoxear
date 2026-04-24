@@ -68,7 +68,7 @@ def session_live_payload(
     manager.refresh_session_meta(session_id, strict=False)
     s = manager.get_session(session_id)
     if not s:
-        historical_row = sv.api.historical_session_row(session_id)
+        historical_row = sv.api.session_listing.service(sv).historical_session_row(session_id)
         if historical_row is None:
             historical_row = sv.api.listed_session_row(manager, session_id)
         if historical_row is None:

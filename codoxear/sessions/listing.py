@@ -4,9 +4,26 @@ import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from types import FunctionType
 from typing import Any
 
 from ..runtime import ServerRuntime
+
+
+def _runtime_wrapper(runtime: ServerRuntime, name: str) -> Any | None:
+    module = getattr(runtime, "module", None)
+    if module is None:
+        return None
+    wrapper = getattr(module, name, None)
+    if not callable(wrapper):
+        return None
+    if (
+        isinstance(wrapper, FunctionType)
+        and getattr(wrapper, "__module__", None) == getattr(module, "__name__", None)
+        and getattr(wrapper, "__name__", None) == name
+    ):
+        return None
+    return wrapper
 
 
 @dataclass(slots=True)
@@ -54,6 +71,9 @@ class SessionListingService:
         return parse_historical_session_id(self.runtime, session_id)
 
     def historical_session_row(self, session_id: str) -> dict[str, Any] | None:
+        wrapper = _runtime_wrapper(self.runtime, "_historical_session_row")
+        if wrapper is not None:
+            return wrapper(session_id)
         return historical_session_row(self.runtime, session_id)
 
     def historical_sidebar_items(
@@ -62,6 +82,9 @@ class SessionListingService:
         live_resume_keys: set[tuple[str, str]],
         now_ts: float,
     ) -> list[dict[str, Any]]:
+        wrapper = _runtime_wrapper(self.runtime, "_historical_sidebar_items")
+        if wrapper is not None:
+            return wrapper(live_resume_keys=live_resume_keys, now_ts=now_ts)
         return historical_sidebar_items(
             self.runtime,
             live_resume_keys=live_resume_keys,

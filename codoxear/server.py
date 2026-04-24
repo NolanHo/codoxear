@@ -1302,13 +1302,14 @@ def _parse_historical_session_id(session_id: str) -> tuple[str, str] | None:
 
 
 def _historical_session_row(session_id: str) -> dict[str, Any] | None:
-    return _session_listing.service(RUNTIME).historical_session_row(session_id)
+    return _session_listing.historical_session_row(RUNTIME, session_id)
 
 
 def _historical_sidebar_items(
     *, live_resume_keys: set[tuple[str, str]], now_ts: float
 ) -> list[dict[str, Any]]:
-    return _session_listing.service(RUNTIME).historical_sidebar_items(
+    return _session_listing.historical_sidebar_items(
+        RUNTIME,
         live_resume_keys=live_resume_keys,
         now_ts=now_ts,
     )

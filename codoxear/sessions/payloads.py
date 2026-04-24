@@ -63,7 +63,7 @@ def session_details_payload(runtime: ServerRuntime, manager: Any, session_id: st
     row = sv.api.listed_session_row(manager, session_id)
     if row is not None:
         return {"ok": True, "session": _session_listing.normalize_session_cwd_row(sv, row)}
-    historical_row = sv.api.historical_session_row(session_id)
+    historical_row = sv.api.session_listing.service(sv).historical_session_row(session_id)
     if historical_row is not None:
         return {
             "ok": True,
@@ -224,7 +224,7 @@ def session_workspace_payload(runtime: ServerRuntime, manager: Any, session_id: 
     manager.refresh_session_meta(session_id, strict=False)
     s = manager.get_session(session_id)
     if not s:
-        historical_row = sv.api.historical_session_row(session_id)
+        historical_row = sv.api.session_listing.service(sv).historical_session_row(session_id)
         if historical_row is None:
             historical_row = sv.api.listed_session_row(manager, session_id)
         if historical_row is None:

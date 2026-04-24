@@ -570,7 +570,7 @@ def get_messages_page(
     view: str = "conversation",
 ) -> dict[str, Any]:
     sv = _runtime(manager)
-    historical_row = sv.api.historical_session_row(session_id)
+    historical_row = sv.api.session_listing.service(sv).historical_session_row(session_id)
     if historical_row is not None:
         historical_backend = sv.api.normalize_agent_backend(
             historical_row.get("agent_backend", historical_row.get("backend")),
