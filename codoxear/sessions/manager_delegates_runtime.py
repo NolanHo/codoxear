@@ -394,6 +394,13 @@ class SessionManagerRuntimeDelegates:
         req: dict[str, Any],
         timeout_s: float = 2.0,
     ) -> dict[str, Any]:
+        override = _instance_override(
+            self,
+            "_sock_call",
+            SessionManagerRuntimeDelegates._sock_call,
+        )
+        if override is not None:
+            return override(sock_path, req, timeout_s=timeout_s)
         return _sv(self).api.session_transport.service(self).sock_call(
             sock_path,
             req,

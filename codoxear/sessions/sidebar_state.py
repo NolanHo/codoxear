@@ -112,6 +112,13 @@ class SidebarStateFacade:
                 alias = self.manager._aliases.get(session_id)
         return alias if isinstance(alias, str) else ""
 
+    def alias_get_for_ref(self, ref: Any) -> str | None:
+        if not (isinstance(ref, tuple) and len(ref) == 2):
+            return None
+        with self.manager._lock:
+            alias = self.manager._aliases.get(ref)
+        return alias if isinstance(alias, str) else None
+
     def alias_clear(self, session_id: str) -> None:
         ref = self.manager.page_state_ref_for_session_id(session_id)
         if ref is None:

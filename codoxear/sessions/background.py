@@ -116,7 +116,7 @@ def set_bridge_transport_state(
         session.bridge_transport_checked_ts = float(
             checked_ts if checked_ts is not None else sv.api.time.time()
         )
-        durable_session_id = manager._durable_session_id_for_session(session)
+        durable_session_id = manager.durable_session_id_for_session(session)
     if publish and durable_session_id is not None:
         sv.api.publish_session_transport_invalidate(
             durable_session_id,
@@ -153,7 +153,7 @@ def probe_bridge_transport(
     ):
         return session.bridge_transport_state, session.bridge_transport_error
     try:
-        resp = manager._sock_call(
+        resp = manager.sock_call(
             session.sock_path,
             {"cmd": "state"},
             timeout_s=sv.api.BRIDGE_TRANSPORT_RPC_TIMEOUT_SECONDS,
@@ -192,7 +192,7 @@ def enqueue_outbound_request(manager: Any, runtime_id: str, text: str):
         session = manager._sessions.get(runtime_id)
         if session is None:
             raise KeyError("unknown session")
-        durable_session_id = manager._durable_session_id_for_session(session)
+        durable_session_id = manager.durable_session_id_for_session(session)
         requests_by_runtime = getattr(manager, "_outbound_requests", None)
         if not isinstance(requests_by_runtime, dict):
             manager._outbound_requests = {}
@@ -223,7 +223,7 @@ def fail_outbound_request(manager: Any, request: Any, error: str) -> None:
         "pending_text": request.text,
         "ts": sv.api.time.time(),
     }
-    manager._append_bridge_event(request.durable_session_id, event)
+    manager.append_bridge_event(request.durable_session_id, event)
 
 
 def mark_outbound_request_buffered_for_compaction(manager: Any, request: Any) -> None:
@@ -241,7 +241,7 @@ def mark_outbound_request_buffered_for_compaction(manager: Any, request: Any) ->
         "pending_text": request.text,
         "ts": sv.api.time.time(),
     }
-    manager._append_bridge_event(request.durable_session_id, event)
+    manager.append_bridge_event(request.durable_session_id, event)
 
 
 def maybe_drain_outbound_request(manager: Any, runtime_id: str) -> bool:
@@ -303,7 +303,7 @@ def maybe_drain_outbound_request(manager: Any, runtime_id: str) -> bool:
     request.attempts += 1
     request.last_attempt_ts = sv.api.time.time()
     try:
-        resp = manager._sock_call(
+        resp = manager.sock_call(
             session.sock_path,
             {"cmd": "send", "text": request.text},
             timeout_s=1.0,
@@ -359,7 +359,6 @@ def maybe_drain_outbound_request(manager: Any, runtime_id: str) -> bool:
 
 
 def session_display_name(manager: Any, session_id: str) -> str:
-    sv = _runtime(manager)
     runtime_id = manager.runtime_session_id_for_identifier(session_id)
     if runtime_id is None:
         return "Session"
@@ -367,16 +366,19 @@ def session_display_name(manager: Any, session_id: str) -> str:
         session = manager._sessions.get(runtime_id)
         if not session:
             return "Session"
-        ref = manager._page_state_ref_for_session(session)
-        alias = manager._aliases.get(ref) if ref is not None else None
-        return _session_listing.session_row_display_name(
-            {
-                "session_id": manager._durable_session_id_for_session(session),
-                "alias": alias,
-                "title": session.title or "",
-                "first_user_message": session.first_user_message or "",
-            }
-        )
+        ref = manager.page_state_ref_for_session(session)
+        title = session.title or ""
+        first_user_message = session.first_user_message or ""
+        durable_session_id = manager.durable_session_id_for_session(session)
+    alias = manager.alias_get_for_ref(ref)
+    return _session_listing.session_row_display_name(
+        {
+            "session_id": durable_session_id,
+            "alias": alias,
+            "title": title,
+            "first_user_message": first_user_message,
+        }
+    )
 
 
 def observe_rollout_delta(
@@ -427,8 +429,8 @@ def voice_push_scan_loop(manager: Any) -> None:
 
 def voice_push_scan_sweep(manager: Any) -> None:
     sv = _runtime(manager)
-    manager._discover_existing_if_stale()
-    manager._prune_dead_sessions()
+    manager.discover_existing_if_stale()
+    manager.prune_dead_sessions()
     with manager._lock:
         session_ids = list(manager._sessions.keys())
     for sid in session_ids:
@@ -476,8 +478,8 @@ def harness_loop(manager: Any) -> None:
 def harness_sweep(manager: Any) -> None:
     sv = _runtime(manager)
     now = sv.api.time.time()
-    manager._discover_existing_if_stale()
-    manager._prune_dead_sessions()
+    manager.discover_existing_if_stale()
+    manager.prune_dead_sessions()
     with manager._lock:
         items: list[tuple[str, Any, dict[str, Any], float]] = []
         for sid, session in manager._sessions.items():
@@ -504,7 +506,7 @@ def harness_sweep(manager: Any) -> None:
                     cur["remaining_injections"] = 0
                     manager._harness[sid] = cur
                     manager._harness_last_injected.pop(sid, None)
-                manager._save_harness()
+                manager.save_harness()
                 continue
             request = cfg.get("request")
             if not isinstance(request, str):
@@ -533,7 +535,7 @@ def harness_sweep(manager: Any) -> None:
                 raise ValueError("invalid broker state response")
             busy = sv.api.state_busy_value(st)
             ql = sv.api.state_queue_len_value(st)
-            if busy or ql > 0 or manager._queue_len(sid) > 0:
+            if busy or ql > 0 or manager.queue_len(sid) > 0:
                 continue
             last = sv.api.last_chat_role_ts_from_tail(
                 log_path, max_scan_bytes=sv.api.HARNESS_MAX_SCAN_BYTES
@@ -563,7 +565,7 @@ def harness_sweep(manager: Any) -> None:
                     cur["enabled"] = False
                     manager._harness_last_injected.pop(sid, None)
                 manager._harness[sid] = cur
-            manager._save_harness()
+            manager.save_harness()
         except Exception as exc:
             if isinstance(exc, TimeoutError):
                 continue
@@ -677,19 +679,19 @@ def maybe_drain_session_queue(
                 manager._queues.pop(session_id, None)
                 if ref is not None:
                     manager._queues.pop(ref, None)
-    manager._save_queues()
+    manager.save_queues()
     return True
 
 
 def queue_sweep(manager: Any) -> None:
-    manager._discover_existing_if_stale()
-    manager._prune_dead_sessions()
+    manager.discover_existing_if_stale()
+    manager.prune_dead_sessions()
     with manager._lock:
         active_runtime_ids: list[str] = []
         active_outbound_runtime_ids: list[str] = []
         outbound_requests = getattr(manager, "_outbound_requests", None)
         for runtime_id, session in manager._sessions.items():
-            ref = manager._page_state_ref_for_session(session)
+            ref = manager.page_state_ref_for_session(session)
             queue = manager._queues.get(runtime_id)
             if (not isinstance(queue, list)) and ref is not None:
                 queue = manager._queues.get(ref)

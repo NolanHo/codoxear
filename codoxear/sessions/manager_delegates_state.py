@@ -385,6 +385,9 @@ class SessionManagerStateDelegates:
     def alias_get(self, session_id: str) -> str:
         return self._sidebar_state_facade().alias_get(session_id)
 
+    def alias_get_for_ref(self, ref: Any) -> str | None:
+        return self._sidebar_state_facade().alias_get_for_ref(ref)
+
     def alias_clear(self, session_id: str) -> None:
         self._sidebar_state_facade().alias_clear(session_id)
         _sv(self).api.publish_sessions_invalidate(reason="alias_cleared")

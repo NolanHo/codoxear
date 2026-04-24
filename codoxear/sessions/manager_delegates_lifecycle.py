@@ -7,6 +7,13 @@ from .manager_delegates_shared import _instance_override, _sv
 
 class SessionManagerLifecycleDelegates:
     def page_state_ref_for_session(self, session: Any):
+        override = _instance_override(
+            self,
+            "_page_state_ref_for_session",
+            SessionManagerLifecycleDelegates._page_state_ref_for_session,
+        )
+        if override is not None:
+            return override(session)
         durable_id = _sv(self).api.clean_optional_text(session.thread_id) or _sv(self).api.clean_optional_text(session.session_id)
         if durable_id is None:
             return None
@@ -20,6 +27,13 @@ class SessionManagerLifecycleDelegates:
         return self.page_state_ref_for_session(session)
 
     def durable_session_id_for_session(self, session: Any) -> str:
+        override = _instance_override(
+            self,
+            "_durable_session_id_for_session",
+            SessionManagerLifecycleDelegates._durable_session_id_for_session,
+        )
+        if override is not None:
+            return override(session)
         ref = self.page_state_ref_for_session(session)
         if ref is not None:
             return ref[1]
@@ -40,7 +54,14 @@ class SessionManagerLifecycleDelegates:
     def _durable_session_id_for_identifier(self, session_id: str) -> str | None:
         return self.durable_session_id_for_identifier(session_id)
 
-    def _append_bridge_event(self, durable_session_id: str, event: dict[str, Any]) -> dict[str, Any]:
+    def append_bridge_event(self, durable_session_id: str, event: dict[str, Any]) -> dict[str, Any]:
+        override = _instance_override(
+            self,
+            "_append_bridge_event",
+            SessionManagerLifecycleDelegates._append_bridge_event,
+        )
+        if override is not None:
+            return override(durable_session_id, event)
         key = _sv(self).api.clean_optional_text(durable_session_id)
         if key is None:
             raise ValueError("durable session id required")
@@ -64,6 +85,9 @@ class SessionManagerLifecycleDelegates:
                 rows_by_session[key] = rows[-64:]
         _sv(self).api.publish_session_live_invalidate(key, reason="bridge_event")
         return stamped
+
+    def _append_bridge_event(self, durable_session_id: str, event: dict[str, Any]) -> dict[str, Any]:
+        return self.append_bridge_event(durable_session_id, event)
 
     def bridge_events_since(
         self,
