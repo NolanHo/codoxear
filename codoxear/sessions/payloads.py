@@ -191,7 +191,7 @@ def session_diagnostics_payload(runtime: ServerRuntime, manager: Any, session_id
         "codex_pid": int(s.codex_pid),
         "busy": bool(busy),
         "broker_busy": broker_busy,
-        "queue_len": manager._queue_len(session_id),
+        "queue_len": manager.queue_len(session_id),
         "token": token_val,
         "context_usage": session_context_usage_payload(runtime, s, token_val),
         "turn_timing": turn_timing,

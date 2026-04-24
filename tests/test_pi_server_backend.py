@@ -3407,7 +3407,7 @@ class TestPiBackendRouting(unittest.TestCase):
                 "queue_len": 0,
                 "token": None,
             }
-            manager._queue_len.return_value = 0
+            manager.queue_len.return_value = 0
             manager.queue_list.return_value = []
             manager.sidebar_meta_get.return_value = {
                 "priority_offset": 0.0,
@@ -3454,7 +3454,7 @@ class TestPiBackendRouting(unittest.TestCase):
                 "queue_len": 1,
                 "token": None,
             }
-            manager._queue_len.return_value = 1
+            manager.queue_len.return_value = 1
             manager.queue_list.return_value = ["Queued follow-up"]
             manager.sidebar_meta_get.return_value = {
                 "priority_offset": 0.0,
@@ -3531,7 +3531,7 @@ class TestPiBackendRouting(unittest.TestCase):
                     "queue_len": 1,
                     "token": None,
                 }
-                manager._queue_len.return_value = 1
+                manager.queue_len.return_value = 1
                 manager.queue_list.return_value = ["Queued follow-up"]
                 manager.sidebar_meta_get.return_value = {
                     "priority_offset": 0.0,
@@ -3599,7 +3599,7 @@ class TestPiBackendRouting(unittest.TestCase):
                     "queue_len": 1,
                     "token": None,
                 }
-                manager._queue_len.return_value = 1
+                manager.queue_len.return_value = 1
                 manager.queue_list.return_value = ["Queued follow-up"]
                 manager.sidebar_meta_get.return_value = {
                     "priority_offset": 0.0,

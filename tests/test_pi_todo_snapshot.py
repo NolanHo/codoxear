@@ -713,7 +713,7 @@ class TestPiTodoDiagnostics(unittest.TestCase):
                     "queue_len": 0,
                     "token": None,
                 }
-                manager._queue_len.return_value = 0
+                manager.queue_len.return_value = 0
                 manager.sidebar_meta_get.return_value = {
                     "priority_offset": 0.0,
                     "snooze_until": None,
@@ -759,7 +759,7 @@ class TestPiTodoDiagnostics(unittest.TestCase):
                 "queue_len": 0,
                 "token": None,
             }
-            manager._queue_len.return_value = 0
+            manager.queue_len.return_value = 0
             manager.sidebar_meta_get.return_value = {
                 "priority_offset": 0.0,
                 "snooze_until": None,
@@ -799,7 +799,7 @@ class TestPiTodoDiagnostics(unittest.TestCase):
                 "queue_len": 0,
                 "token": None,
             }
-            manager._queue_len.return_value = 0
+            manager.queue_len.return_value = 0
             manager.sidebar_meta_get.return_value = {
                 "priority_offset": 0.0,
                 "snooze_until": None,
@@ -834,7 +834,7 @@ class TestPiTodoDiagnostics(unittest.TestCase):
                 "queue_len": 0,
                 "token": None,
             }
-            manager._queue_len.return_value = 0
+            manager.queue_len.return_value = 0
             manager.sidebar_meta_get.return_value = {
                 "priority_offset": 0.0,
                 "snooze_until": None,
@@ -871,7 +871,7 @@ class TestPiTodoDiagnostics(unittest.TestCase):
                 "queue_len": 0,
                 "token": None,
             }
-            manager._queue_len.return_value = 0
+            manager.queue_len.return_value = 0
             manager.sidebar_meta_get.return_value = {
                 "priority_offset": 0.0,
                 "snooze_until": None,
@@ -907,7 +907,7 @@ class TestPiTodoDiagnostics(unittest.TestCase):
                 "queue_len": 0,
                 "token": None,
             }
-            manager._queue_len.return_value = 0
+            manager.queue_len.return_value = 0
             manager.sidebar_meta_get.return_value = {
                 "priority_offset": 0.0,
                 "snooze_until": None,
@@ -942,7 +942,7 @@ class TestPiTodoDiagnostics(unittest.TestCase):
                 "queue_len": 0,
                 "token": None,
             }
-            manager._queue_len.return_value = 0
+            manager.queue_len.return_value = 0
             manager.sidebar_meta_get.return_value = {
                 "priority_offset": 0.0,
                 "snooze_until": None,

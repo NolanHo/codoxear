@@ -90,7 +90,7 @@ def session_live_payload(
             }
         durable_session_id = str(historical_row.get("session_id") or session_id)
         bridge_session_key = sv.api.clean_optional_text(historical_row.get("resume_session_id")) or durable_session_id
-        bridge_events, next_bridge_offset = manager._bridge_events_since(
+        bridge_events, next_bridge_offset = manager.bridge_events_since(
             bridge_session_key,
             offset=bridge_offset,
         )
@@ -146,7 +146,7 @@ def session_live_payload(
             merged_events,
             [item for item in (streamed_payload.get("events") or []) if isinstance(item, dict)],
         )
-    bridge_events, next_bridge_offset = manager._bridge_events_since(
+    bridge_events, next_bridge_offset = manager.bridge_events_since(
         sv.api.durable_session_id_for_live_session(s),
         offset=bridge_offset,
     )
@@ -181,7 +181,7 @@ def pi_live_messages_payload(runtime: ServerRuntime, manager: Any, session: Any,
     if not sv.api.session_supports_live_pi_ui(session):
         return {"offset": max(0, int(offset)), "events": []}
     try:
-        payload = manager._sock_call(
+        payload = manager.sock_call(
             session.sock_path,
             {"cmd": "live_messages", "offset": max(0, int(offset))},
             timeout_s=1.5,

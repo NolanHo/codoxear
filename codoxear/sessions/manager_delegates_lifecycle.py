@@ -65,7 +65,11 @@ class SessionManagerLifecycleDelegates:
         _sv(self).api.publish_session_live_invalidate(key, reason="bridge_event")
         return stamped
 
-    def _bridge_events_since(self, durable_session_id: str, offset: int = 0) -> tuple[list[dict[str, Any]], int]:
+    def bridge_events_since(
+        self,
+        durable_session_id: str,
+        offset: int = 0,
+    ) -> tuple[list[dict[str, Any]], int]:
         key = _sv(self).api.clean_optional_text(durable_session_id)
         if key is None:
             return [], max(0, int(offset))
@@ -85,6 +89,13 @@ class SessionManagerLifecycleDelegates:
             if isinstance(event, dict):
                 events.append(dict(event))
         return events, latest
+
+    def _bridge_events_since(
+        self,
+        durable_session_id: str,
+        offset: int = 0,
+    ) -> tuple[list[dict[str, Any]], int]:
+        return self.bridge_events_since(durable_session_id, offset=offset)
 
     def _set_bridge_transport_state(
         self,

@@ -518,7 +518,7 @@ def mark_log_delta(
     with manager._lock:
         session = manager._sessions.get(session_id)
         if session:
-            durable_session_id = manager._durable_session_id_for_session(session)
+            durable_session_id = manager.durable_session_id_for_session(session)
             if isinstance(last_ts, (int, float)):
                 tsf = float(last_ts)
                 session.last_chat_ts = tsf if session.last_chat_ts is None else max(session.last_chat_ts, tsf)
@@ -657,7 +657,7 @@ def get_messages_page(
         has_older = False
         next_before = 0
         if session.session_path is None and session.cwd:
-            claimed = manager._claimed_pi_session_paths(exclude_sid=session_id)
+            claimed = manager.claimed_pi_session_paths(exclude_sid=session_id)
             discovered, discovered_source = sv.api.resolve_pi_session_path(
                 thread_id=session.thread_id,
                 cwd=session.cwd,
@@ -690,7 +690,7 @@ def get_messages_page(
             sp_mtime = sv.api.safe_path_mtime(session.session_path)
             if sp_mtime is not None and (sv.api.time.time() - sp_mtime) > 2.0:
                 old_sp = session.session_path
-                claimed = manager._claimed_pi_session_paths(exclude_sid=session_id)
+                claimed = manager.claimed_pi_session_paths(exclude_sid=session_id)
                 claimed.add(old_sp)
                 newer_sp, newer_sp_source = sv.api.resolve_pi_session_path(
                     thread_id=session.thread_id,
@@ -705,7 +705,7 @@ def get_messages_page(
                 ):
                     session.session_path = newer_sp
                     sv.api.patch_metadata_session_path(session.sock_path, newer_sp, force=True)
-                    manager._reset_log_caches(session, meta_log_off=0)
+                    manager.reset_log_caches(session, meta_log_off=0)
                     events, new_off, has_older, next_before, diag = ensure_pi_chat_index(
                         manager,
                         session_id,
@@ -725,7 +725,7 @@ def get_messages_page(
             "turn_aborted": bool(flags.get("turn_aborted")),
             "diag": diag,
             "busy": pi_busy,
-            "queue_len": int(manager._queue_len(session_id)),
+            "queue_len": int(manager.queue_len(session_id)),
             "token": state_token,
             "has_older": bool(has_older),
             "next_before": int(next_before),
@@ -743,7 +743,7 @@ def get_messages_page(
             "turn_aborted": False,
             "diag": {"pending_log": True},
             "busy": False,
-            "queue_len": int(manager._queue_len(session_id)),
+            "queue_len": int(manager.queue_len(session_id)),
             "token": state_token,
             "has_older": False,
             "next_before": 0,
@@ -784,7 +784,7 @@ def get_messages_page(
         "turn_aborted": bool(flags.get("turn_aborted")),
         "diag": diag,
         "busy": bool(busy_val),
-        "queue_len": int(manager._queue_len(session_id)),
+        "queue_len": int(manager.queue_len(session_id)),
         "token": token_val,
         "has_older": bool(has_older),
         "next_before": int(next_before),
