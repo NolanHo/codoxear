@@ -1,18 +1,8 @@
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 from . import historical_resume as _historical_resume
-
-
-def _unlink_quiet(path: Path) -> None:
-    try:
-        path.unlink()
-    except FileNotFoundError:
-        return
-    except OSError:
-        return
 
 
 def send(manager: Any, session_id: str, text: str) -> dict[str, Any]:
@@ -28,20 +18,15 @@ def send(manager: Any, session_id: str, text: str) -> dict[str, Any]:
     runtime_id = manager.runtime_session_id_for_identifier(session_id)
     if runtime_id is None:
         raise KeyError("unknown session")
-    with manager._lock:
-        session = manager._sessions.get(runtime_id)
-        if not session:
-            raise KeyError("unknown session")
-        durable_session_id = manager._durable_session_id_for_session(session)
-    transport_state, transport_error = manager._probe_bridge_transport(runtime_id)
-    if transport_state == "dead":
-        with manager._lock:
-            manager._sessions.pop(runtime_id, None)
-        manager._clear_deleted_session_state(runtime_id)
-        _unlink_quiet(session.sock_path)
-        _unlink_quiet(session.sock_path.with_suffix(".json"))
+    session = manager.get_session(runtime_id)
+    if session is None:
         raise KeyError("unknown session")
-    request = manager._enqueue_outbound_request(runtime_id, text)
+    durable_session_id = manager.durable_session_id_for_session(session)
+    transport_state, transport_error = manager.probe_bridge_transport(runtime_id)
+    if transport_state == "dead":
+        manager.discard_runtime_session(runtime_id, sock_path=session.sock_path)
+        raise KeyError("unknown session")
+    request = manager.enqueue_outbound_request(runtime_id, text)
     return {
         "ok": True,
         "accepted": True,
@@ -64,19 +49,19 @@ def enqueue(manager: Any, session_id: str, text: str) -> dict[str, Any]:
         out["runtime_id"] = resumed["runtime_id"]
         out["backend"] = resumed["backend"]
         return out
-    return manager._queue_enqueue_local(session_id, text)
+    return manager.queue_enqueue_local(session_id, text)
 
 
 def queue_list(manager: Any, session_id: str) -> list[str]:
     runtime_id = manager.runtime_session_id_for_identifier(session_id)
     if runtime_id is None:
         raise KeyError("unknown session")
-    return manager._queue_list_local(runtime_id)
+    return manager.queue_list_local(runtime_id)
 
 
 def queue_delete(manager: Any, session_id: str, index: int) -> dict[str, Any]:
-    return manager._queue_delete_local(session_id, int(index))
+    return manager.queue_delete_local(session_id, int(index))
 
 
 def queue_update(manager: Any, session_id: str, index: int, text: str) -> dict[str, Any]:
-    return manager._queue_update_local(session_id, int(index), text)
+    return manager.queue_update_local(session_id, int(index), text)

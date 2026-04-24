@@ -101,7 +101,7 @@ class SessionManagerLifecycleDelegates:
             checked_ts=checked_ts,
         )
 
-    def _probe_bridge_transport(
+    def probe_bridge_transport(
         self,
         session_id: str,
         *,
@@ -112,8 +112,19 @@ class SessionManagerLifecycleDelegates:
             force_rpc=force_rpc,
         )
 
-    def _enqueue_outbound_request(self, runtime_id: str, text: str):
+    def _probe_bridge_transport(
+        self,
+        session_id: str,
+        *,
+        force_rpc: bool = False,
+    ) -> tuple[str, str | None]:
+        return self.probe_bridge_transport(session_id, force_rpc=force_rpc)
+
+    def enqueue_outbound_request(self, runtime_id: str, text: str):
         return _sv(self).api.session_background.service(self).enqueue_outbound_request(runtime_id, text)
+
+    def _enqueue_outbound_request(self, runtime_id: str, text: str):
+        return self.enqueue_outbound_request(runtime_id, text)
 
     def _fail_outbound_request(self, request: Any, error: str) -> None:
         _sv(self).api.session_background.service(self).fail_outbound_request(request, error)

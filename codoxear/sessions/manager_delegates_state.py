@@ -435,14 +435,35 @@ class SessionManagerStateDelegates:
     def _queue_len(self, session_id: str) -> int:
         return self.queue_len(session_id)
 
-    def _queue_list_local(self, session_id: str) -> list[str]:
+    def queue_list_local(self, session_id: str) -> list[str]:
         return _sv(self).api.page_state.service(self).queue_list_local(session_id)
 
-    def _queue_enqueue_local(self, session_id: str, text: str) -> dict[str, Any]:
+    def _queue_list_local(self, session_id: str) -> list[str]:
+        return self.queue_list_local(session_id)
+
+    def queue_enqueue_local(self, session_id: str, text: str) -> dict[str, Any]:
         return _sv(self).api.page_state.service(self).queue_enqueue_local(session_id, text)
 
-    def _queue_delete_local(self, session_id: str, index: int) -> dict[str, Any]:
+    def _queue_enqueue_local(self, session_id: str, text: str) -> dict[str, Any]:
+        return self.queue_enqueue_local(session_id, text)
+
+    def queue_delete_local(self, session_id: str, index: int) -> dict[str, Any]:
         return _sv(self).api.page_state.service(self).queue_delete_local(session_id, index)
+
+    def _queue_delete_local(self, session_id: str, index: int) -> dict[str, Any]:
+        return self.queue_delete_local(session_id, index)
+
+    def queue_update_local(
+        self,
+        session_id: str,
+        index: int,
+        text: str,
+    ) -> dict[str, Any]:
+        return _sv(self).api.page_state.service(self).queue_update_local(
+            session_id,
+            index,
+            text,
+        )
 
     def _queue_update_local(
         self,
@@ -450,7 +471,7 @@ class SessionManagerStateDelegates:
         index: int,
         text: str,
     ) -> dict[str, Any]:
-        return _sv(self).api.page_state.service(self).queue_update_local(
+        return self.queue_update_local(
             session_id,
             index,
             text,
