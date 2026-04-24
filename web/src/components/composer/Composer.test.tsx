@@ -246,19 +246,9 @@ describe("Composer", () => {
     expect(getRoot().textContent).toContain("82K/200K 41%");
   });
 
-  it("shows current active model and effort for pi sessions", () => {
+  it("shows native diagnostics model and effort for live pi sessions", () => {
     renderComposer({
-      items: [{ session_id: "sess-1", runtime_id: "rt-1", agent_backend: "pi", busy: false, model: "gpt-5.4", reasoning_effort: "high" }],
-    });
-
-    const modelCurrent = getRoot().querySelector("[data-testid='composer-model-current']");
-    expect(modelCurrent?.textContent).toContain("gpt-5.4");
-    expect(modelCurrent?.textContent).toContain("high");
-  });
-
-  it("falls back to diagnostics model when session summary model is missing", () => {
-    renderComposer({
-      items: [{ session_id: "sess-1", runtime_id: "rt-1", agent_backend: "pi", busy: false, model: null, reasoning_effort: null }],
+      items: [{ session_id: "sess-1", runtime_id: "rt-1", agent_backend: "pi", busy: false, model: "stale-model", reasoning_effort: "stale" }],
       diagnostics: { model: "gpt-5.4", reasoning_effort: "high" },
       sessionUiSessionId: "sess-1",
     });
@@ -266,23 +256,19 @@ describe("Composer", () => {
     const modelCurrent = getRoot().querySelector("[data-testid='composer-model-current']");
     expect(modelCurrent?.textContent).toContain("gpt-5.4");
     expect(modelCurrent?.textContent).toContain("high");
-    expect(modelCurrent?.textContent).not.toContain("unknown");
+    expect(modelCurrent?.textContent).not.toContain("stale-model");
   });
 
-  it("falls back to latest /model user command when backend model fields are empty", () => {
+  it("shows unknown when live pi native model fields are missing", () => {
     renderComposer({
-      items: [{ session_id: "sess-1", runtime_id: "rt-1", agent_backend: "pi", busy: false, model: null, reasoning_effort: null }],
+      items: [{ session_id: "sess-1", runtime_id: "rt-1", agent_backend: "pi", busy: false, model: "gpt-5.4", reasoning_effort: "high" }],
       diagnostics: null,
-      messageEventsBySessionId: {
-        "sess-1": [
-          { role: "user", text: "/model gpt-5.4", ts: 100 },
-        ],
-      },
+      sessionUiSessionId: "sess-1",
     });
 
     const modelCurrent = getRoot().querySelector("[data-testid='composer-model-current']");
-    expect(modelCurrent?.textContent).toContain("gpt-5.4");
-    expect(modelCurrent?.textContent).not.toContain("unknown");
+    expect(modelCurrent?.textContent).toContain("unknown");
+    expect(modelCurrent?.textContent).not.toContain("gpt-5.4");
   });
 
   it("hides model switch controls for historical pi sessions", () => {
@@ -327,7 +313,7 @@ describe("Composer", () => {
     expect(sendMessage).not.toHaveBeenCalledWith("sess-1", "/model gpt-5.4");
   });
 
-  it("shows zero-used fallback when the total context is known", async () => {
+  it("shows unknown when native context usage is partial", async () => {
     renderComposer({
       items: [{ session_id: "sess-1", agent_backend: "pi", busy: false }],
       liveContextUsageBySessionId: {
@@ -335,7 +321,8 @@ describe("Composer", () => {
       },
     });
 
-    expect(getRoot().textContent).toContain("0/200K 0%");
+    expect(getRoot().textContent).toContain("?");
+    expect(getRoot().textContent).not.toContain("0/200K 0%");
   });
 
   it("shows context usage above 100 percent when reported by Pi", async () => {
@@ -349,18 +336,16 @@ describe("Composer", () => {
     expect(getRoot().textContent).toContain("284K/272K 104%");
   });
 
-  it("prefers diagnostics context usage when live usage is missing or still zero", async () => {
+  it("shows unknown when live native context usage is missing", async () => {
     renderComposer({
       items: [{ session_id: "sess-1", agent_backend: "pi", busy: false }],
       liveContextUsageBySessionId: {
-        "sess-1": { used_tokens: 0, total_tokens: 272000, percent_used: 0 },
+        "sess-1": null,
       },
-      diagnostics: {
-        context_usage: { used_tokens: 91000, total_tokens: 272000, percent_used: 33 },
-      },
+      diagnostics: null,
     });
 
-    expect(getRoot().textContent).toContain("91K/272K 33%");
+    expect(getRoot().textContent).toContain("?");
   });
 
   it("shows the active turn elapsed time in the composer gutter", async () => {

@@ -243,6 +243,9 @@ class PiRpcClient:
     def get_state(self) -> dict[str, Any]:
         return self.send_command("get_state")
 
+    def get_session_stats(self) -> dict[str, Any]:
+        return self.send_command("get_session_stats")
+
     def get_commands(self) -> list[dict[str, Any]]:
         result = self.send_command("get_commands")
         commands = result.get("commands")

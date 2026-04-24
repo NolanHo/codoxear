@@ -626,6 +626,8 @@ class State:
     output_tail: str = ""
     output_tail_max: int = 64 * 1024
     token: dict[str, Any] | None = None
+    rpc_state: dict[str, Any] | None = None
+    session_stats: dict[str, Any] | None = None
     last_turn_id: str | None = None
     is_compacting: bool = False
     backend: str = "pi"
@@ -715,6 +717,15 @@ class PiBroker:
         except Exception:
             return None
 
+    def _read_rpc_session_stats_snapshot(
+        self,
+        st: State,
+    ) -> dict[str, Any] | None:
+        try:
+            return st.rpc.get_session_stats()
+        except Exception:
+            return None
+
     def _apply_rpc_busy_state_locked(
         self,
         st: State,
@@ -766,11 +777,18 @@ class PiBroker:
         if not st:
             return
         rpc_state = self._read_rpc_state_snapshot(st)
+        rpc_session_stats = self._read_rpc_session_stats_snapshot(st)
         rewrite_meta = False
         with self._lock:
             st2 = self.state
             if not st2:
                 return
+            st2.rpc_state = dict(rpc_state) if isinstance(rpc_state, dict) else None
+            st2.session_stats = (
+                dict(rpc_session_stats)
+                if isinstance(rpc_session_stats, dict)
+                else None
+            )
             self._apply_rpc_busy_state_locked(st2, rpc_state=rpc_state)
             self._drain_rpc_output_locked(st2)
             rewrite_meta = self._sync_rpc_ids_locked(st2, rpc_state=rpc_state)
@@ -985,6 +1003,33 @@ class PiBroker:
                 "token": st.token if st else None,
                 "isCompacting": bool(st.is_compacting) if st else False,
             }
+            native_state = st.rpc_state if st is not None else None
+            if isinstance(native_state, dict):
+                for key in (
+                    "model",
+                    "thinkingLevel",
+                    "isStreaming",
+                    "sessionFile",
+                    "sessionId",
+                    "sessionName",
+                    "autoCompactionEnabled",
+                    "messageCount",
+                    "pendingMessageCount",
+                ):
+                    if key in native_state:
+                        resp[key] = native_state.get(key)
+        _send_socket_json_line(conn, resp)
+
+    def _cmd_session_stats(self, conn: socket.socket, _req: dict[str, Any]) -> None:
+        with self._lock:
+            st = self.state
+            if st is not None:
+                self._drain_rpc_output_locked(st)
+            resp = (
+                dict(st.session_stats)
+                if st is not None and isinstance(st.session_stats, dict)
+                else {}
+            )
         _send_socket_json_line(conn, resp)
 
     def _cmd_tail(self, conn: socket.socket, _req: dict[str, Any]) -> None:
@@ -1182,6 +1227,7 @@ class PiBroker:
     ) -> bool:
         handlers = {
             "state": self._cmd_state,
+            "session_stats": self._cmd_session_stats,
             "tail": self._cmd_tail,
             "live_messages": self._cmd_live_messages,
             "ui_state": self._cmd_ui_state,

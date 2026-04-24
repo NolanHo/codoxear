@@ -128,6 +128,7 @@ def session_live_payload(
         s,
         state_token if isinstance(state_token, dict) else None,
     )
+    session_stats = manager.get_session_stats(session_id) if s.backend == "pi" else None
     requests: list[dict[str, Any]] = []
     if s.backend == "pi":
         requests_payload = manager.get_ui_state(session_id)
@@ -166,9 +167,8 @@ def session_live_payload(
         "events": merged_events,
         "requests_version": current_requests_version,
         "token": token_val,
-        "context_usage": sv.api.session_payloads.service(sv).session_context_usage_payload(
-            s,
-            token_val,
+        "context_usage": sv.api.session_payloads.service(sv).session_context_usage_from_stats(
+            session_stats
         ),
         "turn_timing": sv.api.session_payloads.service(sv).session_turn_timing_payload(
             s,

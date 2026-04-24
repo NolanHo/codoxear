@@ -141,20 +141,20 @@ function formatContextK(value: number) {
 
 function getContextUsageLabel(contextUsage: ContextUsagePayload | null | undefined) {
   if (!contextUsage) {
-    return null;
+    return "?";
   }
   const totalTokens = typeof contextUsage.total_tokens === "number" && Number.isFinite(contextUsage.total_tokens)
     ? Math.max(0, Math.round(contextUsage.total_tokens))
-    : 0;
-  if (totalTokens <= 0) {
-    return null;
-  }
+    : null;
   const usedTokens = typeof contextUsage.used_tokens === "number" && Number.isFinite(contextUsage.used_tokens)
     ? Math.max(0, Math.round(contextUsage.used_tokens))
-    : 0;
+    : null;
   const percentUsed = typeof contextUsage.percent_used === "number" && Number.isFinite(contextUsage.percent_used)
-    ? Math.max(0, Math.round(contextUsage.percent_used))
-    : Math.max(0, Math.round((usedTokens / totalTokens) * 100));
+    ? Math.round(contextUsage.percent_used)
+    : null;
+  if (totalTokens === null || totalTokens <= 0 || usedTokens === null || percentUsed === null) {
+    return "?";
+  }
   return `${formatContextK(usedTokens)}/${formatContextK(totalTokens)} ${percentUsed}%`;
 }
 
@@ -221,73 +221,6 @@ function getTurnElapsedLabelFromTiming(timing: TurnTimingPayload | null | undefi
   const endTsMs = busy ? Math.max(nowMs, lastEventTsMs ?? startedTsMs) : (lastEventTsMs ?? startedTsMs);
   const elapsedSeconds = Math.max(0, (endTsMs - startedTsMs) / 1000);
   return `Turn ${formatElapsedSeconds(elapsedSeconds)}`;
-}
-
-function normalizeModelValue(value: unknown) {
-  if (typeof value !== "string") {
-    return "";
-  }
-  return value.trim().replace(/[),.;]+$/, "");
-}
-
-function parseModelFromUserCommand(text: unknown) {
-  if (typeof text !== "string") {
-    return "";
-  }
-  const match = text.trim().match(/^\/model\s+([^\s]+)/i);
-  return normalizeModelValue(match?.[1] ?? "");
-}
-
-function parseModelFromEventText(text: unknown) {
-  if (typeof text !== "string") {
-    return "";
-  }
-  const patterns = [
-    /switched to\s+([^\s.,;]+)/i,
-    /modelId\s*[=:]\s*([^\s.,;]+)/i,
-  ];
-  for (const pattern of patterns) {
-    const match = text.match(pattern);
-    const candidate = normalizeModelValue(match?.[1] ?? "");
-    if (candidate) {
-      return candidate;
-    }
-  }
-  return "";
-}
-
-function getModelFromEvents(events: MessageEvent[] | undefined) {
-  if (!Array.isArray(events) || events.length === 0) {
-    return "";
-  }
-  for (let index = events.length - 1; index >= 0; index -= 1) {
-    const event = events[index];
-    if (!event || event.display === false) {
-      continue;
-    }
-    const details = event.details && typeof event.details === "object" ? event.details as Record<string, unknown> : null;
-    if (event.type === "pi_model_change" || event.type === "pi_event") {
-      const detailModel = normalizeModelValue(details?.model ?? details?.modelId);
-      if (detailModel) {
-        return detailModel;
-      }
-    }
-    if (event.role === "user") {
-      const commandModel = parseModelFromUserCommand(event.text);
-      if (commandModel) {
-        return commandModel;
-      }
-    }
-    const summaryModel = parseModelFromEventText(event.summary);
-    if (summaryModel) {
-      return summaryModel;
-    }
-    const textModel = parseModelFromEventText(event.text);
-    if (textModel) {
-      return textModel;
-    }
-  }
-  return "";
 }
 
 function getTurnElapsedLabel(events: MessageEvent[], busy: boolean, nowMs: number) {
@@ -471,7 +404,6 @@ export function Composer({ compactMobile = false }: ComposerProps = {}) {
   const activeSessionPending = activeSession?.pending_startup === true;
   const activeSessionBusy = Boolean(activeSession && (activeSession.busy || (activeSessionId ? busyBySessionId[activeSessionId] === true : false)));
   const activeSessionIsPi = activeSession?.agent_backend === "pi";
-  const activeEvents = activeSessionId ? bySessionId[activeSessionId] ?? [] : [];
   const sessionUiMatchesActive = Boolean(
     activeSessionId
       && (
@@ -487,13 +419,18 @@ export function Composer({ compactMobile = false }: ComposerProps = {}) {
   );
   const diagnosticsModel = sessionUiMatchesActive ? getDiagnosticsModel(diagnostics) : "";
   const diagnosticsReasoningEffort = sessionUiMatchesActive ? getDiagnosticsReasoningEffort(diagnostics) : "";
-  const eventsModel = useMemo(() => getModelFromEvents(activeEvents), [activeEvents]);
-  const activeModel = typeof activeSession?.model === "string" && activeSession.model.trim()
-    ? activeSession.model.trim()
-    : (diagnosticsModel || eventsModel);
-  const activeReasoningEffort = typeof activeSession?.reasoning_effort === "string" && activeSession.reasoning_effort.trim()
-    ? activeSession.reasoning_effort.trim()
-    : diagnosticsReasoningEffort;
+  const activeSessionIsHistoricalPi = activeSessionIsPi && activeSession?.historical === true;
+  const activeSessionHasLivePiControl = Boolean(activeSessionIsPi && !activeSessionIsHistoricalPi && activeSessionRuntimeId);
+  const activeModel = activeSessionHasLivePiControl ? diagnosticsModel : (
+    typeof activeSession?.model === "string" && activeSession.model.trim()
+      ? activeSession.model.trim()
+      : ""
+  );
+  const activeReasoningEffort = activeSessionHasLivePiControl ? diagnosticsReasoningEffort : (
+    typeof activeSession?.reasoning_effort === "string" && activeSession.reasoning_effort.trim()
+      ? activeSession.reasoning_effort.trim()
+      : ""
+  );
   const modelChoices = useMemo(() => modelChoicesForSession(newSessionDefaults ?? null, activeSession), [newSessionDefaults, activeSession]);
   const modelDraft = activeSessionId
     ? (typeof modelDraftBySessionId[activeSessionId] === "string" ? modelDraftBySessionId[activeSessionId] : activeModel)
@@ -501,8 +438,6 @@ export function Composer({ compactMobile = false }: ComposerProps = {}) {
   const modelSwitching = activeSessionId ? modelSwitchingBySessionId[activeSessionId] === true : false;
   const modelError = activeSessionId ? modelErrorBySessionId[activeSessionId] ?? "" : "";
   const modelDraftTrimmed = modelDraft.trim();
-  const activeSessionIsHistoricalPi = activeSessionIsPi && activeSession?.historical === true;
-  const activeSessionHasLivePiControl = Boolean(activeSessionIsPi && !activeSessionIsHistoricalPi && activeSessionRuntimeId);
   const modelSwitchDisabled = !activeSessionId
     || !activeSessionHasLivePiControl
     || activeSessionPending
@@ -537,12 +472,7 @@ export function Composer({ compactMobile = false }: ComposerProps = {}) {
     }
     const liveUsage = contextUsageBySessionId[activeSessionId] ?? null;
     const diagnosticsUsage = sessionUiSessionId === activeSessionId ? getDiagnosticsContextUsage(diagnostics) : null;
-    const liveUsedTokens = liveUsage && typeof liveUsage.used_tokens === "number" ? liveUsage.used_tokens : null;
-    const diagnosticsUsedTokens = diagnosticsUsage && typeof diagnosticsUsage.used_tokens === "number" ? diagnosticsUsage.used_tokens : null;
-    const preferredUsage = liveUsedTokens && liveUsedTokens > 0
-      ? liveUsage
-      : (diagnosticsUsedTokens && diagnosticsUsedTokens > 0 ? diagnosticsUsage : (liveUsage ?? diagnosticsUsage));
-    return getContextUsageLabel(preferredUsage);
+    return getContextUsageLabel(liveUsage ?? diagnosticsUsage);
   }, [activeSessionId, activeSessionIsPi, contextUsageBySessionId, diagnostics, sessionUiSessionId]);
 
   const composerTurnElapsedLabel = useMemo(() => {

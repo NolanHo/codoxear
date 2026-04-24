@@ -323,6 +323,7 @@ class _FakeRpc:
     def __init__(self) -> None:
         self.calls: list[tuple[str, object]] = []
         self.state = {"busy": False, "history_len": 2, "session_id": "pi-session-001"}
+        self.session_stats: dict[str, object] = {}
         self.state_error: Exception | None = None
         self.events: list[dict[str, object]] = []
         self.stderr_lines: list[str] = []
@@ -334,6 +335,10 @@ class _FakeRpc:
         if self.state_error is not None:
             raise self.state_error
         return dict(self.state)
+
+    def get_session_stats(self) -> dict[str, object]:
+        self.calls.append(("get_session_stats", None))
+        return dict(self.session_stats)
 
     def prompt(
         self, text: str, *, streaming_behavior: str | None = None
@@ -669,6 +674,65 @@ class TestPiBroker(unittest.TestCase):
             )
         finally:
             client_sock.close()
+
+    def test_state_surfaces_cached_native_model_fields(self) -> None:
+        rpc = _FakeRpc()
+        rpc.state = {
+            "busy": False,
+            "sessionId": "pi-session-001",
+            "model": {"provider": "openai", "id": "gpt-5.4"},
+            "thinkingLevel": "high",
+            "messageCount": 12,
+            "pendingMessageCount": 1,
+        }
+        broker = PiBroker(cwd="/tmp")
+        broker.state = PiBrokerState(
+            session_id="pi-session-001",
+            codex_pid=123,
+            sock_path=Path("/tmp/pi.sock"),
+            session_path=Path("/tmp/pi-session.jsonl"),
+            start_ts=0.0,
+            rpc=rpc,
+        )
+
+        broker._sync_state_from_rpc()
+        resp = _roundtrip_json(broker, {"cmd": "state"})
+
+        self.assertEqual(resp["model"], {"provider": "openai", "id": "gpt-5.4"})
+        self.assertEqual(resp["thinkingLevel"], "high")
+        self.assertEqual(resp["messageCount"], 12)
+        self.assertEqual(resp["pendingMessageCount"], 1)
+        self.assertEqual(
+            rpc.calls,
+            [("get_state", None), ("get_session_stats", None)],
+        )
+
+    def test_session_stats_returns_cached_native_context_usage(self) -> None:
+        rpc = _FakeRpc()
+        rpc.session_stats = {
+            "sessionId": "pi-session-001",
+            "contextUsage": {
+                "tokens": 91000,
+                "contextWindow": 272000,
+                "percent": 33,
+            },
+        }
+        broker = PiBroker(cwd="/tmp")
+        broker.state = PiBrokerState(
+            session_id="pi-session-001",
+            codex_pid=123,
+            sock_path=Path("/tmp/pi.sock"),
+            session_path=Path("/tmp/pi-session.jsonl"),
+            start_ts=0.0,
+            rpc=rpc,
+        )
+
+        broker._sync_state_from_rpc()
+        before_calls = list(rpc.calls)
+        resp = _roundtrip_json(broker, {"cmd": "session_stats"})
+
+        self.assertEqual(resp, rpc.session_stats)
+        self.assertEqual(rpc.calls, before_calls)
 
     def test_state_treats_compaction_start_event_as_busy(self) -> None:
         rpc = _FakeRpc()

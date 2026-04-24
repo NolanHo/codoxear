@@ -54,6 +54,9 @@ class SessionTransportService:
     def get_state(self, session_id: str) -> dict[str, Any]:
         return get_state(self.manager, session_id)
 
+    def get_session_stats(self, session_id: str) -> dict[str, Any]:
+        return get_session_stats(self.manager, session_id)
+
     def get_tail(self, session_id: str) -> str:
         return get_tail(self.manager, session_id)
 
@@ -144,6 +147,20 @@ def get_state(manager: Any, session_id: str) -> dict[str, Any]:
                 session2.token = tok
         return resp
     return cached_state
+
+
+def get_session_stats(manager: Any, session_id: str) -> dict[str, Any]:
+    sv = _runtime(manager)
+    runtime_id, session = _live_session(manager, session_id)
+    sock = session.sock_path
+    try:
+        resp = sock_call(manager, sock, {"cmd": "session_stats"}, timeout_s=1.5)
+    except Exception:
+        if not sv.api.pid_alive(session.broker_pid) and not sv.api.pid_alive(session.codex_pid):
+            _discard_dead_runtime(manager, runtime_id, sock, clear_state=True)
+            raise KeyError("unknown session")
+        return {}
+    return resp if isinstance(resp, dict) else {}
 
 
 def get_tail(manager: Any, session_id: str) -> str:

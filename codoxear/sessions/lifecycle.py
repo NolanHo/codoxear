@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -215,7 +215,7 @@ def refresh_durable_session_catalog(manager: Any, *, force: bool = False) -> Non
             and not getattr(record, "title", None)
             and getattr(existing_record, "title", None)
         ):
-            record.title = existing_record.title
+            record = replace(record, title=existing_record.title)
         if record is not None:
             rows[ref] = record
     db.save_sessions(rows)

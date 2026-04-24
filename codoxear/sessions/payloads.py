@@ -23,9 +23,17 @@ class SessionPayloadService:
         return session_details_payload(self.runtime, self._require_manager(), session_id)
 
     def session_context_usage_payload(
-        self, s: Any, token_val: dict[str, Any] | None
+        self,
+        s: Any,
+        token_val: dict[str, Any] | None,
     ) -> dict[str, Any] | None:
-        return session_context_usage_payload(self.runtime, s, token_val)
+        return legacy_session_context_usage_payload(self.runtime, s, token_val)
+
+    def session_context_usage_from_stats(
+        self,
+        session_stats: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        return session_context_usage_payload(session_stats)
 
     def session_turn_timing_payload(
         self,
@@ -76,32 +84,56 @@ def session_details_payload(runtime: ServerRuntime, manager: Any, session_id: st
 
 
 
-def session_context_usage_payload(runtime: ServerRuntime, s: Any, token_val: dict[str, Any] | None) -> dict[str, Any] | None:
+def legacy_session_context_usage_payload(
+    runtime: ServerRuntime,
+    s: Any,
+    token_val: dict[str, Any] | None,
+) -> dict[str, Any] | None:
     sv = runtime
     if s.backend != "pi":
         return None
     context_window = None
-    model_provider, _preferred_auth_method, model, _reasoning_effort = sv.api.session_display.service(sv).resolved_session_run_settings(s)
+    model_provider, _preferred_auth_method, model, _reasoning_effort = (
+        sv.api.session_display.service(sv).resolved_session_run_settings(s)
+    )
     if model_provider is not None and model is not None:
         context_window = sv.api.pi_model_context_window(model_provider, model)
-    if (not isinstance(context_window, int) or context_window <= 0) and isinstance(token_val, dict):
+    if (not isinstance(context_window, int) or context_window <= 0) and isinstance(
+        token_val, dict
+    ):
         token_context_window = token_val.get("context_window")
         if isinstance(token_context_window, int) and token_context_window > 0:
             context_window = token_context_window
     if not isinstance(context_window, int) or context_window <= 0:
         return None
-    used_tokens = 0
+    total = None
     if isinstance(token_val, dict):
-        raw_used_tokens = token_val.get("tokens_in_context")
-        if isinstance(raw_used_tokens, int) and raw_used_tokens > 0:
-            used_tokens = raw_used_tokens
-    used_tokens = max(used_tokens, 0)
-    percent_used = int(round((used_tokens / context_window) * 100.0)) if context_window > 0 else 0
-    return {
-        "used_tokens": used_tokens,
-        "total_tokens": context_window,
-        "percent_used": percent_used,
-    }
+        total = token_val.get("tokens_in_context")
+    payload: dict[str, Any] = {"total_tokens": int(context_window)}
+    if isinstance(total, int):
+        payload["used_tokens"] = max(total, 0)
+    return payload
+
+
+def session_context_usage_payload(
+    session_stats: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if not isinstance(session_stats, dict):
+        return None
+    context_usage = session_stats.get("contextUsage")
+    if not isinstance(context_usage, dict):
+        return None
+    context_window = context_usage.get("contextWindow")
+    if not isinstance(context_window, int) or context_window <= 0:
+        return None
+    payload: dict[str, Any] = {"total_tokens": int(context_window)}
+    tokens = context_usage.get("tokens")
+    if isinstance(tokens, int):
+        payload["used_tokens"] = max(tokens, 0)
+    percent = context_usage.get("percent")
+    if isinstance(percent, int):
+        payload["percent_used"] = int(percent)
+    return payload
 
 
 
@@ -152,18 +184,16 @@ def session_diagnostics_payload(runtime: ServerRuntime, manager: Any, session_id
         s,
         st_token if isinstance(st_token, dict) else None,
     )
-    model_provider, preferred_auth_method, model, reasoning_effort = (
-        sv.api.session_display.service(sv).resolved_session_run_settings(s)
-    )
-    state_provider, state_model, state_effort = (
-        sv.api.session_display.service(sv).run_settings_from_state(state)
-    )
-    if model_provider is None:
-        model_provider = state_provider
-    if model is None:
-        model = state_model
-    if reasoning_effort is None:
-        reasoning_effort = state_effort
+    session_stats = manager.get_session_stats(session_id) if s.backend == "pi" else None
+    if s.backend == "pi":
+        model_provider, model, reasoning_effort = (
+            sv.api.session_display.service(sv).run_settings_from_state(state)
+        )
+        preferred_auth_method = None
+    else:
+        model_provider, preferred_auth_method, model, reasoning_effort = (
+            sv.api.session_display.service(sv).resolved_session_run_settings(s)
+        )
     service_tier = s.service_tier
     sidebar_meta = manager.sidebar_meta_get(session_id)
     cwd_path = sv.api.safe_expanduser(Path(s.cwd))
@@ -204,7 +234,7 @@ def session_diagnostics_payload(runtime: ServerRuntime, manager: Any, session_id
         "broker_busy": broker_busy,
         "queue_len": manager.queue_len(session_id),
         "token": token_val,
-        "context_usage": session_context_usage_payload(runtime, s, token_val),
+        "context_usage": session_context_usage_payload(session_stats),
         "turn_timing": turn_timing,
         "model_provider": model_provider,
         "preferred_auth_method": preferred_auth_method,

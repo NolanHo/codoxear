@@ -371,6 +371,11 @@ class SessionManagerRuntimeDelegates:
     def get_state(self, session_id: str) -> dict[str, Any]:
         return _sv(self).api.session_transport.service(self).get_state(session_id)
 
+    def get_session_stats(self, session_id: str) -> dict[str, Any]:
+        return _sv(self).api.session_transport.service(self).get_session_stats(
+            session_id
+        )
+
     def resolve_pi_bridge_session(
         self,
         session_id: str,
