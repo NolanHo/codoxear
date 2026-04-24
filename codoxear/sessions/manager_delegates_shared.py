@@ -24,3 +24,17 @@ def _instance_override(
     if target is class_func:
         return None
     return override
+
+
+def _method_override(
+    obj: Any,
+    name: str,
+    class_func: Callable[..., Any],
+) -> Callable[..., Any] | None:
+    override = getattr(obj, name, None)
+    if not callable(override):
+        return None
+    target = getattr(override, "__func__", override)
+    if target is class_func:
+        return None
+    return override

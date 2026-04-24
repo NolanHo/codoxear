@@ -484,9 +484,9 @@ def prune_stale_workspace_dirs(manager: Any) -> None:
                     if group_map.pop(cwd, None) is not None:
                         save_groups = True
     if save_recent:
-        manager._save_recent_cwds()
+        manager.save_recent_cwds()
     if save_groups:
-        manager._save_cwd_groups()
+        manager.save_cwd_groups()
 
 
 def known_cwd_group_keys(manager: Any) -> set[str]:
@@ -561,7 +561,7 @@ def cwd_group_set(
             manager._cwd_groups.pop(normalized_cwd, None)
         else:
             manager._cwd_groups[normalized_cwd] = entry
-    manager._save_cwd_groups()
+    manager.save_cwd_groups()
     return normalized_cwd, dict(entry)
 
 
@@ -619,7 +619,7 @@ def backfill_recent_cwds_from_logs(manager: Any) -> None:
         if len(seen) >= sv.api.RECENT_CWD_MAX:
             break
     if changed:
-        manager._save_recent_cwds()
+        manager.save_recent_cwds()
 
 
 def recent_cwds(manager: Any, *, limit: int) -> list[str]:
@@ -681,7 +681,7 @@ def queue_enqueue_local(manager: Any, session_id: str, text: str) -> dict[str, A
         if runtime_id is not None:
             s0 = manager._sessions.get(runtime_id)
             if s0 is not None:
-                durable_session_id = manager._durable_session_id_for_session(s0)
+                durable_session_id = manager.durable_session_id_for_session(s0)
     if ref is None:
         raise KeyError("unknown session")
     with manager._lock:
@@ -701,7 +701,7 @@ def queue_enqueue_local(manager: Any, session_id: str, text: str) -> dict[str, A
             touched_ts = sv.api.touch_session_file(s.session_path)
             s.pi_idle_activity_ts = None
             s.pi_busy_activity_floor = touched_ts
-    manager._save_queues()
+    manager.save_queues()
     if durable_session_id is not None:
         sv.api.publish_session_workspace_invalidate(
             durable_session_id,
@@ -726,7 +726,7 @@ def queue_delete_local(manager: Any, session_id: str, index: int) -> dict[str, A
         session = manager._sessions.get(runtime_id)
         if session is None:
             raise KeyError("unknown session")
-        durable_session_id = manager._durable_session_id_for_session(session)
+        durable_session_id = manager.durable_session_id_for_session(session)
         q = manager._queues.get(runtime_id)
         if not isinstance(q, list):
             q = []
@@ -738,7 +738,7 @@ def queue_delete_local(manager: Any, session_id: str, index: int) -> dict[str, A
         if not q:
             manager._queues.pop(runtime_id, None)
             manager._queues.pop(ref, None)
-    manager._save_queues()
+    manager.save_queues()
     sv.api.publish_session_workspace_invalidate(
         durable_session_id,
         runtime_id=runtime_id,
@@ -767,7 +767,7 @@ def queue_update_local(
         session = manager._sessions.get(runtime_id)
         if session is None:
             raise KeyError("unknown session")
-        durable_session_id = manager._durable_session_id_for_session(session)
+        durable_session_id = manager.durable_session_id_for_session(session)
         q = manager._queues.get(runtime_id)
         if not isinstance(q, list):
             q = []
@@ -776,7 +776,7 @@ def queue_update_local(
             raise ValueError("index out of range")
         q[int(index)] = t
         ql = len(q)
-    manager._save_queues()
+    manager.save_queues()
     sv.api.publish_session_workspace_invalidate(
         durable_session_id,
         runtime_id=runtime_id,
@@ -792,7 +792,7 @@ def files_key_for_session(manager: Any, session_id: str) -> tuple[str, Any, Any]
     s = manager._sessions.get(runtime_id)
     if not s:
         raise KeyError("unknown session")
-    ref = manager._page_state_ref_for_session(s)
+    ref = manager.page_state_ref_for_session(s)
     if ref is None:
         raise KeyError("unknown session")
     return runtime_id, ref, s
@@ -827,7 +827,7 @@ def files_add(manager: Any, session_id: str, path: str) -> list[str]:
         if len(cur) > sv.api.FILE_HISTORY_MAX:
             cur = cur[: sv.api.FILE_HISTORY_MAX]
         manager._files[runtime_id] = cur
-    manager._save_files()
+    manager.save_files()
     return list(cur)
 
 
@@ -845,7 +845,7 @@ def files_clear(manager: Any, session_id: str) -> None:
             manager._files.pop(key, None)
             dirty = True
     if dirty:
-        manager._save_files()
+        manager.save_files()
 
 
 def harness_get(manager: Any, session_id: str) -> dict[str, Any]:
@@ -915,5 +915,5 @@ def harness_set(
         manager._harness[runtime_id] = cur
         if enabled is not None and bool(enabled) is False:
             manager._harness_last_injected.pop(runtime_id, None)
-    manager._save_harness()
+    manager.save_harness()
     return harness_get(manager, session_id)

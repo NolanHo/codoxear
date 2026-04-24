@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .manager_delegates_shared import _instance_override, _sv
+from .manager_delegates_shared import _instance_override, _method_override, _sv
 
 
 class SessionManagerStateDelegates:
@@ -502,14 +502,36 @@ class SessionManagerStateDelegates:
     def _load_recent_cwds(self) -> None:
         _sv(self).api.page_state.service(self).load_recent_cwds()
 
-    def _save_recent_cwds(self) -> None:
+    def save_recent_cwds(self) -> None:
+        override = _method_override(
+            self,
+            "_save_recent_cwds",
+            SessionManagerStateDelegates._save_recent_cwds,
+        )
+        if override is not None:
+            override()
+            return
         _sv(self).api.page_state.service(self).save_recent_cwds()
+
+    def _save_recent_cwds(self) -> None:
+        self.save_recent_cwds()
 
     def _load_cwd_groups(self) -> None:
         _sv(self).api.page_state.service(self).load_cwd_groups()
 
-    def _save_cwd_groups(self) -> None:
+    def save_cwd_groups(self) -> None:
+        override = _method_override(
+            self,
+            "_save_cwd_groups",
+            SessionManagerStateDelegates._save_cwd_groups,
+        )
+        if override is not None:
+            override()
+            return
         _sv(self).api.page_state.service(self).save_cwd_groups()
+
+    def _save_cwd_groups(self) -> None:
+        self.save_cwd_groups()
 
     def cwd_groups_get(self) -> dict[str, dict[str, Any]]:
         return _sv(self).api.page_state.service(self).cwd_groups_get()
