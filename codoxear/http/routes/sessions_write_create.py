@@ -16,7 +16,7 @@ def handle_post(runtime: ServerRuntime, handler: Any, path: str) -> bool:
             handler._unauthorized()
             return True
         try:
-            obj = _common.read_json_object(runtime, handler)
+            obj = _common.read_json_object(facade, handler)
             cwd, entry = facade.manager.cwd_group_set(
                 cwd=obj.get("cwd"),
                 label=obj.get("label"),
@@ -32,7 +32,7 @@ def handle_post(runtime: ServerRuntime, handler: Any, path: str) -> bool:
         if not facade.require_auth(handler):
             handler._unauthorized()
             return True
-        obj = _common.read_json_object(runtime, handler)
+        obj = _common.read_json_object(facade, handler)
         try:
             payload = _session_creation.parse_create_session_request(runtime, obj)
         except ValueError as exc:
@@ -61,7 +61,7 @@ def handle_post(runtime: ServerRuntime, handler: Any, path: str) -> bool:
         if not facade.require_auth(handler):
             handler._unauthorized()
             return True
-        runtime.api.read_body(handler)
+        facade.read_body(handler)
         if not facade.delete_session(session_id):
             facade.json_response(handler, 404, {"error": "unknown session"})
             return True
@@ -73,7 +73,7 @@ def handle_post(runtime: ServerRuntime, handler: Any, path: str) -> bool:
         if not facade.require_auth(handler):
             handler._unauthorized()
             return True
-        runtime.api.read_body(handler)
+        facade.read_body(handler)
         try:
             response_payload = facade.handoff_session(session_id)
         except ValueError as exc:
@@ -90,7 +90,7 @@ def handle_post(runtime: ServerRuntime, handler: Any, path: str) -> bool:
         if not facade.require_auth(handler):
             handler._unauthorized()
             return True
-        runtime.api.read_body(handler)
+        facade.read_body(handler)
         try:
             response_payload = facade.restart_session(session_id)
         except ValueError as exc:

@@ -5,14 +5,14 @@ import urllib.parse
 from pathlib import Path
 from typing import Any
 
-from ...runtime import ServerRuntime
+from ...runtime_facade import RuntimeFacade
 
 
-def send_inline_blob(runtime: ServerRuntime, handler: Any, path_obj: Path) -> None:
+def send_inline_blob(facade: RuntimeFacade, handler: Any, path_obj: Path) -> None:
     raw = path_obj.read_bytes()
-    kind, ctype = runtime.api.file_kind(path_obj, raw)
+    kind, ctype = facade.file_kind(path_obj, raw)
     if kind not in {"image", "pdf"} or ctype is None:
-        runtime.api.json_response(handler, 400, {"error": "file is not previewable inline"})
+        facade.json_response(handler, 400, {"error": "file is not previewable inline"})
         return
     handler.send_response(200)
     handler.send_header("Content-Type", ctype)
@@ -29,12 +29,12 @@ def send_inline_blob(runtime: ServerRuntime, handler: Any, path_obj: Path) -> No
 
 
 def read_json_object(
-    runtime: ServerRuntime,
+    facade: RuntimeFacade,
     handler: Any,
     *,
     limit: int | None = None,
 ) -> dict[str, Any]:
-    body = runtime.api.read_body(handler, limit=limit or 2 * 1024 * 1024)
+    body = facade.read_body(handler, limit=limit or 2 * 1024 * 1024)
     body_text = body.decode("utf-8")
     if not body_text.strip():
         raise ValueError("empty request body")
@@ -50,13 +50,13 @@ def session_id_from_path(path: str) -> str:
 
 
 def require_query_value(
-    runtime: ServerRuntime,
+    facade: RuntimeFacade,
     handler: Any,
     query: dict[str, list[str]],
     key: str,
 ) -> str | None:
     values = query.get(key)
     if not values or not values[0]:
-        runtime.api.json_response(handler, 400, {"error": f"{key} required"})
+        facade.json_response(handler, 400, {"error": f"{key} required"})
         return None
     return values[0]

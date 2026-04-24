@@ -33,7 +33,7 @@ def _handle_edit(
     if not guard.require_auth():
         return True
     session_id = _common.session_id_from_path(ctx.path)
-    obj = _common.read_json_object(ctx.runtime, ctx.handler)
+    obj = _common.read_json_object(ctx.facade, ctx.handler)
     name = _require_name(obj, responder)
     if name is None:
         return True
@@ -59,7 +59,7 @@ def _handle_rename(
         return responder.not_found()
     if not guard.require_auth():
         return True
-    obj = _common.read_json_object(ctx.runtime, ctx.handler)
+    obj = _common.read_json_object(ctx.facade, ctx.handler)
     name = _require_name(obj, responder)
     if name is None:
         return True
@@ -83,7 +83,7 @@ def _handle_focus(
         return responder.not_found()
     if not guard.require_auth():
         return True
-    obj = _common.read_json_object(ctx.runtime, ctx.handler)
+    obj = _common.read_json_object(ctx.facade, ctx.handler)
     assert ctx.facade is not None
     try:
         payload = ctx.facade.session_focus(session_id, focused=obj.get("focused"))
@@ -106,7 +106,7 @@ def _handle_send(
         return responder.not_found()
     if not guard.require_auth():
         return True
-    obj = _common.read_json_object(ctx.runtime, ctx.handler)
+    obj = _common.read_json_object(ctx.facade, ctx.handler)
     text = _require_text(obj, responder)
     if text is None:
         return True
@@ -132,7 +132,7 @@ def _handle_ui_response(
         return responder.not_found()
     if not guard.require_auth():
         return True
-    obj = _common.read_json_object(ctx.runtime, ctx.handler)
+    obj = _common.read_json_object(ctx.facade, ctx.handler)
     assert ctx.facade is not None
     try:
         payload = ctx.facade.session_submit_ui_response(session_id, obj)
@@ -155,7 +155,7 @@ def _handle_enqueue(
         return responder.not_found()
     if not guard.require_auth():
         return True
-    obj = _common.read_json_object(ctx.runtime, ctx.handler)
+    obj = _common.read_json_object(ctx.facade, ctx.handler)
     text = _require_text(obj, responder)
     if text is None:
         return True
@@ -179,7 +179,7 @@ def _handle_queue_delete(
     if not guard.require_auth():
         return True
     session_id = _common.session_id_from_path(ctx.path)
-    obj = _common.read_json_object(ctx.runtime, ctx.handler)
+    obj = _common.read_json_object(ctx.facade, ctx.handler)
     idx = obj.get("index")
     if not isinstance(idx, int):
         return responder.bad_request("index required")
@@ -203,7 +203,7 @@ def _handle_queue_update(
     if not guard.require_auth():
         return True
     session_id = _common.session_id_from_path(ctx.path)
-    obj = _common.read_json_object(ctx.runtime, ctx.handler)
+    obj = _common.read_json_object(ctx.facade, ctx.handler)
     idx = obj.get("index")
     if not isinstance(idx, int):
         return responder.bad_request("index required")

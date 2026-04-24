@@ -233,8 +233,9 @@ def _handle_messages(
     before = 0 if before_q is None else int(before_q[0])
     before = max(0, before)
     limit_q = qs.get("limit")
-    limit = ctx.runtime.api.SESSION_HISTORY_PAGE_SIZE if limit_q is None else int(limit_q[0])
-    limit = max(20, min(ctx.runtime.api.SESSION_HISTORY_PAGE_SIZE, limit))
+    history_page_size = ctx.facade.session_history_page_size()
+    limit = history_page_size if limit_q is None else int(limit_q[0])
+    limit = max(20, min(history_page_size, limit))
 
     try:
         payload = ctx.facade.session_messages_payload(
@@ -249,7 +250,7 @@ def _handle_messages(
 
     responder.ok(payload)
     dt_total_ms = (time.perf_counter() - t0_total) * 1000.0
-    ctx.runtime.api.record_metric(
+    ctx.facade.record_metric(
         "api_messages_init_ms" if init else "api_messages_poll_ms",
         dt_total_ms,
     )

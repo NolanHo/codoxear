@@ -3,11 +3,11 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from ...runtime import ServerRuntime
+from ...runtime_facade import RuntimeFacade
 
 
-def read_json_object(runtime: ServerRuntime, handler: Any) -> dict[str, Any]:
-    body = runtime.api.read_body(handler)
+def read_json_object(facade: RuntimeFacade, handler: Any) -> dict[str, Any]:
+    body = facade.read_body(handler)
     body_text = body.decode("utf-8")
     if not body_text.strip():
         raise ValueError("empty request body")

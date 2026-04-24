@@ -8,8 +8,8 @@ from ...runtime import ServerRuntime
 from ...runtime_facade import build_runtime_facade
 
 
-def _read_json_object(runtime: ServerRuntime, handler: Any) -> dict[str, Any]:
-    body = runtime.api.read_body(handler)
+def _read_json_object(facade: Any, handler: Any) -> dict[str, Any]:
+    body = facade.read_body(handler)
     body_text = body.decode("utf-8")
     if not body_text.strip():
         raise ValueError("empty request body")
@@ -116,7 +116,7 @@ def handle_post(runtime: ServerRuntime, handler: Any, path: str, _u: Any) -> boo
         if not facade.require_auth(handler):
             handler._unauthorized()
             return True
-        obj = _read_json_object(runtime, handler)
+        obj = _read_json_object(facade, handler)
         try:
             payload = facade.voice_set_settings(obj)
         except ValueError as e:
@@ -129,7 +129,7 @@ def handle_post(runtime: ServerRuntime, handler: Any, path: str, _u: Any) -> boo
         if not facade.require_auth(handler):
             handler._unauthorized()
             return True
-        obj = _read_json_object(runtime, handler)
+        obj = _read_json_object(facade, handler)
         try:
             payload = facade.voice_upsert_subscription(obj)
         except ValueError as e:
@@ -142,7 +142,7 @@ def handle_post(runtime: ServerRuntime, handler: Any, path: str, _u: Any) -> boo
         if not facade.require_auth(handler):
             handler._unauthorized()
             return True
-        obj = _read_json_object(runtime, handler)
+        obj = _read_json_object(facade, handler)
         endpoint = obj.get("endpoint")
         enabled = obj.get("enabled")
         if not isinstance(endpoint, str) or not endpoint.strip():
@@ -178,7 +178,7 @@ def handle_post(runtime: ServerRuntime, handler: Any, path: str, _u: Any) -> boo
         if not facade.require_auth(handler):
             handler._unauthorized()
             return True
-        obj = _read_json_object(runtime, handler)
+        obj = _read_json_object(facade, handler)
         client_id = obj.get("client_id")
         enabled = obj.get("enabled")
         if not isinstance(client_id, str) or not client_id.strip():
@@ -207,7 +207,7 @@ def handle_post(runtime: ServerRuntime, handler: Any, path: str, _u: Any) -> boo
         return True
 
     if path == "/api/hooks/notify":
-        runtime.api.read_body(handler)
+        facade.read_body(handler)
         facade.json_response(handler, 200, {"ignored": True})
         return True
 

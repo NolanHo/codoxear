@@ -26,8 +26,166 @@ class RuntimeFacade:
     def json_response(self, handler: Any, status: int, payload: dict[str, Any]) -> None:
         self.api.json_response(handler, status, payload)
 
-    def match_session_route(self, path: str, suffix: str) -> str | None:
-        return self.api.match_session_route(path, suffix)
+    def read_body(self, handler: Any, *, limit: int | None = None) -> bytes:
+        if limit is None:
+            return self.api.read_body(handler)
+        return self.api.read_body(handler, limit=limit)
+
+    def is_same_password(self, password: str) -> bool:
+        return bool(self.api.is_same_password(password))
+
+    def set_auth_cookie(self, handler: Any) -> None:
+        self.api.set_auth_cookie(handler)
+
+    def logout_cookie_header(self) -> str:
+        return (
+            f"{self.api.COOKIE_NAME}=deleted; Path={self.api.COOKIE_PATH}; "
+            "Max-Age=0; HttpOnly; SameSite=Strict"
+        )
+
+    def resolve_public_web_asset(self, asset: str) -> Path | None:
+        return self.api.resolve_public_web_asset(asset)
+
+    def read_web_index(self) -> tuple[str, str]:
+        return self.api.read_web_index()
+
+    def use_legacy_web(self) -> bool:
+        return bool(self.api.USE_LEGACY_WEB)
+
+    def served_web_dist_dir(self) -> Path | None:
+        return self.api.served_web_dist_dir()
+
+    def is_path_within(self, root: Path, candidate: Path) -> bool:
+        return bool(self.api.is_path_within(root, candidate))
+
+    def file_kind(self, path_obj: Path, raw: bytes) -> tuple[str, str | None]:
+        return self.api.file_kind(path_obj, raw)
+
+    def file_search_limit(self) -> int:
+        return int(self.api.FILE_SEARCH_LIMIT)
+
+    def file_read_max_bytes(self) -> int:
+        return int(self.api.FILE_READ_MAX_BYTES)
+
+    def attach_upload_body_max_bytes(self) -> int:
+        return int(self.api.ATTACH_UPLOAD_BODY_MAX_BYTES)
+
+    def attach_upload_max_bytes(self) -> int:
+        return int(self.api.ATTACH_UPLOAD_MAX_BYTES)
+
+    def workspace_download_disposition(self, path_obj: Path) -> str:
+        return self.api.workspace_file_access.download_disposition(path_obj)
+
+    def workspace_read_text_file_for_write(self, path_obj: Path) -> tuple[str, int, str]:
+        return self.api.workspace_file_access.read_text_file_for_write(
+            path_obj,
+            max_bytes=self.api.FILE_READ_MAX_BYTES,
+        )
+
+    def tmux_available(self) -> bool:
+        return bool(self.api.tmux_available())
+
+    def session_list_page_size(self) -> int:
+        return int(self.api.SESSION_LIST_PAGE_SIZE)
+
+    def session_list_group_page_size(self) -> int:
+        return int(self.api.SESSION_LIST_GROUP_PAGE_SIZE)
+
+    def session_list_recent_group_limit(self) -> int:
+        return int(self.api.SESSION_LIST_RECENT_GROUP_LIMIT)
+
+    def session_history_page_size(self) -> int:
+        return int(self.api.SESSION_HISTORY_PAGE_SIZE)
+
+    def record_metric(self, name: str, value: float) -> None:
+        self.api.record_metric(name, value)
+
+    def clean_harness_cooldown_minutes(self, value: Any) -> int:
+        return int(self.api.clean_harness_cooldown_minutes(value))
+
+    def clean_harness_remaining_injections(self, value: Any, *, allow_zero: bool) -> int | None:
+        return self.api.clean_harness_remaining_injections(value, allow_zero=allow_zero)
+
+    def files_read_client(self, path_raw: str, session_id: str) -> dict[str, Any]:
+        from .workspace import service as _workspace_service
+
+        return _workspace_service.read_client_file(self.runtime, path_raw, session_id)
+
+    def files_inspect_client(self, path_raw: str, session_id: str) -> dict[str, Any]:
+        from .workspace import service as _workspace_service
+
+        return _workspace_service.inspect_client_file(self.runtime, path_raw, session_id)
+
+    def files_resolve_client_blob(self, path_raw: str) -> Path:
+        from .workspace import service as _workspace_service
+
+        return _workspace_service.resolve_client_blob(self.runtime, path_raw)
+
+    def files_read_session(self, session_id: str, rel: str) -> dict[str, Any]:
+        from .workspace import service as _workspace_service
+
+        return _workspace_service.read_session_file(self.runtime, session_id, rel)
+
+    def files_search_session(self, session_id: str, query: str, limit: int) -> dict[str, Any]:
+        from .workspace import service as _workspace_service
+
+        return _workspace_service.search_session_files(self.runtime, session_id, query, limit)
+
+    def files_list_session(self, session_id: str, raw_rel: str) -> dict[str, Any]:
+        from .workspace import service as _workspace_service
+
+        return _workspace_service.list_session_files(self.runtime, session_id, raw_rel)
+
+    def files_resolve_session_blob(self, session_id: str, rel: str) -> Path:
+        from .workspace import service as _workspace_service
+
+        return _workspace_service.resolve_session_blob(self.runtime, session_id, rel)
+
+    def files_download_session(self, session_id: str, rel: str) -> tuple[Path, bytes, int]:
+        from .workspace import service as _workspace_service
+
+        return _workspace_service.download_session_file(self.runtime, session_id, rel)
+
+    def files_write_session(
+        self,
+        session_id: str,
+        *,
+        path_raw: str,
+        text: str,
+        create: bool,
+        version: str | None,
+    ) -> dict[str, Any]:
+        from .workspace import service as _workspace_service
+
+        return _workspace_service.write_session_file(
+            self.runtime,
+            session_id,
+            path_raw=path_raw,
+            text=text,
+            create=create,
+            version=version,
+        )
+
+    def files_inject_session_attachment(
+        self,
+        session_id: str,
+        *,
+        filename: str,
+        attachment_index: int,
+        data_b64: str,
+    ) -> dict[str, Any]:
+        from .workspace import service as _workspace_service
+
+        return _workspace_service.inject_session_attachment(
+            self.runtime,
+            session_id,
+            filename=filename,
+            attachment_index=attachment_index,
+            data_b64=data_b64,
+        )
+
+    def match_session_route(self, path: str, *suffix: str) -> str | None:
+        return self.api.match_session_route(path, *suffix)
 
     def poll_events(self, after_seq: int, *, timeout_s: float) -> Any:
         return self.api.EVENT_HUB.poll(after_seq, timeout_s=timeout_s)

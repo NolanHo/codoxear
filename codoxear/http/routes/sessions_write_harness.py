@@ -15,7 +15,7 @@ def handle_post(runtime: ServerRuntime, handler: Any, path: str) -> bool:
             handler._unauthorized()
             return True
         session_id = _common.session_id_from_path(path)
-        obj = _common.read_json_object(runtime, handler)
+        obj = _common.read_json_object(facade, handler)
         enabled_raw = obj.get("enabled", None)
         request_raw = obj.get("request", None)
         cooldown_minutes_raw = obj.get("cooldown_minutes", None)
@@ -30,7 +30,7 @@ def handle_post(runtime: ServerRuntime, handler: Any, path: str) -> bool:
         request = request_raw if request_raw is not None else None
         if cooldown_minutes_raw is not None:
             try:
-                cooldown_minutes = runtime.api.clean_harness_cooldown_minutes(cooldown_minutes_raw)
+                cooldown_minutes = facade.clean_harness_cooldown_minutes(cooldown_minutes_raw)
             except ValueError as exc:
                 facade.json_response(handler, 400, {"error": str(exc)})
                 return True
@@ -38,7 +38,7 @@ def handle_post(runtime: ServerRuntime, handler: Any, path: str) -> bool:
             cooldown_minutes = None
         if remaining_injections_raw is not None:
             try:
-                remaining_injections = runtime.api.clean_harness_remaining_injections(
+                remaining_injections = facade.clean_harness_remaining_injections(
                     remaining_injections_raw,
                     allow_zero=True,
                 )
@@ -66,7 +66,7 @@ def handle_post(runtime: ServerRuntime, handler: Any, path: str) -> bool:
             handler._unauthorized()
             return True
         session_id = _common.session_id_from_path(path)
-        runtime.api.read_body(handler)
+        facade.read_body(handler)
         try:
             payload = facade.session_interrupt(session_id)
         except KeyError:

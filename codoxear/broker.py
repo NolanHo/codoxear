@@ -105,15 +105,21 @@ def _ensure_pi_extension_arg(args: list[str]) -> list[str]:
     if AGENT_BACKEND != "pi":
         return list(args)
 
+    out = list(args)
     bridge_path = str(_PI_ASK_USER_BRIDGE_PATH)
-    for index, token in enumerate(args):
+    for index, token in enumerate(out):
         if token != "-e":
             continue
-        if (index + 1) < len(args) and str(
-            args[index + 1] or ""
-        ).strip() == bridge_path:
-            return list(args)
-    return ["-e", bridge_path, *args]
+        if (index + 1) < len(out) and str(out[index + 1] or "").strip() == bridge_path:
+            return out
+
+    insert_at = len(out)
+    for index, token in enumerate(out):
+        if token == "--session":
+            insert_at = index
+            break
+    out[insert_at:insert_at] = ["-e", bridge_path]
+    return out
 
 
 def _resume_session_id_from_args(args: list[str]) -> str | None:
@@ -1556,10 +1562,14 @@ class Broker:
         if st2 and st2.sock_path:
             try:
                 st2.sock_path.unlink()
+            except FileNotFoundError:
+                pass
             except Exception:
                 traceback.print_exc()
             try:
                 st2.sock_path.with_suffix(".json").unlink()
+            except FileNotFoundError:
+                pass
             except Exception:
                 traceback.print_exc()
 
