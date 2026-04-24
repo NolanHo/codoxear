@@ -4345,6 +4345,26 @@ def _display_session_busy(
     return bool(busy), broker_busy
 
 
+def _run_settings_from_state(
+    state: dict[str, Any] | None,
+) -> tuple[str | None, str | None, str | None]:
+    if not isinstance(state, dict):
+        return None, None, None
+    model_payload = state.get("model")
+    provider: str | None = None
+    model: str | None = None
+    if isinstance(model_payload, dict):
+        provider = _clean_optional_text(model_payload.get("provider"))
+        model = _clean_optional_text(
+            model_payload.get("id") or model_payload.get("modelId")
+        )
+    elif isinstance(model_payload, str):
+        model = _clean_optional_text(model_payload)
+    reasoning_effort = _display_pi_reasoning_effort(state.get("thinkingLevel"))
+    return provider, model, reasoning_effort
+
+
+
 def _resolved_session_run_settings(
     s: Session,
 ) -> tuple[str | None, str | None, str | None, str | None]:
@@ -9490,6 +9510,16 @@ class SessionManager:
         self, session_id: str, payload: dict[str, Any]
     ) -> dict[str, Any]:
         return _pi_ui_bridge.submit_ui_response(self, session_id, payload)
+
+    def set_session_model(
+        self, session_id: str, *, model: str, provider: str | None = None
+    ) -> dict[str, Any]:
+        return _pi_ui_bridge.set_session_model(
+            self,
+            session_id,
+            model=model,
+            provider=provider,
+        )
 
     def get_tail(self, session_id: str) -> str:
         runtime_id = self._runtime_session_id_for_identifier(session_id)

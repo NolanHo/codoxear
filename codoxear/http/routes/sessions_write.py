@@ -245,6 +245,51 @@ def handle_post(handler: Any, path: str, _u: Any) -> bool:
             return True
         sv._json_response(handler, 200, {"ok": True, "focused": focused})
         return True
+    if path.startswith("/api/sessions/") and path.endswith("/model"):
+        session_id = sv._match_session_route(path, "model")
+        if session_id is None:
+            sv._json_response(handler, 404, {"error": "unknown session"})
+            return True
+        if not sv._require_auth(handler):
+            handler._unauthorized()
+            return True
+        body = sv._read_body(handler)
+        body_text = body.decode("utf-8")
+        if not body_text.strip():
+            raise ValueError("empty request body")
+        obj = json.loads(body_text)
+        if not isinstance(obj, dict):
+            raise ValueError("invalid json body (expected object)")
+        model_raw = obj.get("model")
+        model = model_raw.strip() if isinstance(model_raw, str) else ""
+        if not model:
+            sv._json_response(handler, 400, {"error": "model required"})
+            return True
+        provider_raw = obj.get("provider")
+        provider = provider_raw.strip() if isinstance(provider_raw, str) and provider_raw.strip() else None
+        try:
+            res = sv.MANAGER.set_session_model(session_id, model=model, provider=provider)
+        except KeyError:
+            sv._json_response(handler, 404, {"error": "unknown session"})
+            return True
+        except ValueError as e:
+            sv._json_response(handler, 502, {"error": str(e)})
+            return True
+        durable_session_id = sv.MANAGER._durable_session_id_for_identifier(session_id) or session_id
+        runtime_id = sv.MANAGER._runtime_session_id_for_identifier(session_id)
+        sv._publish_session_live_invalidate(
+            durable_session_id,
+            runtime_id=runtime_id,
+            reason="model_switched",
+        )
+        sv._publish_session_workspace_invalidate(
+            durable_session_id,
+            runtime_id=runtime_id,
+            reason="model_switched",
+        )
+        sv._publish_sessions_invalidate(reason="model_switched")
+        sv._json_response(handler, 200, res)
+        return True
     if path.startswith("/api/sessions/") and path.endswith("/send"):
         session_id = sv._match_session_route(path, "send")
         if session_id is None:

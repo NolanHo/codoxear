@@ -9,6 +9,7 @@ import type {
   HandoffSessionResponse,
   RestartSessionResponse,
   FocusSessionResponse,
+  SwitchSessionModelResponse,
   GitFileVersionsResponse,
   HarnessConfigResponse,
   EditCwdGroupResponse,
@@ -126,6 +127,10 @@ export const api = {
   async sendMessage(sessionId: string, text: string, runtimeId?: string | null) {
     const routeId = getSessionRouteId(sessionId, runtimeId);
     return postJson(`/api/sessions/${routeId}/send`, { text });
+  },
+  switchSessionModel(sessionId: string, payload: { model: string; provider?: string }, runtimeId?: string | null) {
+    const routeId = getSessionRouteId(sessionId, runtimeId);
+    return postJson<SwitchSessionModelResponse>(`/api/sessions/${routeId}/model`, payload);
   },
   async enqueueMessage(sessionId: string, text: string, runtimeId?: string | null) {
     const routeId = getSessionRouteId(sessionId, runtimeId);

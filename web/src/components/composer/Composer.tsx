@@ -244,7 +244,6 @@ function parseModelFromEventText(text: unknown) {
   }
   const patterns = [
     /switched to\s+([^\s.,;]+)/i,
-    /model(?:\s+changed)?\s*(?:to|:)\s*([^\s.,;]+)/i,
     /modelId\s*[=:]\s*([^\s.,;]+)/i,
   ];
   for (const pattern of patterns) {
@@ -267,9 +266,11 @@ function getModelFromEvents(events: MessageEvent[] | undefined) {
       continue;
     }
     const details = event.details && typeof event.details === "object" ? event.details as Record<string, unknown> : null;
-    const detailModel = normalizeModelValue(details?.model ?? details?.modelId);
-    if (detailModel) {
-      return detailModel;
+    if (event.type === "pi_model_change" || event.type === "pi_event") {
+      const detailModel = normalizeModelValue(details?.model ?? details?.modelId);
+      if (detailModel) {
+        return detailModel;
+      }
     }
     if (event.role === "user") {
       const commandModel = parseModelFromUserCommand(event.text);
@@ -443,7 +444,7 @@ export function Composer({ compactMobile = false }: ComposerProps = {}) {
   };
   const composerState = useComposerStore();
   const sending = composerState.sending;
-  const { sessionId: sessionUiSessionId, diagnostics } = useSessionUiStore();
+  const { sessionId: sessionUiSessionId, runtimeId: sessionUiRuntimeId, diagnostics } = useSessionUiStore();
   const sessionsStoreApi = useSessionsStoreApi();
   const composerStoreApi = useComposerStoreApi();
   const liveSessionStoreApi = useLiveSessionStoreApi();
@@ -471,8 +472,21 @@ export function Composer({ compactMobile = false }: ComposerProps = {}) {
   const activeSessionBusy = Boolean(activeSession && (activeSession.busy || (activeSessionId ? busyBySessionId[activeSessionId] === true : false)));
   const activeSessionIsPi = activeSession?.agent_backend === "pi";
   const activeEvents = activeSessionId ? bySessionId[activeSessionId] ?? [] : [];
-  const diagnosticsModel = sessionUiSessionId === activeSessionId ? getDiagnosticsModel(diagnostics) : "";
-  const diagnosticsReasoningEffort = sessionUiSessionId === activeSessionId ? getDiagnosticsReasoningEffort(diagnostics) : "";
+  const sessionUiMatchesActive = Boolean(
+    activeSessionId
+      && (
+        sessionUiSessionId === activeSessionId
+        || (
+          typeof sessionUiRuntimeId === "string"
+          && sessionUiRuntimeId.trim().length > 0
+          && typeof activeSessionRuntimeId === "string"
+          && activeSessionRuntimeId.trim().length > 0
+          && sessionUiRuntimeId === activeSessionRuntimeId
+        )
+      ),
+  );
+  const diagnosticsModel = sessionUiMatchesActive ? getDiagnosticsModel(diagnostics) : "";
+  const diagnosticsReasoningEffort = sessionUiMatchesActive ? getDiagnosticsReasoningEffort(diagnostics) : "";
   const eventsModel = useMemo(() => getModelFromEvents(activeEvents), [activeEvents]);
   const activeModel = typeof activeSession?.model === "string" && activeSession.model.trim()
     ? activeSession.model.trim()
@@ -490,7 +504,6 @@ export function Composer({ compactMobile = false }: ComposerProps = {}) {
   const modelSwitchDisabled = !activeSessionId
     || !activeSessionIsPi
     || activeSessionPending
-    || activeSessionBusy
     || sending
     || modelSwitching
     || !modelDraftTrimmed
@@ -888,21 +901,10 @@ export function Composer({ compactMobile = false }: ComposerProps = {}) {
   };
 
   const switchSessionModel = () => {
-    if (!activeSessionId || !activeSessionIsPi) {
-      return;
-    }
-    if (activeSessionBusy) {
-      setModelErrorBySessionId((value) => ({
-        ...value,
-        [activeSessionId]: "Wait until the current turn finishes before switching model.",
-      }));
-      return;
-    }
-    if (modelSwitchDisabled) {
+    if (!activeSessionId || !activeSessionIsPi || modelSwitchDisabled) {
       return;
     }
     const targetModel = modelDraftTrimmed;
-    const commandText = `/model ${targetModel}`;
 
     setModelSwitchingBySessionId((value) => ({
       ...value,
@@ -914,15 +916,14 @@ export function Composer({ compactMobile = false }: ComposerProps = {}) {
     }));
 
     (activeSessionRuntimeId
-      ? api.sendMessage(activeSessionId, commandText, activeSessionRuntimeId)
-      : api.sendMessage(activeSessionId, commandText))
-      .then(async (response) => {
+      ? api.switchSessionModel(activeSessionId, { model: targetModel }, activeSessionRuntimeId)
+      : api.switchSessionModel(activeSessionId, { model: targetModel }))
+      .then(async () => {
         setModelDraftBySessionId((value) => ({
           ...value,
           [activeSessionId]: targetModel,
         }));
-        const target = await resolvePostSendSessionIdentity(response, activeSessionId, activeSessionRuntimeId);
-        await refreshSessionAfterSend(target.sessionId, target.runtimeId, activeSession?.agent_backend);
+        await refreshSessionAfterSend(activeSessionId, activeSessionRuntimeId, activeSession?.agent_backend);
       })
       .catch((error) => {
         const message = error instanceof Error ? error.message : "Failed to switch model";

@@ -113,6 +113,13 @@ export interface FocusSessionResponse {
   focused?: boolean;
 }
 
+export interface SwitchSessionModelResponse {
+  ok?: boolean;
+  model?: string | null;
+  provider?: string | null;
+  data?: Record<string, unknown>;
+}
+
 export interface CwdGroupMeta {
   label?: string;
   collapsed?: boolean;

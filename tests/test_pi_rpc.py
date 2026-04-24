@@ -262,6 +262,49 @@ class TestPiRpc(unittest.TestCase):
         finally:
             client.close()
 
+    def test_set_model_sends_set_model_command_with_model_id(self) -> None:
+        proc = _FakeProc()
+        client = PiRpcClient(proc=proc)
+        try:
+            result_box: dict[str, object] = {}
+
+            def _call() -> None:
+                result_box["result"] = client.set_model("gpt-5.4")
+
+            thread = threading.Thread(target=_call)
+            thread.start()
+            stdin_value = ""
+            deadline = time.time() + 1.0
+            while not stdin_value:
+                stdin_value = proc.stdin.getvalue()
+                if stdin_value:
+                    break
+                if time.time() >= deadline:
+                    self.fail("pi rpc set_model payload was not written")
+                time.sleep(0.01)
+
+            written = json.loads(stdin_value)
+            proc.stdout.put_line(
+                json.dumps(
+                    {
+                        "type": "response",
+                        "id": written["id"],
+                        "command": "set_model",
+                        "success": True,
+                        "data": {"id": "gpt-5.4", "provider": "openai"},
+                    }
+                )
+                + "\n"
+            )
+            thread.join(1.0)
+
+            self.assertFalse(thread.is_alive())
+            self.assertEqual(written["type"], "set_model")
+            self.assertEqual(written["modelId"], "gpt-5.4")
+            self.assertEqual(result_box["result"], {"id": "gpt-5.4", "provider": "openai"})
+        finally:
+            client.close()
+
     def test_event_reader_collects_async_events_without_blocking_responses(
         self,
     ) -> None:

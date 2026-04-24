@@ -250,6 +250,15 @@ class PiRpcClient:
             return []
         return [item for item in commands if isinstance(item, dict)]
 
+    def set_model(self, model_id: str, *, provider: str | None = None) -> dict[str, Any]:
+        model = model_id.strip() if isinstance(model_id, str) else ""
+        if not model:
+            raise ValueError("model_id required")
+        payload: dict[str, Any] = {"modelId": model}
+        if isinstance(provider, str) and provider.strip():
+            payload["provider"] = provider.strip()
+        return self.send_command("set_model", payload=payload)
+
     def send_ui_response(
         self,
         request_id: str,

@@ -107,6 +107,13 @@ def session_diagnostics_payload(manager: Any, session_id: str, s: Any, state: di
         st_token if isinstance(st_token, dict) else None,
     )
     model_provider, preferred_auth_method, model, reasoning_effort = sv._resolved_session_run_settings(s)
+    state_provider, state_model, state_effort = sv._run_settings_from_state(state)
+    if model_provider is None:
+        model_provider = state_provider
+    if model is None:
+        model = state_model
+    if reasoning_effort is None:
+        reasoning_effort = state_effort
     service_tier = s.service_tier
     sidebar_meta = manager.sidebar_meta_get(session_id)
     cwd_path = sv._safe_expanduser(Path(s.cwd))

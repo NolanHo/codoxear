@@ -928,6 +928,32 @@ class PiBroker:
                 _send_socket_json_line(conn, {"commands": commands})
                 return
 
+            if cmd == "set_model":
+                model_raw = req.get("model")
+                if model_raw is None:
+                    model_raw = req.get("model_id")
+                if model_raw is None:
+                    model_raw = req.get("modelId")
+                model_id = model_raw.strip() if isinstance(model_raw, str) else ""
+                if not model_id:
+                    _send_socket_json_line(conn, {"error": "model required"})
+                    return
+                provider_raw = req.get("provider")
+                provider = provider_raw.strip() if isinstance(provider_raw, str) else None
+                with self._lock:
+                    st = self.state
+                    if st is not None:
+                        self._drain_rpc_output_locked(st)
+                        rpc = st.rpc
+                    else:
+                        rpc = None
+                if rpc is None:
+                    _send_socket_json_line(conn, {"error": "no state"})
+                    return
+                data = rpc.set_model(model_id, provider=provider)
+                _send_socket_json_line(conn, {"ok": True, "data": data})
+                return
+
             if cmd == "ui_response":
                 request_id = req.get("id")
                 if not isinstance(request_id, str) or not request_id:
