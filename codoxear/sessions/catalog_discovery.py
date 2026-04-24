@@ -127,7 +127,7 @@ def _discover_one_socket(
                     if preferred_session_path is None
                     else None
                 )
-                session_path, session_path_source = sv.api.resolve_pi_session_path(
+                session_path, session_path_source = sv.api.resume_candidates.service(sv).resolve_pi_session_path(
                     thread_id=thread_id,
                     cwd=cwd,
                     start_ts=start_ts,

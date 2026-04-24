@@ -658,7 +658,7 @@ def get_messages_page(
         next_before = 0
         if session.session_path is None and session.cwd:
             claimed = manager.claimed_pi_session_paths(exclude_sid=session_id)
-            discovered, discovered_source = sv.api.resolve_pi_session_path(
+            discovered, discovered_source = sv.api.resume_candidates.service(sv).resolve_pi_session_path(
                 thread_id=session.thread_id,
                 cwd=session.cwd,
                 start_ts=session.start_ts,
@@ -692,7 +692,7 @@ def get_messages_page(
                 old_sp = session.session_path
                 claimed = manager.claimed_pi_session_paths(exclude_sid=session_id)
                 claimed.add(old_sp)
-                newer_sp, newer_sp_source = sv.api.resolve_pi_session_path(
+                newer_sp, newer_sp_source = sv.api.resume_candidates.service(sv).resolve_pi_session_path(
                     thread_id=session.thread_id,
                     cwd=session.cwd,
                     start_ts=session.start_ts,

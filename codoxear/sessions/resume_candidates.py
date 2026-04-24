@@ -4,9 +4,26 @@ import json
 import math
 from dataclasses import dataclass
 from pathlib import Path
+from types import FunctionType
 from typing import Any
 
 from ..runtime import ServerRuntime
+
+
+def _runtime_wrapper(runtime: ServerRuntime, name: str) -> Any | None:
+    module = getattr(runtime, "module", None)
+    if module is None:
+        return None
+    wrapper = getattr(module, name, None)
+    if not callable(wrapper):
+        return None
+    if (
+        isinstance(wrapper, FunctionType)
+        and getattr(wrapper, "__module__", None) == getattr(module, "__name__", None)
+        and getattr(wrapper, "__name__", None) == name
+    ):
+        return None
+    return wrapper
 
 
 @dataclass(slots=True)
@@ -37,6 +54,9 @@ class SessionResumeCandidatesService:
         *,
         agent_backend: str = "codex",
     ) -> dict[str, Any] | None:
+        wrapper = _runtime_wrapper(self.runtime, "_resume_candidate_from_log")
+        if wrapper is not None:
+            return wrapper(log_path, agent_backend=agent_backend)
         return resume_candidate_from_log(
             self.runtime,
             log_path,
@@ -47,6 +67,9 @@ class SessionResumeCandidatesService:
         self,
         session_path: Path,
     ) -> dict[str, Any] | None:
+        wrapper = _runtime_wrapper(self.runtime, "_pi_resume_candidate_from_session_file")
+        if wrapper is not None:
+            return wrapper(session_path)
         return pi_resume_candidate_from_session_file(self.runtime, session_path)
 
     def discover_pi_session_for_cwd(
@@ -56,6 +79,9 @@ class SessionResumeCandidatesService:
         *,
         exclude: set[Path] | None = None,
     ) -> Path | None:
+        wrapper = _runtime_wrapper(self.runtime, "_discover_pi_session_for_cwd")
+        if wrapper is not None:
+            return wrapper(cwd, start_ts, exclude=exclude)
         return discover_pi_session_for_cwd(
             self.runtime,
             cwd,
@@ -72,6 +98,15 @@ class SessionResumeCandidatesService:
         preferred: Path | None = None,
         exclude: set[Path] | None = None,
     ) -> tuple[Path | None, str | None]:
+        wrapper = _runtime_wrapper(self.runtime, "_resolve_pi_session_path")
+        if wrapper is not None:
+            return wrapper(
+                thread_id=thread_id,
+                cwd=cwd,
+                start_ts=start_ts,
+                preferred=preferred,
+                exclude=exclude,
+            )
         return resolve_pi_session_path(
             self.runtime,
             thread_id=thread_id,
@@ -90,6 +125,15 @@ class SessionResumeCandidatesService:
         backend: str | None = None,
         agent_backend: str | None = None,
     ) -> list[dict[str, Any]]:
+        wrapper = _runtime_wrapper(self.runtime, "_list_resume_candidates_for_cwd")
+        if wrapper is not None:
+            return wrapper(
+                cwd,
+                limit=limit,
+                offset=offset,
+                backend=backend,
+                agent_backend=agent_backend,
+            )
         return list_resume_candidates_for_cwd(
             self.runtime,
             cwd,
@@ -100,6 +144,9 @@ class SessionResumeCandidatesService:
         )
 
     def iter_all_resume_candidates(self, *, limit: int = 200) -> list[dict[str, Any]]:
+        wrapper = _runtime_wrapper(self.runtime, "_iter_all_resume_candidates")
+        if wrapper is not None:
+            return wrapper(limit=limit)
         return iter_all_resume_candidates(self.runtime, limit=limit)
 
 
@@ -300,7 +347,7 @@ def resolve_pi_session_path(
             return exact, "exact"
     if preferred is not None:
         return preferred, "preferred"
-    discovered = sv.api.discover_pi_session_for_cwd(cwd, start_ts, exclude=exclude)
+    discovered = sv.api.resume_candidates.service(sv).discover_pi_session_for_cwd(cwd, start_ts, exclude=exclude)
     if discovered is not None:
         return discovered, "discovered"
     return None, None
@@ -327,7 +374,7 @@ def list_resume_candidates_for_cwd(
         if not session_dir.exists():
             return rows
         for session_path in session_dir.glob("*.jsonl"):
-            row = sv.api.pi_resume_candidate_from_session_file(session_path)
+            row = sv.api.resume_candidates.service(sv).pi_resume_candidate_from_session_file(session_path)
             if not isinstance(row, dict):
                 continue
             if row.get("cwd") != cwd2:
@@ -339,7 +386,7 @@ def list_resume_candidates_for_cwd(
     seen: set[str] = set()
     for log_path in sv.api.iter_session_logs(agent_backend=backend2):
         try:
-            row = sv.api.resume_candidate_from_log(log_path, agent_backend=backend2)
+            row = sv.api.resume_candidates.service(sv).resume_candidate_from_log(log_path, agent_backend=backend2)
         except Exception:
             continue
         if not isinstance(row, dict):
@@ -369,7 +416,7 @@ def iter_all_resume_candidates(
 
     if sv.api.PI_NATIVE_SESSIONS_DIR.exists():
         for session_path in sv.api.PI_NATIVE_SESSIONS_DIR.glob("--*--/*.jsonl"):
-            row = sv.api.pi_resume_candidate_from_session_file(session_path)
+            row = sv.api.resume_candidates.service(sv).pi_resume_candidate_from_session_file(session_path)
             if not isinstance(row, dict):
                 continue
             session_id = row.get("session_id")
@@ -383,7 +430,7 @@ def iter_all_resume_candidates(
 
     for log_path in sv.api.iter_session_logs(agent_backend="codex"):
         try:
-            row = sv.api.resume_candidate_from_log(log_path, agent_backend="codex")
+            row = sv.api.resume_candidates.service(sv).resume_candidate_from_log(log_path, agent_backend="codex")
         except Exception:
             continue
         if not isinstance(row, dict):

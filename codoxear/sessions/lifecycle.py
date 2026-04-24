@@ -148,7 +148,7 @@ def catalog_record_for_ref(manager: Any, ref: Any):
     if source_path is None or (not source_path.exists()):
         return None
     if backend == "pi":
-        row = sv.api.pi_resume_candidate_from_session_file(source_path)
+        row = sv.api.resume_candidates.service(sv).pi_resume_candidate_from_session_file(source_path)
         if not isinstance(row, dict):
             return None
         title = sv.api.clean_optional_text(row.get("title")) or ""
@@ -159,7 +159,7 @@ def catalog_record_for_ref(manager: Any, ref: Any):
             )
         )
     else:
-        row = sv.api.resume_candidate_from_log(source_path, agent_backend=backend)
+        row = sv.api.resume_candidates.service(sv).resume_candidate_from_log(source_path, agent_backend=backend)
         if not isinstance(row, dict):
             return None
         title = sv.api.clean_optional_text(row.get("title")) or ""

@@ -55,7 +55,7 @@ def refresh_session_meta(manager: Any, session_id: str, *, strict: bool = True) 
                 if preferred_session_path is None
                 else None
             )
-            session_path, session_path_source = sv.api.resolve_pi_session_path(
+            session_path, session_path_source = sv.api.resume_candidates.service(sv).resolve_pi_session_path(
                 thread_id=thread_id,
                 cwd=str(meta.get("cwd") or session.cwd),
                 start_ts=float(meta.get("start_ts") or session.start_ts),
@@ -113,7 +113,7 @@ def refresh_session_meta(manager: Any, session_id: str, *, strict: bool = True) 
     if pi_session_switched and old_session_path is not None:
         claimed = manager.claimed_pi_session_paths(exclude_sid=session_id)
         claimed.add(old_session_path)
-        new_sp, new_sp_source = sv.api.resolve_pi_session_path(
+        new_sp, new_sp_source = sv.api.resume_candidates.service(sv).resolve_pi_session_path(
             thread_id=thread_id,
             cwd=cwd,
             start_ts=start_ts,

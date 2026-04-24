@@ -605,7 +605,7 @@ def backfill_recent_cwds_from_logs(manager: Any) -> None:
     seen: set[str] = set()
     for log_path in sv.api.iter_session_logs():
         try:
-            row = sv.api.resume_candidate_from_log(log_path)
+            row = sv.api.resume_candidates.service(sv).resume_candidate_from_log(log_path)
         except Exception:
             continue
         if not isinstance(row, dict):

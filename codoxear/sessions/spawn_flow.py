@@ -48,7 +48,7 @@ def spawn_web_session(
             if not resume_id:
                 raise ValueError("resume_session_id must be a non-empty string")
             session_path: Path | None = None
-            for row in sv.api.list_resume_candidates_for_cwd(cwd3, limit=1000, backend="pi"):
+            for row in sv.api.resume_candidates.service(sv).list_resume_candidates_for_cwd(cwd3, limit=1000, backend="pi"):
                 if row.get("session_id") != resume_id:
                     continue
                 raw_session_path = row.get("session_path")
@@ -300,7 +300,7 @@ def spawn_web_session(
         if not resume_id:
             raise ValueError("resume_session_id must be a non-empty string")
         found = False
-        for row in sv.api.list_resume_candidates_for_cwd(cwd3, agent_backend=backend_name, limit=1000):
+        for row in sv.api.resume_candidates.service(sv).list_resume_candidates_for_cwd(cwd3, agent_backend=backend_name, limit=1000):
             if row.get("session_id") == resume_id:
                 found = True
                 resume_row = row

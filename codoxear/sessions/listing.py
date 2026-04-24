@@ -322,7 +322,7 @@ def historical_session_row(
     if parsed is None:
         return None
     backend, resume_session_id = parsed
-    for row in sv.api.iter_all_resume_candidates():
+    for row in sv.api.resume_candidates.service(sv).iter_all_resume_candidates():
         if (
             sv.api.normalize_agent_backend(
                 row.get("agent_backend", row.get("backend")), default="codex"
@@ -348,7 +348,7 @@ def historical_sidebar_items(
 ) -> list[dict[str, Any]]:
     sv = runtime
     out: list[dict[str, Any]] = []
-    for row in sv.api.iter_all_resume_candidates():
+    for row in sv.api.resume_candidates.service(sv).iter_all_resume_candidates():
         resume_session_id = row.get("session_id")
         cwd = row.get("cwd")
         if not isinstance(resume_session_id, str) or not resume_session_id:

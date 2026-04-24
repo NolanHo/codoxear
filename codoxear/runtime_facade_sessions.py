@@ -364,7 +364,7 @@ class RuntimeFacadeSessionMixin:
 
         info = self.api.describe_session_cwd(cwd_path)
         all_rows = (
-            self.api.list_resume_candidates_for_cwd(
+            self.api.resume_candidates.service(self.runtime).list_resume_candidates_for_cwd(
                 info["cwd"],
                 backend=backend,
                 limit=100000,
