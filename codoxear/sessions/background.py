@@ -118,12 +118,12 @@ def set_bridge_transport_state(
         )
         durable_session_id = manager.durable_session_id_for_session(session)
     if publish and durable_session_id is not None:
-        sv.api.publish_session_transport_invalidate(
+        sv.api.event_publish.service(sv).publish_session_transport_invalidate(
             durable_session_id,
             runtime_id=runtime_id,
             reason="transport_state",
         )
-        sv.api.publish_session_live_invalidate(
+        sv.api.event_publish.service(sv).publish_session_live_invalidate(
             durable_session_id,
             runtime_id=runtime_id,
             reason="transport_state",

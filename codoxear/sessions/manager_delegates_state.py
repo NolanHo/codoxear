@@ -379,7 +379,7 @@ class SessionManagerStateDelegates:
 
     def alias_set(self, session_id: str, name: str) -> str:
         alias = self._sidebar_state_facade().alias_set(session_id, name)
-        _sv(self).api.publish_sessions_invalidate(reason="alias_changed")
+        _sv(self).api.event_publish.service(_sv(self)).publish_sessions_invalidate(reason="alias_changed")
         return alias
 
     def alias_get(self, session_id: str) -> str:
@@ -390,7 +390,7 @@ class SessionManagerStateDelegates:
 
     def alias_clear(self, session_id: str) -> None:
         self._sidebar_state_facade().alias_clear(session_id)
-        _sv(self).api.publish_sessions_invalidate(reason="alias_cleared")
+        _sv(self).api.event_publish.service(_sv(self)).publish_sessions_invalidate(reason="alias_cleared")
 
     def sidebar_meta_get(self, session_id: str) -> dict[str, Any]:
         return self._sidebar_state_facade().sidebar_meta_get(session_id)
@@ -409,12 +409,12 @@ class SessionManagerStateDelegates:
             snooze_until=snooze_until,
             dependency_session_id=dependency_session_id,
         )
-        _sv(self).api.publish_sessions_invalidate(reason="sidebar_meta_changed")
+        _sv(self).api.event_publish.service(_sv(self)).publish_sessions_invalidate(reason="sidebar_meta_changed")
         return payload
 
     def focus_set(self, session_id: str, focused: Any) -> bool:
         value = self._sidebar_state_facade().focus_set(session_id, focused)
-        _sv(self).api.publish_sessions_invalidate(reason="focus_changed")
+        _sv(self).api.event_publish.service(_sv(self)).publish_sessions_invalidate(reason="focus_changed")
         return value
 
     def edit_session(
@@ -433,7 +433,7 @@ class SessionManagerStateDelegates:
             snooze_until=snooze_until,
             dependency_session_id=dependency_session_id,
         )
-        _sv(self).api.publish_sessions_invalidate(reason="session_edited")
+        _sv(self).api.event_publish.service(_sv(self)).publish_sessions_invalidate(reason="session_edited")
         return payload
 
     def clear_deleted_session_ui_state(self, session_id: str) -> None:

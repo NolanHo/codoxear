@@ -250,13 +250,13 @@ def spawn_web_session(
                 "backend": "pi",
                 "pending_startup": True,
             }
-            sv.api.publish_sessions_invalidate(reason="session_created")
+            sv.api.event_publish.service(sv).publish_sessions_invalidate(reason="session_created")
             return payload
         sv.api.wait_or_raise(proc, label="pi broker", timeout_s=1.5)
         sv.api.start_proc_stderr_drain(proc)
         meta = sv.api.wait_for_spawned_broker_meta(spawn_nonce)
         payload = sv.api.spawn_result_from_meta(meta)
-        sv.api.publish_sessions_invalidate(reason="session_created")
+        sv.api.event_publish.service(sv).publish_sessions_invalidate(reason="session_created")
         return payload
 
     if resume_session_id is not None and worktree_branch is not None:
@@ -455,6 +455,6 @@ def spawn_web_session(
     sv.api.threading.Thread(target=proc.wait, daemon=True).start()
     meta = sv.api.wait_for_spawned_broker_meta(spawn_nonce)
     payload = sv.api.spawn_result_from_meta(meta)
-    sv.api.publish_sessions_invalidate(reason="session_created")
+    sv.api.event_publish.service(sv).publish_sessions_invalidate(reason="session_created")
     return payload
 

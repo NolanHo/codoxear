@@ -436,23 +436,23 @@ class RuntimeFacadeSessionMixin:
         out = {"ok": True, **res}
         if alias:
             out["alias"] = alias
-        self.api.publish_sessions_invalidate(reason="session_created")
+        self.api.event_publish.service(self.runtime).publish_sessions_invalidate(reason="session_created")
         return out
 
     def delete_session(self, session_id: str) -> bool:
         deleted = bool(self.manager.delete_session(session_id))
         if deleted:
-            self.api.publish_sessions_invalidate(reason="session_deleted")
+            self.api.event_publish.service(self.runtime).publish_sessions_invalidate(reason="session_deleted")
         return deleted
 
     def handoff_session(self, session_id: str) -> dict[str, Any]:
         res = self.manager.handoff_session(session_id)
-        self.api.publish_sessions_invalidate(reason="session_created")
+        self.api.event_publish.service(self.runtime).publish_sessions_invalidate(reason="session_created")
         return {"ok": True, **res}
 
     def restart_session(self, session_id: str) -> dict[str, Any]:
         res = self.manager.restart_session(session_id)
-        self.api.publish_sessions_invalidate(reason="session_created")
+        self.api.event_publish.service(self.runtime).publish_sessions_invalidate(reason="session_created")
         return {"ok": True, **res}
 
     def session_edit(self, session_id: str, obj: dict[str, Any]) -> dict[str, Any]:
@@ -487,7 +487,7 @@ class RuntimeFacadeSessionMixin:
         self.manager.submit_ui_response(session_id, obj)
         durable_session_id = self.manager.durable_session_id_for_identifier(session_id) or session_id
         runtime_id = self.manager.runtime_session_id_for_identifier(session_id)
-        self.api.publish_session_workspace_invalidate(
+        self.api.event_publish.service(self.runtime).publish_session_workspace_invalidate(
             durable_session_id,
             runtime_id=runtime_id,
             reason="ui_response",
@@ -516,7 +516,7 @@ class RuntimeFacadeSessionMixin:
         resp = self.manager.inject_keys(session_id, "\\x1b")
         durable_session_id = self.manager.durable_session_id_for_identifier(session_id) or session_id
         runtime_id = self.manager.runtime_session_id_for_identifier(session_id)
-        self.api.publish_session_live_invalidate(
+        self.api.event_publish.service(self.runtime).publish_session_live_invalidate(
             durable_session_id,
             runtime_id=runtime_id,
             reason="interrupt",

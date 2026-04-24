@@ -46,15 +46,15 @@ def refresh_session_state(
 
     if durable_session_id is not None:
         if publish_sessions:
-            sv.api.publish_sessions_invalidate(reason="session_state_changed")
+            sv.api.event_publish.service(sv).publish_sessions_invalidate(reason="session_state_changed")
         if publish_live:
-            sv.api.publish_session_live_invalidate(
+            sv.api.event_publish.service(sv).publish_session_live_invalidate(
                 durable_session_id,
                 runtime_id=session_id,
                 reason="session_state_changed",
             )
         if publish_workspace:
-            sv.api.publish_session_workspace_invalidate(
+            sv.api.event_publish.service(sv).publish_session_workspace_invalidate(
                 durable_session_id,
                 runtime_id=session_id,
                 reason="session_state_changed",
@@ -98,14 +98,14 @@ def prune_dead_sessions(manager: Any) -> None:
         sv.api.unlink_quiet(sock)
         sv.api.unlink_quiet(sock.with_suffix(".json"))
 
-    sv.api.publish_sessions_invalidate(reason="session_removed")
+    sv.api.event_publish.service(sv).publish_sessions_invalidate(reason="session_removed")
     for durable_session_id, runtime_id in dead_events:
-        sv.api.publish_session_live_invalidate(
+        sv.api.event_publish.service(sv).publish_session_live_invalidate(
             durable_session_id,
             runtime_id=runtime_id,
             reason="session_removed",
         )
-        sv.api.publish_session_workspace_invalidate(
+        sv.api.event_publish.service(sv).publish_session_workspace_invalidate(
             durable_session_id,
             runtime_id=runtime_id,
             reason="session_removed",

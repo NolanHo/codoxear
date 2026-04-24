@@ -528,10 +528,10 @@ def mark_log_delta(
                 session.reasoning_effort = reasoning_effort
             session.idle_cache_log_off = -1
     if durable_session_id is not None and (new_events or token_update is not None or model is not None or reasoning_effort is not None):
-        sv.api.publish_session_live_invalidate(durable_session_id, runtime_id=session_id, reason="log_delta")
-        sv.api.publish_session_workspace_invalidate(durable_session_id, runtime_id=session_id, reason="log_delta")
+        sv.api.event_publish.service(sv).publish_session_live_invalidate(durable_session_id, runtime_id=session_id, reason="log_delta")
+        sv.api.event_publish.service(sv).publish_session_workspace_invalidate(durable_session_id, runtime_id=session_id, reason="log_delta")
         if any(sv.api.is_attention_worthy_session_event(event) for event in new_events):
-            sv.api.publish_sessions_invalidate(reason="conversation_changed")
+            sv.api.event_publish.service(sv).publish_sessions_invalidate(reason="conversation_changed")
 
 
 def idle_from_log(manager: Any, session_id: str) -> bool:

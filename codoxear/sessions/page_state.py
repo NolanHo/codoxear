@@ -703,12 +703,12 @@ def queue_enqueue_local(manager: Any, session_id: str, text: str) -> dict[str, A
             s.pi_busy_activity_floor = touched_ts
     manager.save_queues()
     if durable_session_id is not None:
-        sv.api.publish_session_workspace_invalidate(
+        sv.api.event_publish.service(sv).publish_session_workspace_invalidate(
             durable_session_id,
             runtime_id=runtime_id,
             reason="queue_changed",
         )
-        sv.api.publish_session_live_invalidate(
+        sv.api.event_publish.service(sv).publish_session_live_invalidate(
             durable_session_id,
             runtime_id=runtime_id,
             reason="queue_changed",
@@ -739,12 +739,12 @@ def queue_delete_local(manager: Any, session_id: str, index: int) -> dict[str, A
             manager._queues.pop(runtime_id, None)
             manager._queues.pop(ref, None)
     manager.save_queues()
-    sv.api.publish_session_workspace_invalidate(
+    sv.api.event_publish.service(sv).publish_session_workspace_invalidate(
         durable_session_id,
         runtime_id=runtime_id,
         reason="queue_changed",
     )
-    sv.api.publish_session_live_invalidate(
+    sv.api.event_publish.service(sv).publish_session_live_invalidate(
         durable_session_id,
         runtime_id=runtime_id,
         reason="queue_changed",
@@ -777,7 +777,7 @@ def queue_update_local(
         q[int(index)] = t
         ql = len(q)
     manager.save_queues()
-    sv.api.publish_session_workspace_invalidate(
+    sv.api.event_publish.service(sv).publish_session_workspace_invalidate(
         durable_session_id,
         runtime_id=runtime_id,
         reason="queue_changed",

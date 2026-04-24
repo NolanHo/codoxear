@@ -422,18 +422,18 @@ def finalize_pending_pi_spawn(
                 pending_startup=False,
             )
         )
-        sv.api.publish_sessions_invalidate(reason="session_created")
+        sv.api.event_publish.service(sv).publish_sessions_invalidate(reason="session_created")
     except Exception:
         if delete_on_failure:
             manager.delete_durable_session_record(ref)
             manager.clear_deleted_session_state(durable_session_id)
-            sv.api.publish_sessions_invalidate(reason="session_removed")
+            sv.api.event_publish.service(sv).publish_sessions_invalidate(reason="session_removed")
             return
         if restore_record_on_failure is not None:
             manager.persist_durable_session_record(restore_record_on_failure)
         else:
             manager.refresh_durable_session_catalog(force=True)
-        sv.api.publish_sessions_invalidate(reason="session_created")
+        sv.api.event_publish.service(sv).publish_sessions_invalidate(reason="session_created")
 
 
 def reset_log_caches(manager: Any, session: Any, *, meta_log_off: int) -> None:

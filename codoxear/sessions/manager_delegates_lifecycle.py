@@ -83,7 +83,7 @@ class SessionManagerLifecycleDelegates:
             rows = rows_by_session[key]
             if len(rows) > 64:
                 rows_by_session[key] = rows[-64:]
-        _sv(self).api.publish_session_live_invalidate(key, reason="bridge_event")
+        _sv(self).api.event_publish.service(_sv(self)).publish_session_live_invalidate(key, reason="bridge_event")
         return stamped
 
     def _append_bridge_event(self, durable_session_id: str, event: dict[str, Any]) -> dict[str, Any]:

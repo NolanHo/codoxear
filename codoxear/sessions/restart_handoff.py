@@ -86,7 +86,7 @@ def restart_session(manager: Any, session_id: str) -> dict[str, Any]:
         sock_path=source.sock_path,
         clear_state=False,
     )
-    sv.api.publish_sessions_invalidate(reason="session_created")
+    sv.api.event_publish.service(sv).publish_sessions_invalidate(reason="session_created")
 
     provider = _clean_optional_text(source.model_provider)
     model_id = _clean_optional_text(source.model)
@@ -103,7 +103,7 @@ def restart_session(manager: Any, session_id: str) -> dict[str, Any]:
         )
     except Exception:
         manager.persist_durable_session_record(restore_record)
-        sv.api.publish_sessions_invalidate(reason="session_created")
+        sv.api.event_publish.service(sv).publish_sessions_invalidate(reason="session_created")
         raise
 
     payload = dict(spawn_res)
