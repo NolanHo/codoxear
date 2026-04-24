@@ -1961,6 +1961,10 @@ SESSION_LIST_ROW_KEYS = (
     "queue_len",
     "git_branch",
     "transport",
+    "provider_choice",
+    "model",
+    "reasoning_effort",
+    "service_tier",
     "blocked",
     "snoozed",
     "historical",
@@ -7377,6 +7381,16 @@ class SessionManager:
         if float(getattr(self, "_last_discover_ts", 0.0) or 0.0) <= 0.0:
             self._discover_existing_if_stale(force=True)
         self._update_meta_counters()
+        state_by_runtime: dict[str, dict[str, Any] | None] = {}
+        with self._lock:
+            runtime_ids = list(self._sessions.keys())
+        for runtime_id in runtime_ids:
+            try:
+                state_by_runtime[runtime_id] = _validated_session_state(
+                    self.get_state(runtime_id)
+                )
+            except (KeyError, ValueError):
+                state_by_runtime[runtime_id] = None
         files_dirty = False
         sidebar_dirty = False
         now_ts = time.time()
@@ -7562,6 +7576,24 @@ class SessionManager:
                     except Exception:
                         pass
                 durable_session_id = ref[1] if ref is not None else self._durable_session_id_for_session(s)
+                resolved_model_provider, resolved_preferred_auth_method, resolved_model, resolved_reasoning_effort = _resolved_session_run_settings(s)
+                state_provider, state_model, state_effort = _run_settings_from_state(
+                    state_by_runtime.get(s.session_id)
+                )
+                if resolved_model_provider is None:
+                    resolved_model_provider = state_provider
+                if resolved_model is None:
+                    resolved_model = state_model
+                if resolved_reasoning_effort is None:
+                    resolved_reasoning_effort = state_effort
+                if s.model_provider is None:
+                    s.model_provider = resolved_model_provider
+                if s.preferred_auth_method is None:
+                    s.preferred_auth_method = resolved_preferred_auth_method
+                if s.model is None:
+                    s.model = resolved_model
+                if s.reasoning_effort is None:
+                    s.reasoning_effort = resolved_reasoning_effort
                 items.append(
                     {
                         "session_id": durable_session_id,
@@ -7594,15 +7626,15 @@ class SessionManager:
                         "first_user_message": s.first_user_message or "",
                         "files": list(self._files.get(s.session_id, self._files.get(ref, []))) if ref is not None else list(self._files.get(s.session_id, [])),
                         "git_branch": git_branch,
-                        "model_provider": s.model_provider,
-                        "preferred_auth_method": s.preferred_auth_method,
+                        "model_provider": resolved_model_provider,
+                        "preferred_auth_method": resolved_preferred_auth_method,
                         "provider_choice": _provider_choice_for_backend(
                             backend=s.backend,
-                            model_provider=s.model_provider,
-                            preferred_auth_method=s.preferred_auth_method,
+                            model_provider=resolved_model_provider,
+                            preferred_auth_method=resolved_preferred_auth_method,
                         ),
-                        "model": s.model,
-                        "reasoning_effort": s.reasoning_effort,
+                        "model": resolved_model,
+                        "reasoning_effort": resolved_reasoning_effort,
                         "service_tier": s.service_tier,
                         "tmux_session": s.tmux_session,
                         "tmux_window": s.tmux_window,
