@@ -65,7 +65,7 @@ def spawn_web_session(
                     db.load_sessions().get(("pi", resume_id)) if isinstance(db, sv.api.PageStateDB) else None
                 )
                 current = pending_restore_record
-                manager._persist_durable_session_record(
+                manager.persist_durable_session_record(
                     sv.api.DurableSessionRecord(
                         backend="pi",
                         session_id=resume_id,
@@ -89,7 +89,7 @@ def spawn_web_session(
                 model_id=model,
                 thinking_level=reasoning_effort,
             )
-            manager._persist_durable_session_record(
+            manager.persist_durable_session_record(
                 sv.api.DurableSessionRecord(
                     backend="pi",
                     session_id=pending_session_id,
@@ -124,9 +124,9 @@ def spawn_web_session(
             tmux_bin = sv.api.shutil.which("tmux")
             if tmux_bin is None:
                 if pending_session_id is not None and pending_delete_on_failure:
-                    manager._delete_durable_session_record(("pi", pending_session_id))
+                    manager.delete_durable_session_record(("pi", pending_session_id))
                 elif pending_restore_record is not None:
-                    manager._persist_durable_session_record(pending_restore_record)
+                    manager.persist_durable_session_record(pending_restore_record)
                 raise ValueError("tmux is unavailable on this host")
             tmux_window = sv.api.safe_filename(f"{Path(cwd3).name or 'session'}-{spawn_nonce[:6]}", default="session")
             env["CODEX_WEB_TRANSPORT"] = "tmux"
@@ -184,14 +184,14 @@ def spawn_web_session(
             tmux_proc = sv.api.subprocess.run(tmux_argv, capture_output=True, text=True, env=env, check=False)
             if tmux_proc.returncode != 0:
                 if pending_session_id is not None and pending_delete_on_failure:
-                    manager._delete_durable_session_record(("pi", pending_session_id))
+                    manager.delete_durable_session_record(("pi", pending_session_id))
                 elif pending_restore_record is not None:
-                    manager._persist_durable_session_record(pending_restore_record)
+                    manager.persist_durable_session_record(pending_restore_record)
                 detail = (tmux_proc.stderr or tmux_proc.stdout or f"exit status {tmux_proc.returncode}").strip()
                 raise RuntimeError(f"tmux launch failed: {detail}")
             if pending_session_id is not None:
                 sv.api.threading.Thread(
-                    target=manager._finalize_pending_pi_spawn,
+                    target=manager.finalize_pending_pi_spawn,
                     kwargs={
                         "spawn_nonce": spawn_nonce,
                         "durable_session_id": pending_session_id,
@@ -225,14 +225,14 @@ def spawn_web_session(
             )
         except Exception as exc:
             if pending_session_id is not None and pending_delete_on_failure:
-                manager._delete_durable_session_record(("pi", pending_session_id))
+                manager.delete_durable_session_record(("pi", pending_session_id))
             elif pending_restore_record is not None:
-                manager._persist_durable_session_record(pending_restore_record)
+                manager.persist_durable_session_record(pending_restore_record)
             raise RuntimeError(f"spawn failed: {exc}") from exc
         sv.api.threading.Thread(target=proc.wait, daemon=True).start()
         if pending_session_id is not None:
             sv.api.threading.Thread(
-                target=manager._finalize_pending_pi_spawn,
+                target=manager.finalize_pending_pi_spawn,
                 kwargs={
                     "spawn_nonce": spawn_nonce,
                     "durable_session_id": pending_session_id,

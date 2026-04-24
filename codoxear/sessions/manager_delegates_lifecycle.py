@@ -260,7 +260,7 @@ class SessionManagerLifecycleDelegates:
     def handoff_session(self, session_id: str) -> dict[str, Any]:
         return _sv(self).api.session_control.service(self).handoff_session(session_id)
 
-    def _finalize_pending_pi_spawn(
+    def finalize_pending_pi_spawn(
         self,
         *,
         spawn_nonce: str,
@@ -272,6 +272,27 @@ class SessionManagerLifecycleDelegates:
         restore_record_on_failure: Any | None = None,
     ) -> None:
         _sv(self).api.session_lifecycle.service(self).finalize_pending_pi_spawn(
+            spawn_nonce=spawn_nonce,
+            durable_session_id=durable_session_id,
+            cwd=cwd,
+            session_path=session_path,
+            proc=proc,
+            delete_on_failure=delete_on_failure,
+            restore_record_on_failure=restore_record_on_failure,
+        )
+
+    def _finalize_pending_pi_spawn(
+        self,
+        *,
+        spawn_nonce: str,
+        durable_session_id: str,
+        cwd: str,
+        session_path: Any,
+        proc: Any = None,
+        delete_on_failure: bool = True,
+        restore_record_on_failure: Any | None = None,
+    ) -> None:
+        self.finalize_pending_pi_spawn(
             spawn_nonce=spawn_nonce,
             durable_session_id=durable_session_id,
             cwd=cwd,
