@@ -174,6 +174,7 @@ def frontend_session_list_row(
         "agent_backend",
         "busy",
         "queue_len",
+        "focused",
         "alias",
         "provider_choice",
         "model",
