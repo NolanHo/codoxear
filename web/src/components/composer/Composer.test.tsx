@@ -33,7 +33,17 @@ import { createComposerStore } from "../../domains/composer/store";
 
 interface RenderComposerOptions {
   activeSessionId?: string | null;
-  items?: Array<{ session_id: string; agent_backend: string; busy: boolean; historical?: boolean; pending_startup?: boolean }>;
+  items?: Array<{
+    session_id: string;
+    agent_backend: string;
+    busy: boolean;
+    historical?: boolean;
+    pending_startup?: boolean;
+    runtime_id?: string | null;
+    model?: string | null;
+    provider_choice?: string | null;
+    reasoning_effort?: string | null;
+  }>;
   liveBusyBySessionId?: Record<string, boolean>;
   liveContextUsageBySessionId?: Record<string, { used_tokens?: number; total_tokens?: number; percent_used?: number } | null>;
   liveTurnTimingBySessionId?: Record<string, { started_ts?: number; last_event_ts?: number | null } | null>;
@@ -44,6 +54,7 @@ interface RenderComposerOptions {
   submitResult?: unknown;
   composerStore?: any;
   compactMobile?: boolean;
+  newSessionDefaults?: Record<string, unknown> | null;
 }
 
 let root: HTMLDivElement | null = null;
@@ -116,6 +127,7 @@ function renderComposer(options: RenderComposerOptions = {}) {
     submitResult,
     composerStore: providedComposerStore,
     compactMobile = false,
+    newSessionDefaults = null,
   } = options;
   const submit = vi.fn().mockResolvedValue(submitResult);
   const liveSessionStore = createStore(
@@ -147,7 +159,7 @@ function renderComposer(options: RenderComposerOptions = {}) {
     () => ({ applyLive: vi.fn(), loadInitial: vi.fn(), poll: vi.fn(), loadOlder: vi.fn() }),
   );
   const sessionsStore = createStore(
-    { items, activeSessionId, loading: false, newSessionDefaults: null },
+    { items, activeSessionId, loading: false, newSessionDefaults },
     (setState) => ({ refresh: vi.fn(), select: vi.fn(), setState }),
   );
   const composerStore = providedComposerStore ?? createStore(
@@ -232,6 +244,46 @@ describe("Composer", () => {
     });
 
     expect(getRoot().textContent).toContain("82K/200K 41%");
+  });
+
+  it("shows current active model and effort for pi sessions", () => {
+    renderComposer({
+      items: [{ session_id: "sess-1", agent_backend: "pi", busy: false, model: "gpt-5.4", reasoning_effort: "high" }],
+    });
+
+    const modelCurrent = getRoot().querySelector("[data-testid='composer-model-current']");
+    expect(modelCurrent?.textContent).toContain("gpt-5.4");
+    expect(modelCurrent?.textContent).toContain("high");
+  });
+
+  it("switches model by sending slash command", async () => {
+    const sendMessage = vi.spyOn(api, "sendMessage").mockResolvedValue({ ok: true, session_id: "sess-1" } as any);
+    renderComposer({
+      items: [{ session_id: "sess-1", agent_backend: "pi", busy: false, model: "gpt-5" }],
+      newSessionDefaults: {
+        backends: {
+          pi: {
+            models: ["gpt-5", "gpt-5.4"],
+          },
+        },
+      },
+    });
+
+    const modelInput = getRoot().querySelector("[data-testid='composer-model-input']") as HTMLInputElement;
+    const modelSwitch = getRoot().querySelector("[data-testid='composer-model-switch']") as HTMLButtonElement;
+
+    act(() => {
+      modelInput.value = "gpt-5.4";
+      modelInput.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    act(() => {
+      modelSwitch.click();
+    });
+
+    await flushEffects();
+
+    expect(sendMessage).toHaveBeenCalledWith("sess-1", "/model gpt-5.4");
   });
 
   it("shows zero-used fallback when the total context is known", async () => {

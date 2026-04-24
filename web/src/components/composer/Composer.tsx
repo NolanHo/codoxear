@@ -18,7 +18,15 @@ import {
 } from "../../app/providers";
 import { api } from "../../lib/api";
 import { getSessionRuntimeId } from "../../lib/session-identity";
-import type { ContextUsagePayload, MessageEvent, SessionCommand, TurnTimingPayload } from "../../lib/types";
+import type {
+  ContextUsagePayload,
+  LaunchBackendDefaults,
+  MessageEvent,
+  NewSessionDefaults,
+  SessionCommand,
+  SessionSummary,
+  TurnTimingPayload,
+} from "../../lib/types";
 import { getDisplayableTodoSnapshot, TodoComposerPanel } from "./TodoComposerPanel";
 
 function enterToSendEnabled() {
@@ -37,6 +45,41 @@ function formatSlashCommandValue(commandName: string) {
   const normalized = commandName.startsWith("/") ? commandName : `/${commandName}`;
 
   return `${normalized} `;
+}
+
+function uniqueStrings(values: Array<string | null | undefined>) {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const value of values) {
+    const normalized = typeof value === "string" ? value.trim() : "";
+    if (!normalized || seen.has(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+    out.push(normalized);
+  }
+  return out;
+}
+
+function modelChoicesForSession(defaults: NewSessionDefaults | null, session: SessionSummary | null) {
+  if (!defaults || !session) {
+    return [] as string[];
+  }
+  const backendName = session.agent_backend === "pi" ? "pi" : "codex";
+  const backendDefaults = (defaults.backends?.[backendName] ?? null) as LaunchBackendDefaults | null;
+  if (!backendDefaults) {
+    return uniqueStrings([session.model ?? undefined]);
+  }
+
+  const providerModelValues = Object.values(backendDefaults.provider_models ?? {}).flatMap((choices) =>
+    Array.isArray(choices) ? choices : [],
+  );
+  return uniqueStrings([
+    ...(Array.isArray(backendDefaults.models) ? backendDefaults.models : []),
+    ...providerModelValues,
+    backendDefaults.model ?? undefined,
+    session.model ?? undefined,
+  ]);
 }
 
 const MOBILE_COMPOSER_QUERY = "(max-width: 880px)";
@@ -307,7 +350,7 @@ interface ComposerProps {
 }
 
 export function Composer({ compactMobile = false }: ComposerProps = {}) {
-  const { activeSessionId, items } = useSessionsStore();
+  const { activeSessionId, items, newSessionDefaults } = useSessionsStore();
   const { bySessionId = {} } = useMessagesStore() as {
     bySessionId?: Record<string, MessageEvent[]>;
   };
@@ -330,6 +373,9 @@ export function Composer({ compactMobile = false }: ComposerProps = {}) {
   const [commandsLoadingBySessionId, setCommandsLoadingBySessionId] = useState<Record<string, boolean>>({});
   const [highlightedCommandIndex, setHighlightedCommandIndex] = useState(0);
   const [slashMenuDismissed, setSlashMenuDismissed] = useState(false);
+  const [modelDraftBySessionId, setModelDraftBySessionId] = useState<Record<string, string>>({});
+  const [modelSwitchingBySessionId, setModelSwitchingBySessionId] = useState<Record<string, boolean>>({});
+  const [modelErrorBySessionId, setModelErrorBySessionId] = useState<Record<string, string>>({});
   const [attachedFilesBySessionId, setAttachedFilesBySessionId] = useState<Record<string, number>>({});
   const [attachmentUploading, setAttachmentUploading] = useState(false);
   const [mobileComposerAutosize, setMobileComposerAutosize] = useState(() => shouldUseMobileComposerAutosize());
@@ -342,6 +388,22 @@ export function Composer({ compactMobile = false }: ComposerProps = {}) {
   const activeSessionPending = activeSession?.pending_startup === true;
   const activeSessionBusy = Boolean(activeSession && (activeSession.busy || (activeSessionId ? busyBySessionId[activeSessionId] === true : false)));
   const activeSessionIsPi = activeSession?.agent_backend === "pi";
+  const activeModel = typeof activeSession?.model === "string" ? activeSession.model.trim() : "";
+  const activeReasoningEffort = typeof activeSession?.reasoning_effort === "string" ? activeSession.reasoning_effort.trim() : "";
+  const modelChoices = useMemo(() => modelChoicesForSession(newSessionDefaults ?? null, activeSession), [newSessionDefaults, activeSession]);
+  const modelDraft = activeSessionId
+    ? (typeof modelDraftBySessionId[activeSessionId] === "string" ? modelDraftBySessionId[activeSessionId] : activeModel)
+    : "";
+  const modelSwitching = activeSessionId ? modelSwitchingBySessionId[activeSessionId] === true : false;
+  const modelError = activeSessionId ? modelErrorBySessionId[activeSessionId] ?? "" : "";
+  const modelDraftTrimmed = modelDraft.trim();
+  const modelSwitchDisabled = !activeSessionId
+    || !activeSessionIsPi
+    || activeSessionPending
+    || sending
+    || modelSwitching
+    || !modelDraftTrimmed
+    || modelDraftTrimmed === activeModel;
   const activeSessionIsHistoricalPi = activeSessionIsPi && activeSession?.historical === true;
   const activeAttachmentCount = activeSessionId ? attachedFilesBySessionId[activeSessionId] ?? 0 : 0;
   const attachmentsSupported = Boolean(activeSessionId && activeSession?.agent_backend !== "pi");
@@ -442,6 +504,19 @@ export function Composer({ compactMobile = false }: ComposerProps = {}) {
   useEffect(() => {
     setTurnNowMs(Date.now());
   }, [activeSessionId]);
+
+  useEffect(() => {
+    if (!activeSessionId) {
+      return;
+    }
+    if (typeof modelDraftBySessionId[activeSessionId] === "string") {
+      return;
+    }
+    setModelDraftBySessionId((value) => ({
+      ...value,
+      [activeSessionId]: activeModel,
+    }));
+  }, [activeModel, activeSessionId, modelDraftBySessionId]);
 
   useEffect(() => {
     if (!activeSessionBusy) {
@@ -712,6 +787,48 @@ export function Composer({ compactMobile = false }: ComposerProps = {}) {
       .catch(() => undefined);
   };
 
+  const switchSessionModel = () => {
+    if (modelSwitchDisabled || !activeSessionId) {
+      return;
+    }
+    const targetModel = modelDraftTrimmed;
+    const commandText = `/model ${targetModel}`;
+
+    setModelSwitchingBySessionId((value) => ({
+      ...value,
+      [activeSessionId]: true,
+    }));
+    setModelErrorBySessionId((value) => ({
+      ...value,
+      [activeSessionId]: "",
+    }));
+
+    (activeSessionRuntimeId
+      ? api.sendMessage(activeSessionId, commandText, activeSessionRuntimeId)
+      : api.sendMessage(activeSessionId, commandText))
+      .then(async (response) => {
+        setModelDraftBySessionId((value) => ({
+          ...value,
+          [activeSessionId]: targetModel,
+        }));
+        const target = await resolvePostSendSessionIdentity(response, activeSessionId, activeSessionRuntimeId);
+        await refreshSessionAfterSend(target.sessionId, target.runtimeId, activeSession?.agent_backend);
+      })
+      .catch((error) => {
+        const message = error instanceof Error ? error.message : "Failed to switch model";
+        setModelErrorBySessionId((value) => ({
+          ...value,
+          [activeSessionId]: message,
+        }));
+      })
+      .finally(() => {
+        setModelSwitchingBySessionId((value) => ({
+          ...value,
+          [activeSessionId]: false,
+        }));
+      });
+  };
+
   const handleAttachClick = () => {
     if (!attachmentsSupported || attachmentUploading || sending) {
       return;
@@ -833,7 +950,54 @@ export function Composer({ compactMobile = false }: ComposerProps = {}) {
         data-testid="composer-card"
         className="composerCard rounded-[1.5rem] border-border/70 bg-card/95 shadow-lg shadow-primary/5 backdrop-blur-sm"
       >
-        <CardContent className="p-3 sm:p-4">
+        <CardContent className="p-3 sm:p-4 space-y-2">
+          {activeSessionId && activeSessionIsPi ? (
+            <div className={cn("composerModelRow", compactMobile && "compactMobile")}>
+              <div className="composerModelCurrent" data-testid="composer-model-current">
+                <span className="composerModelLabel">Model</span>
+                <strong>{activeModel || "unknown"}</strong>
+                {activeReasoningEffort ? <span className="composerModelEffort">effort: {activeReasoningEffort}</span> : null}
+              </div>
+              <div className="composerModelControls">
+                <input
+                  data-testid="composer-model-input"
+                  className="composerModelInput"
+                  type="text"
+                  list="composer-model-choices"
+                  value={modelDraft}
+                  placeholder="target model"
+                  onInput={(event) => {
+                    const value = (event.currentTarget as HTMLInputElement).value;
+                    if (!activeSessionId) {
+                      return;
+                    }
+                    setModelDraftBySessionId((current) => ({
+                      ...current,
+                      [activeSessionId]: value,
+                    }));
+                  }}
+                  disabled={sending || modelSwitching || activeSessionPending}
+                />
+                <datalist id="composer-model-choices">
+                  {modelChoices.map((choice) => (
+                    <option key={choice} value={choice} />
+                  ))}
+                </datalist>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  data-testid="composer-model-switch"
+                  className="composerModelSwitchButton"
+                  onClick={switchSessionModel}
+                  disabled={modelSwitchDisabled}
+                >
+                  {modelSwitching ? "Switching" : "Switch"}
+                </Button>
+              </div>
+              {modelError ? <div className="composerModelError">{modelError}</div> : null}
+            </div>
+          ) : null}
           <form
             className={cn("composer composerShell flex items-end gap-2 border-t-0", draft.includes("\n") && "multiline")}
             onSubmit={(event) => {

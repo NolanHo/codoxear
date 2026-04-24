@@ -2208,6 +2208,75 @@ select {
   flex-wrap: wrap;
 }
 
+.composerModelRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.composerModelRow.compactMobile {
+  grid-template-columns: 1fr;
+  align-items: stretch;
+}
+
+.composerModelCurrent {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+  flex-wrap: wrap;
+  font-size: 0.78rem;
+  color: var(--legacy-muted);
+}
+
+.composerModelCurrent strong {
+  color: var(--legacy-text);
+  font-size: 0.8rem;
+  max-width: 26rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composerModelLabel {
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  font-size: 0.68rem;
+}
+
+.composerModelEffort {
+  font-variant-numeric: tabular-nums;
+}
+
+.composerModelControls {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-width: 0;
+}
+
+.composerModelInput {
+  height: 34px;
+  min-width: 12rem;
+  max-width: 20rem;
+  border: 1px solid color-mix(in srgb, var(--legacy-border) 64%, white);
+  border-radius: 999px;
+  background: color-mix(in srgb, white 92%, var(--panel));
+  padding: 0 0.8rem;
+  font-size: 0.78rem;
+}
+
+.composerModelSwitchButton {
+  height: 34px;
+}
+
+.composerModelError {
+  grid-column: 1 / -1;
+  font-size: 0.74rem;
+  color: var(--danger);
+}
+
 .composerControlsColumn.compactMobile {
   min-width: 0;
   width: 100%;
