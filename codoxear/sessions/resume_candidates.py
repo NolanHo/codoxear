@@ -166,7 +166,7 @@ def resume_candidate_from_log(
 ) -> dict[str, Any] | None:
     sv = runtime
     backend_name = sv.api.normalize_agent_backend(agent_backend)
-    meta = sv.api.read_session_meta(log_path, agent_backend=backend_name)
+    meta = sv.api.session_settings.service(sv).read_session_meta(log_path, agent_backend=backend_name)
     if backend_name == "codex" and sv.api.is_subagent_session_meta(meta):
         return None
     session_id = meta.get("id")

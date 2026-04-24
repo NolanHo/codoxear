@@ -1,7 +1,171 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from ..runtime import ServerRuntime
+
+
+def _runtime_wrapper(runtime: ServerRuntime, name: str) -> Any | None:
+    module = getattr(runtime, "module", None)
+    if module is None or getattr(module, "RUNTIME", None) is not runtime:
+        return None
+    wrapper = getattr(module, name, None)
+    return wrapper if callable(wrapper) else None
+
+
+@dataclass(slots=True)
+class SessionSettingsService:
+    runtime: ServerRuntime
+
+    def turn_context_run_settings(self, payload: Any) -> tuple[str | None, str | None]:
+        wrapper = _runtime_wrapper(self.runtime, "_turn_context_run_settings")
+        if wrapper is not None:
+            return wrapper(payload)
+        return turn_context_run_settings(self.runtime, payload)
+
+    def read_session_meta(
+        self,
+        log_path: Path,
+        *,
+        agent_backend: str | None = None,
+    ) -> dict[str, Any]:
+        wrapper = _runtime_wrapper(self.runtime, "_read_session_meta")
+        if wrapper is not None:
+            return wrapper(log_path, agent_backend=agent_backend)
+        return read_session_meta(self.runtime, log_path, agent_backend=agent_backend)
+
+    def read_run_settings_from_log(
+        self,
+        log_path: Path,
+        *,
+        agent_backend: str = "codex",
+    ) -> tuple[str | None, str | None, str | None]:
+        wrapper = _runtime_wrapper(self.runtime, "_read_run_settings_from_log")
+        if wrapper is not None:
+            return wrapper(log_path, agent_backend=agent_backend)
+        return read_run_settings_from_log(
+            self.runtime,
+            log_path,
+            agent_backend=agent_backend,
+        )
+
+    def normalize_requested_model(self, value: Any) -> str | None:
+        wrapper = _runtime_wrapper(self.runtime, "_normalize_requested_model")
+        if wrapper is not None:
+            return wrapper(value)
+        return normalize_requested_model(self.runtime, value)
+
+    def normalize_requested_model_provider(
+        self,
+        value: Any,
+        *,
+        allowed: set[str] | None = None,
+    ) -> str | None:
+        wrapper = _runtime_wrapper(self.runtime, "_normalize_requested_model_provider")
+        if wrapper is not None:
+            return wrapper(value, allowed=allowed)
+        return normalize_requested_model_provider(
+            self.runtime,
+            value,
+            allowed=allowed,
+        )
+
+    def normalize_requested_service_tier(self, value: Any) -> str | None:
+        wrapper = _runtime_wrapper(self.runtime, "_normalize_requested_service_tier")
+        if wrapper is not None:
+            return wrapper(value)
+        return normalize_requested_service_tier(self.runtime, value)
+
+    def normalize_requested_preferred_auth_method(self, value: Any) -> str | None:
+        wrapper = _runtime_wrapper(self.runtime, "_normalize_requested_preferred_auth_method")
+        if wrapper is not None:
+            return wrapper(value)
+        return normalize_requested_preferred_auth_method(self.runtime, value)
+
+    def normalize_requested_backend(self, raw: Any) -> str:
+        wrapper = _runtime_wrapper(self.runtime, "_normalize_requested_backend")
+        if wrapper is not None:
+            return wrapper(raw)
+        return normalize_requested_backend(raw)
+
+    def provider_choice_for_settings(
+        self,
+        *,
+        model_provider: str | None,
+        preferred_auth_method: str | None,
+    ) -> str:
+        wrapper = _runtime_wrapper(self.runtime, "_provider_choice_for_settings")
+        if wrapper is not None:
+            return wrapper(
+                model_provider=model_provider,
+                preferred_auth_method=preferred_auth_method,
+            )
+        return provider_choice_for_settings(
+            model_provider=model_provider,
+            preferred_auth_method=preferred_auth_method,
+        )
+
+    def provider_choice_for_backend(
+        self,
+        *,
+        backend: str,
+        model_provider: str | None,
+        preferred_auth_method: str | None,
+    ) -> str | None:
+        wrapper = _runtime_wrapper(self.runtime, "_provider_choice_for_backend")
+        if wrapper is not None:
+            return wrapper(
+                backend=backend,
+                model_provider=model_provider,
+                preferred_auth_method=preferred_auth_method,
+            )
+        return provider_choice_for_backend(
+            backend=backend,
+            model_provider=model_provider,
+            preferred_auth_method=preferred_auth_method,
+        )
+
+    def metadata_log_path(
+        self,
+        *,
+        meta: dict[str, Any],
+        backend: str,
+        sock: Path,
+    ) -> Path | None:
+        wrapper = _runtime_wrapper(self.runtime, "_metadata_log_path")
+        if wrapper is not None:
+            return wrapper(meta=meta, backend=backend, sock=sock)
+        return metadata_log_path(meta=meta, backend=backend, sock=sock)
+
+    def metadata_session_path(
+        self,
+        *,
+        meta: dict[str, Any],
+        backend: str,
+        sock: Path,
+    ) -> Path | None:
+        wrapper = _runtime_wrapper(self.runtime, "_metadata_session_path")
+        if wrapper is not None:
+            return wrapper(meta=meta, backend=backend, sock=sock)
+        return metadata_session_path(meta=meta, backend=backend, sock=sock)
+
+    def normalize_requested_reasoning_effort(self, value: Any) -> str | None:
+        wrapper = _runtime_wrapper(self.runtime, "_normalize_requested_reasoning_effort")
+        if wrapper is not None:
+            return wrapper(value)
+        return normalize_requested_reasoning_effort(self.runtime, value)
+
+    def normalize_requested_pi_reasoning_effort(self, value: Any) -> str | None:
+        wrapper = _runtime_wrapper(self.runtime, "_normalize_requested_pi_reasoning_effort")
+        if wrapper is not None:
+            return wrapper(value)
+        return normalize_requested_pi_reasoning_effort(self.runtime, value)
+
+
+def service(runtime: ServerRuntime) -> SessionSettingsService:
+    return SessionSettingsService(runtime)
 
 
 def turn_context_run_settings(runtime: Any, payload: Any) -> tuple[str | None, str | None]:
@@ -63,6 +227,13 @@ def read_run_settings_from_log(
         if reasoning_effort is None:
             reasoning_effort = ctx_effort
     return model_provider, model, reasoning_effort
+
+
+def normalize_requested_model(runtime: Any, value: Any) -> str | None:
+    out = runtime.api.clean_optional_text(value)
+    if out is None:
+        return None
+    return None if out.lower() == "default" else out
 
 
 def normalize_requested_model_provider(

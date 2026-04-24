@@ -202,7 +202,7 @@ def resolved_session_run_settings(runtime: Any, session: Any) -> tuple[str | Non
         and session.log_path is not None
         and session.log_path.exists()
     ):
-        log_provider, log_model, log_effort = runtime.api.read_run_settings_from_log(
+        log_provider, log_model, log_effort = runtime.api.session_settings.service(runtime).read_run_settings_from_log(
             session.log_path,
             agent_backend=session.agent_backend,
         )

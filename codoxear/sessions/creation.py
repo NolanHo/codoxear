@@ -51,12 +51,12 @@ def parse_create_session_request(
             )
             if isinstance(value, str) and value.strip()
         }
-        model_provider = sv.api.normalize_requested_model_provider(
+        model_provider = sv.api.session_settings.service(sv).normalize_requested_model_provider(
             obj.get("model_provider"),
             allowed=pi_provider_choices or None,
         )
-        model = sv.api.normalize_requested_model(obj.get("model"))
-        reasoning_effort = sv.api.normalize_requested_pi_reasoning_effort(
+        model = sv.api.session_settings.service(sv).normalize_requested_model(obj.get("model"))
+        reasoning_effort = sv.api.session_settings.service(sv).normalize_requested_pi_reasoning_effort(
             obj.get("reasoning_effort")
         )
         return {
@@ -77,7 +77,7 @@ def parse_create_session_request(
     allowed_providers = set(
         read_codex_launch_defaults(runtime).get("model_providers") or ["openai"]
     )
-    model_provider = sv.api.normalize_requested_model_provider(
+    model_provider = sv.api.session_settings.service(sv).normalize_requested_model_provider(
         obj.get("model_provider"),
         allowed=set(
             [
@@ -86,14 +86,14 @@ def parse_create_session_request(
             ]
         ),
     )
-    preferred_auth_method = sv.api.normalize_requested_preferred_auth_method(
+    preferred_auth_method = sv.api.session_settings.service(sv).normalize_requested_preferred_auth_method(
         obj.get("preferred_auth_method")
     )
-    model = sv.api.normalize_requested_model(obj.get("model"))
-    reasoning_effort = sv.api.normalize_requested_reasoning_effort(
+    model = sv.api.session_settings.service(sv).normalize_requested_model(obj.get("model"))
+    reasoning_effort = sv.api.session_settings.service(sv).normalize_requested_reasoning_effort(
         obj.get("reasoning_effort")
     )
-    service_tier = sv.api.normalize_requested_service_tier(obj.get("service_tier"))
+    service_tier = sv.api.session_settings.service(sv).normalize_requested_service_tier(obj.get("service_tier"))
 
     worktree_branch_raw = obj.get("worktree_branch")
     if worktree_branch_raw is None:
@@ -153,7 +153,7 @@ def read_codex_launch_defaults(runtime: ServerRuntime) -> dict[str, Any]:
             data.get("model_reasoning_effort")
         )
         configured_auth_method = (
-            sv.api.normalize_requested_preferred_auth_method(
+            sv.api.session_settings.service(sv).normalize_requested_preferred_auth_method(
                 data.get("preferred_auth_method")
             )
             or configured_auth_method
@@ -164,7 +164,7 @@ def read_codex_launch_defaults(runtime: ServerRuntime) -> dict[str, Any]:
             *[p for p in configured_model_providers(data) if p != "openai"],
         ]
         configured_provider = (
-            sv.api.normalize_requested_model_provider(
+            sv.api.session_settings.service(sv).normalize_requested_model_provider(
                 data.get("model_provider") or data.get("model_provider_id"),
                 allowed=set(
                     [
@@ -180,13 +180,13 @@ def read_codex_launch_defaults(runtime: ServerRuntime) -> dict[str, Any]:
             or configured_provider
         )
         configured_service_tier = (
-            sv.api.normalize_requested_service_tier(data.get("service_tier"))
+            sv.api.session_settings.service(sv).normalize_requested_service_tier(data.get("service_tier"))
             or configured_service_tier
         )
     defaults: dict[str, Any] = {
         "model_provider": configured_provider,
         "preferred_auth_method": configured_auth_method,
-        "provider_choice": sv.api.provider_choice_for_settings(
+        "provider_choice": sv.api.session_settings.service(sv).provider_choice_for_settings(
             model_provider=configured_provider,
             preferred_auth_method=configured_auth_method,
         ),

@@ -520,7 +520,7 @@ def session_run_settings(
         default="codex",
     )
     model_provider = sv.api.clean_optional_text(meta.get("model_provider"))
-    preferred_auth_method = sv.api.normalize_requested_preferred_auth_method(
+    preferred_auth_method = sv.api.session_settings.service(sv).normalize_requested_preferred_auth_method(
         meta.get("preferred_auth_method")
     )
     model = sv.api.clean_optional_text(meta.get("model"))
@@ -530,7 +530,7 @@ def session_run_settings(
         else sv.api.display_pi_reasoning_effort(meta.get("reasoning_effort"))
     )
     if log_path is not None and log_path.exists():
-        log_provider, log_model, log_effort = sv.api.read_run_settings_from_log(
+        log_provider, log_model, log_effort = sv.api.session_settings.service(sv).read_run_settings_from_log(
             log_path,
             agent_backend=backend_name,
         )

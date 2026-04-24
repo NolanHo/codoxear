@@ -348,7 +348,7 @@ class RuntimeFacadeSessionMixin:
             raise FacadeRequestError(str(exc), field="cwd") from exc
 
         try:
-            backend = self.api.normalize_requested_backend(backend_raw)
+            backend = self.api.session_settings.service(self.runtime).normalize_requested_backend(backend_raw)
         except ValueError as exc:
             raise FacadeRequestError(str(exc), field="backend") from exc
 

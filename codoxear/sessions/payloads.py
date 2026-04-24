@@ -197,7 +197,7 @@ def session_diagnostics_payload(runtime: ServerRuntime, manager: Any, session_id
         "turn_timing": turn_timing,
         "model_provider": model_provider,
         "preferred_auth_method": preferred_auth_method,
-        "provider_choice": sv.api.provider_choice_for_backend(
+        "provider_choice": sv.api.session_settings.service(sv).provider_choice_for_backend(
             backend=s.backend,
             model_provider=model_provider,
             preferred_auth_method=preferred_auth_method,

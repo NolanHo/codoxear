@@ -111,14 +111,14 @@ def _discover_one_socket(
             if (not owned) and (not sv.api.supports_web_control(meta)):
                 return
 
-        log_path = sv.api.metadata_log_path(meta=meta, backend=backend, sock=sock)
+        log_path = sv.api.session_settings.service(sv).metadata_log_path(meta=meta, backend=backend, sock=sock)
         if inferred_pi_session_path is not None:
             session_path = inferred_pi_session_path
         else:
             preferred_session_path: Path | None = None
             if backend == "pi":
                 try:
-                    preferred_session_path = sv.api.metadata_session_path(meta=meta, backend=backend, sock=sock)
+                    preferred_session_path = sv.api.session_settings.service(sv).metadata_session_path(meta=meta, backend=backend, sock=sock)
                 except ValueError as exc:
                     if "missing session_path" not in str(exc):
                         raise
@@ -142,7 +142,7 @@ def _discover_one_socket(
                         force=preferred_session_path is not None and preferred_session_path != session_path,
                     )
             else:
-                session_path = sv.api.metadata_session_path(meta=meta, backend=backend, sock=sock)
+                session_path = sv.api.session_settings.service(sv).metadata_session_path(meta=meta, backend=backend, sock=sock)
         if log_path is not None and log_path.exists():
             thread_id, log_path = sv.api.coerce_main_thread_log(thread_id=thread_id, log_path=log_path)
         else:
@@ -172,7 +172,7 @@ def _discover_one_socket(
         model_provider, preferred_auth_method, model, reasoning_effort = manager.session_run_settings(
             backend=backend, meta=meta, log_path=log_path
         )
-        service_tier = sv.api.normalize_requested_service_tier(meta.get("service_tier"))
+        service_tier = sv.api.session_settings.service(sv).normalize_requested_service_tier(meta.get("service_tier"))
     except Exception as exc:
         if skip_invalid_sidecars:
             manager.quarantine_sidecar(sock, exc, log=False)

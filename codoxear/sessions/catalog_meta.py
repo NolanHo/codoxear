@@ -44,12 +44,12 @@ def refresh_session_meta(manager: Any, session_id: str, *, strict: bool = True) 
         supports_live_ui = meta.get("supports_live_ui") if isinstance(meta.get("supports_live_ui"), bool) else None
         ui_protocol_version_raw = meta.get("ui_protocol_version")
         ui_protocol_version = ui_protocol_version_raw if type(ui_protocol_version_raw) is int else None
-        log_path = sv.api.metadata_log_path(meta=meta, backend=backend, sock=sock)
+        log_path = sv.api.session_settings.service(sv).metadata_log_path(meta=meta, backend=backend, sock=sock)
         session_path_discovered = False
         if backend == "pi":
             preferred_session_path: Path | None = session.session_path
             if strict or ("session_path" in meta):
-                preferred_session_path = sv.api.metadata_session_path(meta=meta, backend=backend, sock=sock)
+                preferred_session_path = sv.api.session_settings.service(sv).metadata_session_path(meta=meta, backend=backend, sock=sock)
             claimed: set[Path] | None = (
                 manager.claimed_pi_session_paths(exclude_sid=session_id)
                 if preferred_session_path is None
@@ -70,7 +70,7 @@ def refresh_session_meta(manager: Any, session_id: str, *, strict: bool = True) 
                     force=preferred_session_path is not None and preferred_session_path != session_path,
                 )
         else:
-            session_path = sv.api.metadata_session_path(meta=meta, backend=backend, sock=sock)
+            session_path = sv.api.session_settings.service(sv).metadata_session_path(meta=meta, backend=backend, sock=sock)
         if log_path is not None and log_path.exists():
             thread_id, log_path = sv.api.coerce_main_thread_log(thread_id=thread_id, log_path=log_path)
 
@@ -87,7 +87,7 @@ def refresh_session_meta(manager: Any, session_id: str, *, strict: bool = True) 
             meta=meta,
             log_path=log_path,
         )
-        service_tier = sv.api.normalize_requested_service_tier(meta.get("service_tier"))
+        service_tier = sv.api.session_settings.service(sv).normalize_requested_service_tier(meta.get("service_tier"))
     except Exception as exc:
         if strict:
             raise

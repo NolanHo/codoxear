@@ -62,7 +62,7 @@ def _build_live_item(
         session.model_provider is None or session.model is None or session.reasoning_effort is None
     ):
         try:
-            log_provider, log_model, log_effort = sv.api.read_run_settings_from_log(
+            log_provider, log_model, log_effort = sv.api.session_settings.service(sv).read_run_settings_from_log(
                 session.log_path, agent_backend=session.agent_backend
             )
         except (FileNotFoundError, ValueError):
@@ -223,7 +223,7 @@ def _build_live_item(
         "git_branch": git_branch,
         "model_provider": session.model_provider,
         "preferred_auth_method": session.preferred_auth_method,
-        "provider_choice": sv.api.provider_choice_for_backend(
+        "provider_choice": sv.api.session_settings.service(sv).provider_choice_for_backend(
             backend=session.backend,
             model_provider=session.model_provider,
             preferred_auth_method=session.preferred_auth_method,

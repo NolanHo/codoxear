@@ -511,7 +511,7 @@ def mark_log_delta(
     for obj in reversed(objs):
         if not isinstance(obj, dict) or obj.get("type") != "turn_context":
             continue
-        model, reasoning_effort = sv.api.turn_context_run_settings(obj.get("payload"))
+        model, reasoning_effort = sv.api.session_settings.service(sv).turn_context_run_settings(obj.get("payload"))
         break
     append_chat_events(manager, session_id, new_events, new_off=new_off, latest_token=token_update)
     durable_session_id: str | None = None
