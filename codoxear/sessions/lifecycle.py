@@ -200,13 +200,13 @@ def refresh_durable_session_catalog(manager: Any, *, force: bool = False) -> Non
     refs = set(db.known_session_refs())
     with manager._lock:
         for session in manager._sessions.values():
-            ref = manager._page_state_ref_for_session(session)
+            ref = manager.page_state_ref_for_session(session)
             if ref is not None:
                 refs.add(ref)
     existing = db.load_sessions()
     rows: dict[Any, Any] = {}
     for ref in sorted(refs):
-        record = manager._catalog_record_for_ref(ref)
+        record = manager.catalog_record_for_ref(ref)
         if record is None:
             record = existing.get(ref)
         if record is not None:
@@ -224,7 +224,7 @@ def wait_for_live_session(
     sv = _runtime(manager)
     deadline = sv.api.time.time() + max(timeout_s, 0.1)
     while sv.api.time.time() < deadline:
-        manager._discover_existing(force=True, skip_invalid_sidecars=True)
+        manager.discover_existing(force=True, skip_invalid_sidecars=True)
         runtime_id = manager.runtime_session_id_for_identifier(durable_session_id)
         if runtime_id is not None:
             with manager._lock:
@@ -334,11 +334,11 @@ def stage_runtime_bound_restart_state(
         if isinstance(command_cache, dict):
             command_cache.pop(runtime_id, None)
     if save_files:
-        manager._save_files()
+        manager.save_files()
     if save_queues:
-        manager._save_queues()
+        manager.save_queues()
     if save_harness:
-        manager._save_harness()
+        manager.save_harness()
 
 
 def restore_runtime_bound_restart_state(
@@ -375,11 +375,11 @@ def restore_runtime_bound_restart_state(
             if isinstance(harness_last, (int, float)):
                 harness_last_src[runtime_id] = float(harness_last)
     if save_files:
-        manager._save_files()
+        manager.save_files()
     if save_queues:
-        manager._save_queues()
+        manager.save_queues()
     if save_harness:
-        manager._save_harness()
+        manager.save_harness()
 
 
 def finalize_pending_pi_spawn(
@@ -405,11 +405,11 @@ def finalize_pending_pi_spawn(
             raise RuntimeError(
                 f"pi session id mismatch: expected {durable_session_id}, got {live_session_id}"
             )
-        manager._discover_existing(force=True, skip_invalid_sidecars=True)
-        manager._refresh_durable_session_catalog(force=True)
+        manager.discover_existing(force=True, skip_invalid_sidecars=True)
+        manager.refresh_durable_session_catalog(force=True)
         db = getattr(manager, "_page_state_db", None)
         current = db.load_sessions().get(ref) if isinstance(db, sv.api.PageStateDB) else None
-        manager._persist_durable_session_record(
+        manager.persist_durable_session_record(
             sv.api.DurableSessionRecord(
                 backend="pi",
                 session_id=durable_session_id,
@@ -425,14 +425,14 @@ def finalize_pending_pi_spawn(
         sv.api.publish_sessions_invalidate(reason="session_created")
     except Exception:
         if delete_on_failure:
-            manager._delete_durable_session_record(ref)
-            manager._clear_deleted_session_state(durable_session_id)
+            manager.delete_durable_session_record(ref)
+            manager.clear_deleted_session_state(durable_session_id)
             sv.api.publish_sessions_invalidate(reason="session_removed")
             return
         if restore_record_on_failure is not None:
-            manager._persist_durable_session_record(restore_record_on_failure)
+            manager.persist_durable_session_record(restore_record_on_failure)
         else:
-            manager._refresh_durable_session_catalog(force=True)
+            manager.refresh_durable_session_catalog(force=True)
         sv.api.publish_sessions_invalidate(reason="session_created")
 
 
@@ -490,7 +490,7 @@ def apply_session_source(
 ) -> None:
     if session.backend == "pi" and session_path is None and session.session_path is not None:
         session_path = session.session_path
-    source_changed = manager._session_source_changed(
+    source_changed = manager.session_source_changed(
         session,
         log_path=log_path,
         session_path=session_path,
@@ -503,7 +503,7 @@ def apply_session_source(
             if log_path is not None and log_path.exists()
             else 0
         )
-        manager._reset_log_caches(session, meta_log_off=log_off)
+        manager.reset_log_caches(session, meta_log_off=log_off)
 
 
 def session_run_settings(

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .manager_delegates_shared import _sv
+from .manager_delegates_shared import _instance_override, _sv
 
 
 class SessionManagerLifecycleDelegates:
@@ -146,11 +146,32 @@ class SessionManagerLifecycleDelegates:
     def _maybe_drain_outbound_request(self, runtime_id: str) -> bool:
         return _sv(self).api.session_background.service(self).maybe_drain_outbound_request(runtime_id)
 
-    def _catalog_record_for_ref(self, ref: Any):
+    def catalog_record_for_ref(self, ref: Any):
+        override = _instance_override(
+            self,
+            "_catalog_record_for_ref",
+            SessionManagerLifecycleDelegates._catalog_record_for_ref,
+        )
+        if override is not None:
+            return override(ref)
         return _sv(self).api.session_lifecycle.service(self).catalog_record_for_ref(ref)
 
-    def _refresh_durable_session_catalog(self, *, force: bool = False) -> None:
+    def _catalog_record_for_ref(self, ref: Any):
+        return self.catalog_record_for_ref(ref)
+
+    def refresh_durable_session_catalog(self, *, force: bool = False) -> None:
+        override = _instance_override(
+            self,
+            "_refresh_durable_session_catalog",
+            SessionManagerLifecycleDelegates._refresh_durable_session_catalog,
+        )
+        if override is not None:
+            override(force=force)
+            return
         _sv(self).api.session_lifecycle.service(self).refresh_durable_session_catalog(force=force)
+
+    def _refresh_durable_session_catalog(self, *, force: bool = False) -> None:
+        self.refresh_durable_session_catalog(force=force)
 
     def page_state_ref_for_session_id(self, session_id: str):
         return _sv(self).api.session_catalog.service(self).page_state_ref_for_session_id(session_id)

@@ -214,8 +214,19 @@ class SessionManagerStateDelegates:
     def _load_harness(self) -> None:
         _sv(self).api.page_state.service(self).load_harness()
 
-    def _save_harness(self) -> None:
+    def save_harness(self) -> None:
+        override = _instance_override(
+            self,
+            "_save_harness",
+            SessionManagerStateDelegates._save_harness,
+        )
+        if override is not None:
+            override()
+            return
         _sv(self).api.page_state.service(self).save_harness()
+
+    def _save_harness(self) -> None:
+        self.save_harness()
 
     def _load_aliases(self) -> None:
         self._sidebar_state_facade().load_aliases()
@@ -412,6 +423,14 @@ class SessionManagerStateDelegates:
         return payload
 
     def clear_deleted_session_state(self, session_id: str) -> None:
+        override = _instance_override(
+            self,
+            "_clear_deleted_session_state",
+            SessionManagerStateDelegates._clear_deleted_session_state,
+        )
+        if override is not None:
+            override(session_id)
+            return
         _sv(self).api.page_state.service(self).clear_deleted_session_state(session_id)
 
     def _clear_deleted_session_state(self, session_id: str) -> None:
@@ -420,14 +439,36 @@ class SessionManagerStateDelegates:
     def _load_files(self) -> None:
         _sv(self).api.page_state.service(self).load_files()
 
-    def _save_files(self) -> None:
+    def save_files(self) -> None:
+        override = _instance_override(
+            self,
+            "_save_files",
+            SessionManagerStateDelegates._save_files,
+        )
+        if override is not None:
+            override()
+            return
         _sv(self).api.page_state.service(self).save_files()
+
+    def _save_files(self) -> None:
+        self.save_files()
 
     def _load_queues(self) -> None:
         _sv(self).api.page_state.service(self).load_queues()
 
-    def _save_queues(self) -> None:
+    def save_queues(self) -> None:
+        override = _instance_override(
+            self,
+            "_save_queues",
+            SessionManagerStateDelegates._save_queues,
+        )
+        if override is not None:
+            override()
+            return
         _sv(self).api.page_state.service(self).save_queues()
+
+    def _save_queues(self) -> None:
+        self.save_queues()
 
     def _load_recent_cwds(self) -> None:
         _sv(self).api.page_state.service(self).load_recent_cwds()
