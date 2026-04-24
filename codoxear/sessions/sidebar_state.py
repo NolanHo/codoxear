@@ -123,6 +123,35 @@ class SidebarStateFacade:
             self.manager._aliases.pop(session_id, None)
         self.persist_session_ui_state()
 
+    def clear_deleted_session_ui_state(self, session_id: str) -> None:
+        ref = self.manager.page_state_ref_for_session_id(session_id)
+        changed_sidebar = False
+        with self.manager._lock:
+            aliases = getattr(self.manager, "_aliases", None)
+            if isinstance(aliases, dict):
+                aliases.pop(session_id, None)
+                if ref is not None:
+                    aliases.pop(ref, None)
+            meta_map = getattr(self.manager, "_sidebar_meta", None)
+            if isinstance(meta_map, dict):
+                if session_id in meta_map:
+                    meta_map.pop(session_id, None)
+                    changed_sidebar = True
+                if ref is not None and ref in meta_map:
+                    meta_map.pop(ref, None)
+                    changed_sidebar = True
+                if ref is not None:
+                    for entry in meta_map.values():
+                        if not isinstance(entry, dict):
+                            continue
+                        if entry.get("dependency_session_id") != ref[1]:
+                            continue
+                        entry.pop("dependency_session_id", None)
+                        changed_sidebar = True
+        self.manager.save_aliases()
+        if changed_sidebar:
+            self.manager.save_sidebar_meta()
+
     def sidebar_meta_get(self, session_id: str) -> dict[str, Any]:
         sv = self._rt()
         ref = self.manager.page_state_ref_for_session_id(session_id)

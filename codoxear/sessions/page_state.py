@@ -185,33 +185,11 @@ def save_harness(manager: Any) -> None:
 
 
 def clear_deleted_session_state(manager: Any, session_id: str) -> None:
-    changed_sidebar = False
     changed_harness = False
     changed_files = False
     changed_queues = False
     ref = manager.page_state_ref_for_session_id(session_id)
     with manager._lock:
-        aliases = getattr(manager, "_aliases", None)
-        if isinstance(aliases, dict):
-            aliases.pop(session_id, None)
-            if ref is not None:
-                aliases.pop(ref, None)
-        meta_map = getattr(manager, "_sidebar_meta", None)
-        if isinstance(meta_map, dict):
-            if session_id in meta_map:
-                meta_map.pop(session_id, None)
-                changed_sidebar = True
-            if ref is not None and ref in meta_map:
-                meta_map.pop(ref, None)
-                changed_sidebar = True
-        if isinstance(meta_map, dict) and ref is not None:
-            for entry in meta_map.values():
-                if not isinstance(entry, dict):
-                    continue
-                if entry.get("dependency_session_id") != ref[1]:
-                    continue
-                entry.pop("dependency_session_id", None)
-                changed_sidebar = True
         harness = getattr(manager, "_harness", None)
         if isinstance(harness, dict) and session_id in harness:
             harness.pop(session_id, None)
@@ -236,15 +214,12 @@ def clear_deleted_session_state(manager: Any, session_id: str) -> None:
         command_cache = getattr(manager, "_pi_commands_cache", None)
         if isinstance(command_cache, dict):
             command_cache.pop(session_id, None)
-    manager._save_aliases()
-    if changed_sidebar:
-        manager._save_sidebar_meta()
     if changed_harness:
-        manager._save_harness()
+        manager.save_harness()
     if changed_files:
-        manager._save_files()
+        manager.save_files()
     if changed_queues:
-        manager._save_queues()
+        manager.save_queues()
 
 
 def load_files(manager: Any) -> None:

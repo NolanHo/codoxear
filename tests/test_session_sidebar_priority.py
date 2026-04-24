@@ -528,6 +528,61 @@ class TestSessionSidebarPriority(unittest.TestCase):
         self.assertEqual(mgr._aliases["edit"], "old name")
         self.assertEqual(mgr._sidebar_meta["edit"]["priority_offset"], 0.1)
 
+    def test_clear_deleted_session_state_clears_ui_and_page_state_data(self) -> None:
+        mgr = _make_manager()
+        mgr.page_state_ref_for_session_id = (  # type: ignore[method-assign]
+            lambda session_id: ("pi", "target") if session_id == "target" else None
+        )
+        save_calls: list[str] = []
+        mgr._save_aliases = lambda *args, **kwargs: save_calls.append("aliases")  # type: ignore[method-assign]
+        mgr._save_sidebar_meta = lambda *args, **kwargs: save_calls.append("sidebar")  # type: ignore[method-assign]
+        mgr._save_harness = lambda *args, **kwargs: save_calls.append("harness")  # type: ignore[method-assign]
+        mgr._save_files = lambda *args, **kwargs: save_calls.append("files")  # type: ignore[method-assign]
+        mgr._save_queues = lambda *args, **kwargs: save_calls.append("queues")  # type: ignore[method-assign]
+        mgr._aliases = {
+            "target": "legacy alias",
+            ("pi", "target"): "normalized alias",
+            ("pi", "keep"): "keep alias",
+        }
+        mgr._sidebar_meta = {
+            "target": {"priority_offset": 0.1},
+            ("pi", "target"): {"priority_offset": 0.2},
+            "blocked": {"priority_offset": 0.0, "dependency_session_id": "target"},
+            "keep": {"priority_offset": 0.0, "dependency_session_id": "keep"},
+        }
+        mgr._harness = {
+            "target": {"enabled": True},
+            "keep": {"enabled": True},
+        }
+        mgr._files = {
+            "target": ["legacy.txt"],
+            "sid:target": ["sid.txt"],
+            ("pi", "target"): ["ref.txt"],
+            "keep": ["keep.txt"],
+        }
+        mgr._queues = {
+            "target": ["legacy queue"],
+            ("pi", "target"): ["ref queue"],
+            "keep": ["keep queue"],
+        }
+        mgr._pi_commands_cache = {
+            "target": [{"cmd": "dead"}],
+            "keep": [{"cmd": "live"}],
+        }
+
+        mgr.clear_deleted_session_state("target")
+
+        self.assertEqual(save_calls, ["aliases", "sidebar", "harness", "files", "queues"])
+        self.assertEqual(mgr._aliases, {("pi", "keep"): "keep alias"})
+        self.assertNotIn("target", mgr._sidebar_meta)
+        self.assertNotIn(("pi", "target"), mgr._sidebar_meta)
+        self.assertNotIn("dependency_session_id", mgr._sidebar_meta["blocked"])
+        self.assertEqual(mgr._sidebar_meta["keep"]["dependency_session_id"], "keep")
+        self.assertEqual(mgr._harness, {"keep": {"enabled": True}})
+        self.assertEqual(mgr._files, {"keep": ["keep.txt"]})
+        self.assertEqual(mgr._queues, {"keep": ["keep queue"]})
+        self.assertEqual(mgr._pi_commands_cache, {"keep": [{"cmd": "live"}]})
+
     def test_list_sessions_uses_start_ts_when_log_has_no_sidebar_relevant_message(
         self,
     ) -> None:

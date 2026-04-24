@@ -231,8 +231,19 @@ class SessionManagerStateDelegates:
     def _load_aliases(self) -> None:
         self._sidebar_state_facade().load_aliases()
 
-    def _save_aliases(self) -> None:
+    def save_aliases(self) -> None:
+        override = _instance_override(
+            self,
+            "_save_aliases",
+            SessionManagerStateDelegates._save_aliases,
+        )
+        if override is not None:
+            override()
+            return
         self._persist_session_ui_state()
+
+    def _save_aliases(self) -> None:
+        self.save_aliases()
 
     def _load_sidebar_meta(self) -> None:
         self._sidebar_state_facade().load_sidebar_meta()
@@ -422,6 +433,20 @@ class SessionManagerStateDelegates:
         _sv(self).api.publish_sessions_invalidate(reason="session_edited")
         return payload
 
+    def clear_deleted_session_ui_state(self, session_id: str) -> None:
+        override = _instance_override(
+            self,
+            "_clear_deleted_session_ui_state",
+            SessionManagerStateDelegates._clear_deleted_session_ui_state,
+        )
+        if override is not None:
+            override(session_id)
+            return
+        self._sidebar_state_facade().clear_deleted_session_ui_state(session_id)
+
+    def _clear_deleted_session_ui_state(self, session_id: str) -> None:
+        self.clear_deleted_session_ui_state(session_id)
+
     def clear_deleted_session_state(self, session_id: str) -> None:
         override = _instance_override(
             self,
@@ -431,6 +456,7 @@ class SessionManagerStateDelegates:
         if override is not None:
             override(session_id)
             return
+        self.clear_deleted_session_ui_state(session_id)
         _sv(self).api.page_state.service(self).clear_deleted_session_state(session_id)
 
     def _clear_deleted_session_state(self, session_id: str) -> None:
