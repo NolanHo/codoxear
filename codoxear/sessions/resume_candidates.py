@@ -248,7 +248,7 @@ def pi_resume_candidate_from_session_file(
     session_path: Path,
 ) -> dict[str, Any] | None:
     sv = runtime
-    if sv.api.pi_session_has_handoff_history(session_path):
+    if sv.api.pi_session_files.service(sv).pi_session_has_handoff_history(session_path):
         return None
     try:
         with session_path.open("rb") as f:
@@ -283,7 +283,9 @@ def pi_resume_candidate_from_session_file(
                     "git_branch": None,
                     "agent_backend": "pi",
                     "backend": "pi",
-                    "title": sv.api.pi_session_name_from_session_file(session_path),
+                    "title": sv.api.pi_session_files.service(sv).pi_session_name_from_session_file(
+                        session_path
+                    ),
                 }
     except OSError:
         return None
@@ -298,7 +300,7 @@ def discover_pi_session_for_cwd(
     exclude: set[Path] | None = None,
 ) -> Path | None:
     sv = runtime
-    session_dir = sv.api.pi_native_session_dir_for_cwd(cwd)
+    session_dir = sv.api.pi_session_files.service(sv).pi_native_session_dir_for_cwd(cwd)
     if not session_dir.is_dir():
         return None
     best: Path | None = None
@@ -306,7 +308,7 @@ def discover_pi_session_for_cwd(
     for f in session_dir.glob("*.jsonl"):
         if exclude and f in exclude:
             continue
-        if sv.api.pi_session_has_handoff_history(f):
+        if sv.api.pi_session_files.service(sv).pi_session_has_handoff_history(f):
             continue
         try:
             mtime = f.stat().st_mtime
@@ -370,7 +372,7 @@ def list_resume_candidates_for_cwd(
     offset2 = max(0, int(offset))
     if backend2 == "pi":
         rows: list[dict[str, Any]] = []
-        session_dir = sv.api.pi_native_session_dir_for_cwd(cwd2)
+        session_dir = sv.api.pi_session_files.service(sv).pi_native_session_dir_for_cwd(cwd2)
         if not session_dir.exists():
             return rows
         for session_path in session_dir.glob("*.jsonl"):

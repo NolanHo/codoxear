@@ -3,9 +3,26 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
+from types import FunctionType
 from typing import Any
 
 from ..runtime import ServerRuntime
+
+
+def _runtime_wrapper(runtime: ServerRuntime, name: str) -> Any | None:
+    module = getattr(runtime, "module", None)
+    if module is None:
+        return None
+    wrapper = getattr(module, name, None)
+    if not callable(wrapper):
+        return None
+    if (
+        isinstance(wrapper, FunctionType)
+        and getattr(wrapper, "__module__", None) == getattr(module, "__name__", None)
+        and getattr(wrapper, "__name__", None) == name
+    ):
+        return None
+    return wrapper
 
 
 @dataclass(slots=True)
@@ -13,9 +30,15 @@ class PiSessionFilesService:
     runtime: ServerRuntime
 
     def pi_native_session_dir_for_cwd(self, cwd: str | Path) -> Path:
+        wrapper = _runtime_wrapper(self.runtime, "_pi_native_session_dir_for_cwd")
+        if wrapper is not None:
+            return wrapper(cwd)
         return pi_native_session_dir_for_cwd(self.runtime, cwd)
 
     def pi_new_session_file_for_cwd(self, cwd: str | Path) -> Path:
+        wrapper = _runtime_wrapper(self.runtime, "_pi_new_session_file_for_cwd")
+        if wrapper is not None:
+            return wrapper(cwd)
         return pi_new_session_file_for_cwd(self.runtime, cwd)
 
     def write_pi_session_header(
@@ -44,12 +67,21 @@ class PiSessionFilesService:
         return pi_session_history_glob(session_path)
 
     def pi_session_has_handoff_history(self, session_path: Path) -> bool:
+        wrapper = _runtime_wrapper(self.runtime, "_pi_session_has_handoff_history")
+        if wrapper is not None:
+            return wrapper(session_path)
         return pi_session_has_handoff_history(session_path)
 
     def next_pi_handoff_history_path(self, session_path: Path) -> Path:
+        wrapper = _runtime_wrapper(self.runtime, "_next_pi_handoff_history_path")
+        if wrapper is not None:
+            return wrapper(session_path)
         return next_pi_handoff_history_path(session_path)
 
     def copy_file_atomic(self, source_path: Path, target_path: Path) -> None:
+        wrapper = _runtime_wrapper(self.runtime, "_copy_file_atomic")
+        if wrapper is not None:
+            return wrapper(source_path, target_path)
         copy_file_atomic(self.runtime, source_path, target_path)
 
     def append_pi_user_message(self, session_path: Path, *, text: str) -> None:
@@ -94,6 +126,9 @@ class PiSessionFilesService:
         *,
         max_scan_bytes: int = 512 * 1024,
     ) -> str:
+        wrapper = _runtime_wrapper(self.runtime, "_pi_session_name_from_session_file")
+        if wrapper is not None:
+            return wrapper(session_path, max_scan_bytes=max_scan_bytes)
         return pi_session_name_from_session_file(
             self.runtime,
             session_path,

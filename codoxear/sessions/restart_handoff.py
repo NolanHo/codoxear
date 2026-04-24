@@ -167,9 +167,13 @@ def handoff_session(manager: Any, session_id: str) -> dict[str, Any]:
 
     sv = manager_runtime(manager)
     source_session_id = manager.durable_session_id_for_session(source)
-    history_path = sv.api.next_pi_handoff_history_path(source_path)
+    history_path = sv.api.pi_session_files.service(sv).next_pi_handoff_history_path(
+        source_path
+    )
     new_session_id = str(sv.api.uuid.uuid4())
-    new_session_path = sv.api.pi_new_session_file_for_cwd(cwd)
+    new_session_path = sv.api.pi_session_files.service(sv).pi_new_session_file_for_cwd(
+        cwd
+    )
     provider, model_id, thinking_level = sv.api.read_pi_run_settings(source_path)
     provider = _clean_optional_text(source.model_provider) or provider
     model_id = _clean_optional_text(source.model) or model_id
@@ -179,7 +183,7 @@ def handoff_session(manager: Any, session_id: str) -> dict[str, Any]:
     launched_session_id = new_session_id
     launched_runtime_id: str | None = None
     try:
-        sv.api.copy_file_atomic(source_path, history_path)
+        sv.api.pi_session_files.service(sv).copy_file_atomic(source_path, history_path)
         copied_history = True
         sv.api.pi_session_files.service(sv).write_pi_handoff_session(
             new_session_path,

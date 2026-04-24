@@ -80,7 +80,9 @@ def spawn_web_session(
                 )
         else:
             pending_session_id = str(sv.api.uuid.uuid4())
-            session_path = sv.api.pi_new_session_file_for_cwd(cwd_path)
+            session_path = sv.api.pi_session_files.service(sv).pi_new_session_file_for_cwd(
+                cwd_path
+            )
             sv.api.pi_session_files.service(sv).write_pi_session_header(
                 session_path,
                 session_id=pending_session_id,

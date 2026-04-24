@@ -165,7 +165,9 @@ def _build_live_item(
     if session.title is None:
         try:
             if session.backend == "pi" and session.session_path is not None and session.session_path.exists():
-                title = sv.api.pi_session_name_from_session_file(session.session_path)
+                title = sv.api.pi_session_files.service(sv).pi_session_name_from_session_file(
+                    session.session_path
+                )
                 if title:
                     session.title = title
         except Exception:
