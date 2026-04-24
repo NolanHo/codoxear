@@ -8,6 +8,12 @@ from typing import Any
 from .runtime import ServerRuntime
 
 
+class FacadeRequestError(ValueError):
+    def __init__(self, message: str, *, field: str | None = None) -> None:
+        super().__init__(message)
+        self.field = field
+
+
 @dataclass(slots=True)
 class RuntimeFacade:
     runtime: ServerRuntime
@@ -517,7 +523,6 @@ class RuntimeFacade:
     def sessions_bootstrap_payload(
         self,
         *,
-        runtime: ServerRuntime,
         refresh_pi_models: bool,
     ) -> dict[str, Any]:
         from .sessions import creation as _session_creation
@@ -526,11 +531,11 @@ class RuntimeFacade:
             "recent_cwds": self.manager.recent_cwds(),
             "cwd_groups": self.manager.cwd_groups_get(),
             "new_session_defaults": _session_creation.read_new_session_defaults(
-                runtime,
+                self.runtime,
                 page_state_db=getattr(self.manager, "_page_state_db", None),
                 refresh_pi_models=refresh_pi_models,
             ),
-            "tmux_available": self.api.tmux_available(),
+            "tmux_available": self.tmux_available(),
         }
 
     def sessions_list_payload(
@@ -560,14 +565,34 @@ class RuntimeFacade:
         limit_raw: str,
         agent_backend_raw: str,
     ) -> dict[str, Any]:
-        agent_backend = self.api.normalize_agent_backend(
-            agent_backend_raw,
-            default=self.api.DEFAULT_AGENT_BACKEND,
-        )
-        cwd_path = self.api.resolve_dir_target(str(cwd_raw), field_name="cwd")
-        backend = self.api.normalize_requested_backend(backend_raw)
-        offset = max(0, int(offset_raw))
-        limit = max(1, min(100, int(limit_raw)))
+        try:
+            agent_backend = self.api.normalize_agent_backend(
+                agent_backend_raw,
+                default=self.api.DEFAULT_AGENT_BACKEND,
+            )
+        except ValueError as exc:
+            raise FacadeRequestError(str(exc)) from exc
+
+        try:
+            cwd_path = self.api.resolve_dir_target(str(cwd_raw), field_name="cwd")
+        except ValueError as exc:
+            raise FacadeRequestError(str(exc), field="cwd") from exc
+
+        try:
+            backend = self.api.normalize_requested_backend(backend_raw)
+        except ValueError as exc:
+            raise FacadeRequestError(str(exc), field="backend") from exc
+
+        try:
+            offset = max(0, int(offset_raw))
+        except ValueError as exc:
+            raise FacadeRequestError("offset must be an integer", field="offset") from exc
+
+        try:
+            limit = max(1, min(100, int(limit_raw)))
+        except ValueError as exc:
+            raise FacadeRequestError("limit must be an integer", field="limit") from exc
+
         info = self.api.describe_session_cwd(cwd_path)
         all_rows = (
             self.api.list_resume_candidates_for_cwd(
