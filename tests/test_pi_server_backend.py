@@ -1642,7 +1642,10 @@ class TestPiBackendRouting(unittest.TestCase):
                 title="",
             )
             mgr.page_state_ref_for_session = (
-                lambda _session: ("pi", "pi-thread-001")
+                lambda _session: None
+            )  # type: ignore[method-assign]
+            mgr.durable_session_id_for_session = (
+                lambda _session: "pi-thread-001"
             )  # type: ignore[method-assign]
             mgr.catalog_record_for_ref = (
                 lambda _ref: SimpleNamespace(title="xbot")

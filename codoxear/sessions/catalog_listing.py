@@ -200,6 +200,18 @@ def _build_live_item(
             pass
 
     durable_session_id = ref[1] if ref is not None else manager.durable_session_id_for_session(session)
+    if not session.title:
+        try:
+            record_ref = ref if ref is not None else (session.backend, durable_session_id)
+            if record_ref is not None:
+                record = manager.catalog_record_for_ref(record_ref)
+                record_title = sv.api.clean_optional_text(
+                    getattr(record, "title", None)
+                )
+                if record_title:
+                    session.title = record_title
+        except Exception:
+            pass
     row = {
         "session_id": durable_session_id,
         "runtime_id": session.session_id,
