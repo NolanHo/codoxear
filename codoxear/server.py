@@ -3545,6 +3545,18 @@ def _pi_session_name_from_session_file(
 
 
 
+def _safe_read_pi_run_settings(
+    session_path: Path | None,
+) -> tuple[str | None, str | None, str | None]:
+    if session_path is None or (not session_path.exists()):
+        return None, None, None
+    try:
+        return _read_pi_run_settings(session_path)
+    except Exception:
+        return None, None, None
+
+
+
 def _pi_resume_candidate_from_session_file(session_path: Path) -> dict[str, Any] | None:
     if _pi_session_has_handoff_history(session_path):
         return None
@@ -3568,6 +3580,9 @@ def _pi_resume_candidate_from_session_file(session_path: Path) -> dict[str, Any]
                 updated_ts = _resume_candidate_updated_ts(session_path, agent_backend="pi")
                 if updated_ts is None:
                     return None
+                model_provider, model, reasoning_effort = _safe_read_pi_run_settings(
+                    session_path
+                )
                 return {
                     "session_id": session_id,
                     "cwd": cwd,
@@ -3578,6 +3593,9 @@ def _pi_resume_candidate_from_session_file(session_path: Path) -> dict[str, Any]
                     "agent_backend": "pi",
                     "backend": "pi",
                     "title": _pi_session_name_from_session_file(session_path),
+                    "model_provider": model_provider,
+                    "model": model,
+                    "reasoning_effort": reasoning_effort,
                 }
     except OSError:
         return None
@@ -3834,6 +3852,11 @@ def _historical_sidebar_items(
                     )
         except Exception:
             first_user_message = ""
+        historical_model_provider = _clean_optional_text(row.get("model_provider"))
+        historical_model = _clean_optional_text(row.get("model"))
+        historical_reasoning_effort = _display_pi_reasoning_effort(
+            row.get("reasoning_effort")
+        )
         out.append(
             {
                 "session_id": _historical_session_id(backend, resume_session_id),
@@ -3865,11 +3888,11 @@ def _historical_sidebar_items(
                 "first_user_message": first_user_message,
                 "files": [],
                 "git_branch": row.get("git_branch"),
-                "model_provider": None,
+                "model_provider": historical_model_provider,
                 "preferred_auth_method": None,
                 "provider_choice": None,
-                "model": None,
-                "reasoning_effort": None,
+                "model": historical_model,
+                "reasoning_effort": historical_reasoning_effort,
                 "service_tier": None,
                 "tmux_session": None,
                 "tmux_window": None,
@@ -7683,6 +7706,16 @@ class SessionManager:
                 cwd = record.cwd or ""
                 history_cwd_path: Path | None = _safe_expanduser(Path(cwd)).resolve() if cwd else None
                 git_branch = _current_git_branch(history_cwd_path) if history_cwd_path is not None else None
+                historical_model_provider = None
+                historical_model = None
+                historical_reasoning_effort = None
+                source_path = _clean_optional_text(record.source_path)
+                if backend == "pi" and source_path is not None:
+                    (
+                        historical_model_provider,
+                        historical_model,
+                        historical_reasoning_effort,
+                    ) = _safe_read_pi_run_settings(Path(source_path))
                 items.append(
                     {
                         "session_id": session_row_id,
@@ -7713,11 +7746,11 @@ class SessionManager:
                         "focused": bool(meta0.get("focused")),
                         "files": list(file_rows) if isinstance(file_rows, list) else [],
                         "git_branch": git_branch,
-                        "model_provider": None,
+                        "model_provider": historical_model_provider,
                         "preferred_auth_method": None,
                         "provider_choice": None,
-                        "model": None,
-                        "reasoning_effort": None,
+                        "model": historical_model,
+                        "reasoning_effort": historical_reasoning_effort,
                         "service_tier": None,
                         "tmux_session": None,
                         "tmux_window": None,
