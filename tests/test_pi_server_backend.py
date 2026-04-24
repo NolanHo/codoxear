@@ -10,6 +10,7 @@ import unittest
 import urllib.parse
 import uuid
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import ANY, Mock, patch
 
@@ -1620,6 +1621,36 @@ class TestPiBackendRouting(unittest.TestCase):
             self.assertTrue(sock.exists())
 
         self.assertIn("pi-session", mgr._sessions)
+
+    def test_live_session_rows_fall_back_to_durable_record_title(self) -> None:
+        mgr = _make_manager()
+        with tempfile.TemporaryDirectory() as td:
+            sock = Path(td) / "pi.sock"
+            sock.touch()
+            mgr._sessions["pi-session"] = Session(
+                session_id="pi-session",
+                thread_id="pi-thread-001",
+                backend="pi",
+                agent_backend="pi",
+                broker_pid=3333,
+                codex_pid=4444,
+                owned=True,
+                start_ts=123.0,
+                cwd=td,
+                log_path=None,
+                sock_path=sock,
+                title="",
+            )
+            mgr.page_state_ref_for_session = (
+                lambda _session: ("pi", "pi-thread-001")
+            )  # type: ignore[method-assign]
+            mgr.catalog_record_for_ref = (
+                lambda _ref: SimpleNamespace(title="xbot")
+            )  # type: ignore[method-assign]
+
+            row = mgr.list_sessions()[0]
+
+        self.assertEqual(row["title"], "xbot")
 
     def test_pi_session_rows_do_not_invent_provider_choice(self) -> None:
         mgr = _make_manager()
