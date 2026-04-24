@@ -75,6 +75,9 @@ class RuntimeFacadeSessionMixin:
         )
         payload.pop("context_usage", None)
         payload.pop("turn_timing", None)
+        payload["model_provider"] = None
+        payload["model"] = None
+        payload["reasoning_effort"] = None
         return payload
 
     def session_queue_payload(self, session_id: str) -> dict[str, Any]:

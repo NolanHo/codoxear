@@ -3850,7 +3850,14 @@ class TestPiBackendRouting(unittest.TestCase):
             _write_jsonl(
                 session_path,
                 [
-                    {"type": "session", "id": "pi-session-001", "cwd": td},
+                    {
+                        "type": "session",
+                        "id": "pi-session-001",
+                        "cwd": td,
+                        "provider": "openai",
+                        "modelId": "gpt-5.4",
+                        "thinkingLevel": "high",
+                    },
                     {
                         "type": "message",
                         "timestamp": "2026-04-19T18:20:08.000Z",
@@ -3908,6 +3915,9 @@ class TestPiBackendRouting(unittest.TestCase):
         self.assertEqual(handler.status, 200)
         self.assertNotIn("context_usage", payload)
         self.assertNotIn("turn_timing", payload)
+        self.assertIsNone(payload["model_provider"])
+        self.assertIsNone(payload["model"])
+        self.assertIsNone(payload["reasoning_effort"])
 
     def test_workspace_route_returns_diagnostics_and_queue_only(self) -> None:
         handler = _HandlerHarness("/api/sessions/pi-session/workspace")
