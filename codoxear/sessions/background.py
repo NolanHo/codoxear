@@ -134,7 +134,7 @@ def probe_bridge_transport(
     manager: Any, session_id: str, *, force_rpc: bool = False
 ) -> tuple[str, str | None]:
     sv = _runtime(manager)
-    runtime_id = manager._runtime_session_id_for_identifier(session_id)
+    runtime_id = manager.runtime_session_id_for_identifier(session_id)
     if runtime_id is None:
         return "dead", "unknown session"
     with manager._lock:
@@ -360,7 +360,7 @@ def maybe_drain_outbound_request(manager: Any, runtime_id: str) -> bool:
 
 def session_display_name(manager: Any, session_id: str) -> str:
     sv = _runtime(manager)
-    runtime_id = manager._runtime_session_id_for_identifier(session_id)
+    runtime_id = manager.runtime_session_id_for_identifier(session_id)
     if runtime_id is None:
         return "Session"
     with manager._lock:
@@ -664,7 +664,7 @@ def maybe_drain_session_queue(
             if session0:
                 session0.queue_idle_since = None
         return False
-    ref = manager._page_state_ref_for_session_id(session_id)
+    ref = manager.page_state_ref_for_session_id(session_id)
     with manager._lock:
         queue = manager._queues.get(session_id)
         if not isinstance(queue, list) and ref is not None:

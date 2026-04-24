@@ -630,7 +630,7 @@ def get_messages_page(
             "next_before": int(next_before),
         }
 
-    runtime_session_id = manager._runtime_session_id_for_identifier(session_id)
+    runtime_session_id = manager.runtime_session_id_for_identifier(session_id)
     if runtime_session_id is None:
         raise KeyError("unknown session")
     session_id = runtime_session_id

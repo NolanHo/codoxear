@@ -16,7 +16,7 @@ def _clean_optional_text(value: Any) -> str | None:
 
 def refresh_session_meta(manager: Any, session_id: str, *, strict: bool = True) -> None:
     sv = manager._runtime
-    runtime_id = manager._runtime_session_id_for_identifier(session_id)
+    runtime_id = manager.runtime_session_id_for_identifier(session_id)
     if runtime_id is None:
         return
     with manager._lock:

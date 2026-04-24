@@ -77,7 +77,7 @@ def kill_session_via_pids(manager: Any, session: Any) -> bool:
 
 
 def kill_session(manager: Any, session_id: str) -> bool:
-    runtime_id = manager._runtime_session_id_for_identifier(session_id)
+    runtime_id = manager.runtime_session_id_for_identifier(session_id)
     if runtime_id is None:
         return False
     with manager._lock:
@@ -95,7 +95,7 @@ def kill_session(manager: Any, session_id: str) -> bool:
 
 def get_state(manager: Any, session_id: str) -> dict[str, Any]:
     sv = _runtime(manager)
-    runtime_id = manager._runtime_session_id_for_identifier(session_id)
+    runtime_id = manager.runtime_session_id_for_identifier(session_id)
     if runtime_id is None:
         raise KeyError("unknown session")
     with manager._lock:
@@ -135,7 +135,7 @@ def get_state(manager: Any, session_id: str) -> dict[str, Any]:
 
 def get_tail(manager: Any, session_id: str) -> str:
     sv = _runtime(manager)
-    runtime_id = manager._runtime_session_id_for_identifier(session_id)
+    runtime_id = manager.runtime_session_id_for_identifier(session_id)
     if runtime_id is None:
         raise KeyError("unknown session")
     with manager._lock:
@@ -163,7 +163,7 @@ def get_tail(manager: Any, session_id: str) -> str:
 
 def inject_keys(manager: Any, session_id: str, seq: str) -> dict[str, Any]:
     sv = _runtime(manager)
-    runtime_id = manager._runtime_session_id_for_identifier(session_id)
+    runtime_id = manager.runtime_session_id_for_identifier(session_id)
     if runtime_id is None:
         raise KeyError("unknown session")
     with manager._lock:

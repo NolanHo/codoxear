@@ -53,7 +53,7 @@ def listed_session_row(manager: Any, session_id: str) -> dict[str, Any] | None:
 
 def resume_historical_pi_session(manager: Any, session_id: str) -> dict[str, Any] | None:
     historical_row = historical_session_row(manager, session_id)
-    if historical_row is None and manager._runtime_session_id_for_identifier(session_id) is None:
+    if historical_row is None and manager.runtime_session_id_for_identifier(session_id) is None:
         listed_row = listed_session_row(manager, session_id)
         if isinstance(listed_row, dict) and listed_row.get("historical"):
             historical_row = listed_row
@@ -80,7 +80,7 @@ def resume_historical_pi_session(manager: Any, session_id: str) -> dict[str, Any
     live_session_id = clean_optional_text(spawn_res.get("session_id"))
     if live_runtime_id is None or live_session_id is None:
         raise RuntimeError("spawned session did not return session identities")
-    if manager._runtime_session_id_for_identifier(live_runtime_id) is None:
+    if manager.runtime_session_id_for_identifier(live_runtime_id) is None:
         raise RuntimeError("spawned session is not yet discoverable")
     return {
         "runtime_id": live_runtime_id,

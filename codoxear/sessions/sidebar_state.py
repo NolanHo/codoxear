@@ -22,13 +22,13 @@ class SidebarStateFacade:
             hidden_keys = set(self.manager._hidden_sessions)
         aliases = {}
         for key, value in aliases_src.items():
-            ref = key if isinstance(key, tuple) and len(key) == 2 else self.manager._page_state_ref_for_session_id(str(key))
+            ref = key if isinstance(key, tuple) and len(key) == 2 else self.manager.page_state_ref_for_session_id(str(key))
             if ref is None or not isinstance(value, str) or not value.strip():
                 continue
             aliases[ref] = value
         sidebar_meta = {}
         for key, value in sidebar_src.items():
-            ref = key if isinstance(key, tuple) and len(key) == 2 else self.manager._page_state_ref_for_session_id(str(key))
+            ref = key if isinstance(key, tuple) and len(key) == 2 else self.manager.page_state_ref_for_session_id(str(key))
             if ref is None or not isinstance(value, dict):
                 continue
             sidebar_meta[ref] = dict(value)
@@ -65,9 +65,9 @@ class SidebarStateFacade:
         runtime_id_clean = sv.api.clean_optional_text(runtime_id)
         ref = None
         if session_id_clean is not None:
-            ref = self.manager._page_state_ref_for_session_id(session_id_clean)
+            ref = self.manager.page_state_ref_for_session_id(session_id_clean)
         if ref is None and runtime_id_clean is not None:
-            ref = self.manager._page_state_ref_for_session_id(runtime_id_clean)
+            ref = self.manager.page_state_ref_for_session_id(runtime_id_clean)
         backend_clean = sv.api.normalize_agent_backend(backend, default="codex") if backend is not None else None
         target = ref
         if target is None and session_id_clean is not None and backend_clean is not None:
@@ -88,8 +88,8 @@ class SidebarStateFacade:
     def alias_set(self, session_id: str, name: str) -> str:
         sv = self._rt()
         alias = str(sv.api.clean_alias(name) or "")
-        ref = self.manager._page_state_ref_for_session_id(session_id)
-        runtime_id = self.manager._runtime_session_id_for_identifier(session_id)
+        ref = self.manager.page_state_ref_for_session_id(session_id)
+        runtime_id = self.manager.runtime_session_id_for_identifier(session_id)
         if ref is None:
             raise KeyError("unknown session")
         with self.manager._lock:
@@ -103,7 +103,7 @@ class SidebarStateFacade:
         return alias
 
     def alias_get(self, session_id: str) -> str:
-        ref = self.manager._page_state_ref_for_session_id(session_id)
+        ref = self.manager.page_state_ref_for_session_id(session_id)
         if ref is None:
             return ""
         with self.manager._lock:
@@ -113,7 +113,7 @@ class SidebarStateFacade:
         return alias if isinstance(alias, str) else ""
 
     def alias_clear(self, session_id: str) -> None:
-        ref = self.manager._page_state_ref_for_session_id(session_id)
+        ref = self.manager.page_state_ref_for_session_id(session_id)
         if ref is None:
             return
         with self.manager._lock:
@@ -125,7 +125,7 @@ class SidebarStateFacade:
 
     def sidebar_meta_get(self, session_id: str) -> dict[str, Any]:
         sv = self._rt()
-        ref = self.manager._page_state_ref_for_session_id(session_id)
+        ref = self.manager.page_state_ref_for_session_id(session_id)
         if ref is None:
             raise KeyError("unknown session")
         with self.manager._lock:
@@ -158,12 +158,12 @@ class SidebarStateFacade:
         offset = sv.api.clean_priority_offset(priority_offset)
         snooze_until_clean = sv.api.clean_snooze_until(snooze_until)
         dependency_clean = sv.api.clean_dependency_session_id(dependency_session_id)
-        ref = self.manager._page_state_ref_for_session_id(session_id)
+        ref = self.manager.page_state_ref_for_session_id(session_id)
         if ref is None:
             raise KeyError("unknown session")
         dep_ref = None
         if dependency_clean is not None:
-            dep_ref = self.manager._page_state_ref_for_session_id(dependency_clean)
+            dep_ref = self.manager.page_state_ref_for_session_id(dependency_clean)
             if dep_ref is None:
                 raise ValueError("dependency session not found")
             if dep_ref == ref:
@@ -192,7 +192,7 @@ class SidebarStateFacade:
         if focused_clean_raw is None:
             raise ValueError("focused must be a boolean")
         focused_clean = bool(focused_clean_raw)
-        ref = self.manager._page_state_ref_for_session_id(session_id)
+        ref = self.manager.page_state_ref_for_session_id(session_id)
         if ref is None:
             raise KeyError("unknown session")
         with self.manager._lock:
@@ -238,13 +238,13 @@ class SidebarStateFacade:
         offset = sv.api.clean_priority_offset(priority_offset)
         snooze_until_clean = sv.api.clean_snooze_until(snooze_until)
         dependency_clean = sv.api.clean_dependency_session_id(dependency_session_id)
-        ref = self.manager._page_state_ref_for_session_id(session_id)
-        runtime_id = self.manager._runtime_session_id_for_identifier(session_id)
+        ref = self.manager.page_state_ref_for_session_id(session_id)
+        runtime_id = self.manager.runtime_session_id_for_identifier(session_id)
         if ref is None:
             raise KeyError("unknown session")
         dep_ref = None
         if dependency_clean is not None:
-            dep_ref = self.manager._page_state_ref_for_session_id(dependency_clean)
+            dep_ref = self.manager.page_state_ref_for_session_id(dependency_clean)
             if dep_ref is None:
                 raise ValueError("dependency session not found")
             if dep_ref == ref:

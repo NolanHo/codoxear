@@ -25,7 +25,7 @@ def send(manager: Any, session_id: str, text: str) -> dict[str, Any]:
         out["backend"] = resumed["backend"]
         return out
 
-    runtime_id = manager._runtime_session_id_for_identifier(session_id)
+    runtime_id = manager.runtime_session_id_for_identifier(session_id)
     if runtime_id is None:
         raise KeyError("unknown session")
     with manager._lock:
@@ -68,7 +68,7 @@ def enqueue(manager: Any, session_id: str, text: str) -> dict[str, Any]:
 
 
 def queue_list(manager: Any, session_id: str) -> list[str]:
-    runtime_id = manager._runtime_session_id_for_identifier(session_id)
+    runtime_id = manager.runtime_session_id_for_identifier(session_id)
     if runtime_id is None:
         raise KeyError("unknown session")
     return manager._queue_list_local(runtime_id)

@@ -17,7 +17,7 @@ class SessionManagerStateDelegates:
             files_src = dict(self._files)
         rows: dict[Any, list[str]] = {}
         for key, value in files_src.items():
-            ref = key if isinstance(key, tuple) and len(key) == 2 else self._page_state_ref_for_session_id(str(key))
+            ref = key if isinstance(key, tuple) and len(key) == 2 else self.page_state_ref_for_session_id(str(key))
             if ref is None or not isinstance(value, list):
                 continue
             rows[ref] = [row for row in value if isinstance(row, str) and row.strip()]
@@ -31,7 +31,7 @@ class SessionManagerStateDelegates:
             queues_src = dict(self._queues)
         rows: dict[Any, list[str]] = {}
         for key, value in queues_src.items():
-            ref = key if isinstance(key, tuple) and len(key) == 2 else self._page_state_ref_for_session_id(str(key))
+            ref = key if isinstance(key, tuple) and len(key) == 2 else self.page_state_ref_for_session_id(str(key))
             if ref is None or not isinstance(value, list):
                 continue
             rows[ref] = [row for row in value if isinstance(row, str) and row.strip()]

@@ -373,7 +373,7 @@ class TestPiBackendRouting(unittest.TestCase):
                     return "rt-new"
                 return None
 
-            mgr._runtime_session_id_for_identifier = resolve_runtime  # type: ignore[method-assign]
+            mgr.runtime_session_id_for_identifier = resolve_runtime  # type: ignore[method-assign]
 
             with (
                 patch(
@@ -2059,7 +2059,7 @@ class TestPiBackendRouting(unittest.TestCase):
         ])
         mgr.send = SessionManager.send.__get__(mgr, SessionManager)
         mgr._discover_existing = Mock()
-        mgr._runtime_session_id_for_identifier = Mock(side_effect=lambda session_id: session_id if session_id == "live-runtime" else None)
+        mgr.runtime_session_id_for_identifier = Mock(side_effect=lambda session_id: session_id if session_id == "live-runtime" else None)
         mgr._sessions = {
             "live-runtime": Session(
                 session_id="live-runtime",

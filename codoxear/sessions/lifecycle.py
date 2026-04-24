@@ -225,7 +225,7 @@ def wait_for_live_session(
     deadline = sv.api.time.time() + max(timeout_s, 0.1)
     while sv.api.time.time() < deadline:
         manager._discover_existing(force=True, skip_invalid_sidecars=True)
-        runtime_id = manager._runtime_session_id_for_identifier(durable_session_id)
+        runtime_id = manager.runtime_session_id_for_identifier(durable_session_id)
         if runtime_id is not None:
             with manager._lock:
                 session = manager._sessions.get(runtime_id)

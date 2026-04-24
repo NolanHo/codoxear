@@ -119,7 +119,7 @@ class TestSessionSidebarPriority(unittest.TestCase):
 
     def test_sidebar_meta_get_defaults_focus_to_false(self) -> None:
         mgr = _make_manager()
-        mgr._page_state_ref_for_session_id = lambda session_id: ("pi", session_id)  # type: ignore[method-assign]
+        mgr.page_state_ref_for_session_id = lambda session_id: ("pi", session_id)  # type: ignore[method-assign]
 
         meta = mgr.sidebar_meta_get("sess-1")
 

@@ -20,7 +20,7 @@ def _listed_session_row(manager: Any, session_id: str) -> dict[str, Any] | None:
 
 
 def restart_session(manager: Any, session_id: str) -> dict[str, Any]:
-    runtime_id = manager._runtime_session_id_for_identifier(session_id)
+    runtime_id = manager.runtime_session_id_for_identifier(session_id)
     if runtime_id is None:
         listed_row = _listed_session_row(manager, session_id)
         if isinstance(listed_row, dict) and listed_row.get("pending_startup"):
@@ -134,7 +134,7 @@ def restart_session(manager: Any, session_id: str) -> dict[str, Any]:
 
 
 def handoff_session(manager: Any, session_id: str) -> dict[str, Any]:
-    runtime_id = manager._runtime_session_id_for_identifier(session_id)
+    runtime_id = manager.runtime_session_id_for_identifier(session_id)
     if runtime_id is None:
         listed_row = _listed_session_row(manager, session_id)
         if isinstance(listed_row, dict) and listed_row.get("pending_startup"):

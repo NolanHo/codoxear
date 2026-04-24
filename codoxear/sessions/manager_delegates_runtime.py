@@ -256,9 +256,9 @@ class SessionManagerRuntimeDelegates:
         )
 
     def delete_session(self, session_id: str) -> bool:
-        runtime_id = self._runtime_session_id_for_identifier(session_id)
+        runtime_id = self.runtime_session_id_for_identifier(session_id)
         if runtime_id is None:
-            ref = self._page_state_ref_for_session_id(session_id)
+            ref = self.page_state_ref_for_session_id(session_id)
             if ref is None:
                 return False
             backend, durable_id = ref

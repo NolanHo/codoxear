@@ -189,7 +189,7 @@ def clear_deleted_session_state(manager: Any, session_id: str) -> None:
     changed_harness = False
     changed_files = False
     changed_queues = False
-    ref = manager._page_state_ref_for_session_id(session_id)
+    ref = manager.page_state_ref_for_session_id(session_id)
     with manager._lock:
         aliases = getattr(manager, "_aliases", None)
         if isinstance(aliases, dict):
@@ -658,8 +658,8 @@ def recent_cwds(manager: Any, *, limit: int) -> list[str]:
 
 
 def queue_len(manager: Any, session_id: str) -> int:
-    ref = manager._page_state_ref_for_session_id(session_id)
-    runtime_id = manager._runtime_session_id_for_identifier(session_id)
+    ref = manager.page_state_ref_for_session_id(session_id)
+    runtime_id = manager.runtime_session_id_for_identifier(session_id)
     if ref is None:
         return 0
     with manager._lock:
@@ -675,8 +675,8 @@ def queue_len(manager: Any, session_id: str) -> int:
 
 
 def queue_list_local(manager: Any, session_id: str) -> list[str]:
-    ref = manager._page_state_ref_for_session_id(session_id)
-    runtime_id = manager._runtime_session_id_for_identifier(session_id)
+    ref = manager.page_state_ref_for_session_id(session_id)
+    runtime_id = manager.runtime_session_id_for_identifier(session_id)
     if ref is None:
         return []
     with manager._lock:
@@ -699,8 +699,8 @@ def queue_enqueue_local(manager: Any, session_id: str, text: str) -> dict[str, A
     if not t.strip():
         raise ValueError("text required")
     touched_ts: float | None = None
-    ref = manager._page_state_ref_for_session_id(session_id)
-    runtime_id = manager._runtime_session_id_for_identifier(session_id)
+    ref = manager.page_state_ref_for_session_id(session_id)
+    runtime_id = manager.runtime_session_id_for_identifier(session_id)
     durable_session_id = sv.api.clean_optional_text(session_id)
     with manager._lock:
         if runtime_id is not None:
@@ -743,8 +743,8 @@ def queue_enqueue_local(manager: Any, session_id: str, text: str) -> dict[str, A
 
 def queue_delete_local(manager: Any, session_id: str, index: int) -> dict[str, Any]:
     sv = _runtime(manager)
-    ref = manager._page_state_ref_for_session_id(session_id)
-    runtime_id = manager._runtime_session_id_for_identifier(session_id)
+    ref = manager.page_state_ref_for_session_id(session_id)
+    runtime_id = manager.runtime_session_id_for_identifier(session_id)
     if ref is None or runtime_id is None:
         raise KeyError("unknown session")
     with manager._lock:
@@ -784,8 +784,8 @@ def queue_update_local(
     t = str(text)
     if not t.strip():
         raise ValueError("text required")
-    ref = manager._page_state_ref_for_session_id(session_id)
-    runtime_id = manager._runtime_session_id_for_identifier(session_id)
+    ref = manager.page_state_ref_for_session_id(session_id)
+    runtime_id = manager.runtime_session_id_for_identifier(session_id)
     if ref is None or runtime_id is None:
         raise KeyError("unknown session")
     with manager._lock:
@@ -811,7 +811,7 @@ def queue_update_local(
 
 
 def files_key_for_session(manager: Any, session_id: str) -> tuple[str, Any, Any]:
-    runtime_id = manager._runtime_session_id_for_identifier(session_id)
+    runtime_id = manager.runtime_session_id_for_identifier(session_id)
     if runtime_id is None:
         raise KeyError("unknown session")
     s = manager._sessions.get(runtime_id)
@@ -875,7 +875,7 @@ def files_clear(manager: Any, session_id: str) -> None:
 
 def harness_get(manager: Any, session_id: str) -> dict[str, Any]:
     sv = _runtime(manager)
-    runtime_id = manager._runtime_session_id_for_identifier(session_id)
+    runtime_id = manager.runtime_session_id_for_identifier(session_id)
     if runtime_id is None:
         raise KeyError("unknown session")
     with manager._lock:
@@ -910,7 +910,7 @@ def harness_set(
     remaining_injections: int | None = None,
 ) -> dict[str, Any]:
     sv = _runtime(manager)
-    runtime_id = manager._runtime_session_id_for_identifier(session_id)
+    runtime_id = manager.runtime_session_id_for_identifier(session_id)
     if runtime_id is None:
         raise KeyError("unknown session")
     with manager._lock:
