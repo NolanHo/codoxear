@@ -8,7 +8,7 @@ from ..runtime import ServerRuntime
 
 def get_ui_state(runtime: ServerRuntime, manager: Any, session_id: str) -> dict[str, Any]:
     sv = runtime
-    runtime_id = manager._runtime_session_id_for_identifier(session_id)
+    runtime_id = manager.runtime_session_id_for_identifier(session_id)
     if runtime_id is None:
         raise KeyError("unknown session")
     manager.refresh_session_meta(runtime_id, strict=False)
@@ -43,7 +43,7 @@ def get_ui_state(runtime: ServerRuntime, manager: Any, session_id: str) -> dict[
 
 def get_session_commands(runtime: ServerRuntime, manager: Any, session_id: str) -> dict[str, Any]:
     sv = runtime
-    runtime_id = manager._runtime_session_id_for_identifier(session_id)
+    runtime_id = manager.runtime_session_id_for_identifier(session_id)
     if runtime_id is None:
         raise KeyError("unknown session")
     manager.refresh_session_meta(runtime_id, strict=False)
@@ -98,7 +98,7 @@ def get_session_commands(runtime: ServerRuntime, manager: Any, session_id: str) 
 
 def submit_ui_response(runtime: ServerRuntime, manager: Any, session_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     sv = runtime
-    runtime_id = manager._runtime_session_id_for_identifier(session_id)
+    runtime_id = manager.runtime_session_id_for_identifier(session_id)
     if runtime_id is None:
         raise KeyError("unknown session")
     manager.refresh_session_meta(runtime_id, strict=False)

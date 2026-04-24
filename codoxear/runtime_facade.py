@@ -713,10 +713,8 @@ class RuntimeFacade:
 
     def session_submit_ui_response(self, session_id: str, obj: dict[str, Any]) -> dict[str, Any]:
         self.manager.submit_ui_response(session_id, obj)
-        durable_session_id = (
-            self.manager._durable_session_id_for_identifier(session_id) or session_id
-        )
-        runtime_id = self.manager._runtime_session_id_for_identifier(session_id)
+        durable_session_id = self.manager.durable_session_id_for_identifier(session_id) or session_id
+        runtime_id = self.manager.runtime_session_id_for_identifier(session_id)
         self.api.publish_session_workspace_invalidate(
             durable_session_id,
             runtime_id=runtime_id,
@@ -744,10 +742,8 @@ class RuntimeFacade:
 
     def session_interrupt(self, session_id: str) -> dict[str, Any]:
         resp = self.manager.inject_keys(session_id, "\\x1b")
-        durable_session_id = (
-            self.manager._durable_session_id_for_identifier(session_id) or session_id
-        )
-        runtime_id = self.manager._runtime_session_id_for_identifier(session_id)
+        durable_session_id = self.manager.durable_session_id_for_identifier(session_id) or session_id
+        runtime_id = self.manager.runtime_session_id_for_identifier(session_id)
         self.api.publish_session_live_invalidate(
             durable_session_id,
             runtime_id=runtime_id,

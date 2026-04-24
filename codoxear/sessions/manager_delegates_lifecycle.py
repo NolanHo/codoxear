@@ -22,11 +22,17 @@ class SessionManagerLifecycleDelegates:
             return ref[1]
         return str(session.session_id)
 
-    def _runtime_session_id_for_identifier(self, session_id: str) -> str | None:
+    def runtime_session_id_for_identifier(self, session_id: str) -> str | None:
         return _sv(self).api.session_catalog.service(self).runtime_session_id_for_identifier(session_id)
 
-    def _durable_session_id_for_identifier(self, session_id: str) -> str | None:
+    def durable_session_id_for_identifier(self, session_id: str) -> str | None:
         return _sv(self).api.session_catalog.service(self).durable_session_id_for_identifier(session_id)
+
+    def _runtime_session_id_for_identifier(self, session_id: str) -> str | None:
+        return self.runtime_session_id_for_identifier(session_id)
+
+    def _durable_session_id_for_identifier(self, session_id: str) -> str | None:
+        return self.durable_session_id_for_identifier(session_id)
 
     def _append_bridge_event(self, durable_session_id: str, event: dict[str, Any]) -> dict[str, Any]:
         key = _sv(self).api.clean_optional_text(durable_session_id)
@@ -118,8 +124,11 @@ class SessionManagerLifecycleDelegates:
     def _refresh_durable_session_catalog(self, *, force: bool = False) -> None:
         _sv(self).api.session_lifecycle.service(self).refresh_durable_session_catalog(force=force)
 
-    def _page_state_ref_for_session_id(self, session_id: str):
+    def page_state_ref_for_session_id(self, session_id: str):
         return _sv(self).api.session_catalog.service(self).page_state_ref_for_session_id(session_id)
+
+    def _page_state_ref_for_session_id(self, session_id: str):
+        return self.page_state_ref_for_session_id(session_id)
 
     def _persist_durable_session_record(self, row: Any) -> None:
         db = getattr(self, "_page_state_db", None)
