@@ -39,7 +39,7 @@ def refresh_session_meta(manager: Any, session_id: str, *, strict: bool = True) 
         )
         agent_backend = normalize_agent_backend(meta.get("agent_backend"), default=backend)
         owned = (meta.get("owner") == "web") if isinstance(meta.get("owner"), str) else session.owned
-        transport, tmux_session, tmux_window = manager._session_transport(meta=meta)
+        transport, tmux_session, tmux_window = manager.session_transport(meta=meta)
         supports_live_ui = meta.get("supports_live_ui") if isinstance(meta.get("supports_live_ui"), bool) else None
         ui_protocol_version_raw = meta.get("ui_protocol_version")
         ui_protocol_version = ui_protocol_version_raw if type(ui_protocol_version_raw) is int else None
@@ -50,7 +50,7 @@ def refresh_session_meta(manager: Any, session_id: str, *, strict: bool = True) 
             if strict or ("session_path" in meta):
                 preferred_session_path = sv.api.metadata_session_path(meta=meta, backend=backend, sock=sock)
             claimed: set[Path] | None = (
-                manager._claimed_pi_session_paths(exclude_sid=session_id)
+                manager.claimed_pi_session_paths(exclude_sid=session_id)
                 if preferred_session_path is None
                 else None
             )
@@ -81,7 +81,7 @@ def refresh_session_meta(manager: Any, session_id: str, *, strict: bool = True) 
         start_ts_raw = meta.get("start_ts")
         start_ts = float(start_ts_raw) if isinstance(start_ts_raw, (int, float)) else session.start_ts
         resume_session_id = _clean_optional_text(meta.get("resume_session_id"))
-        model_provider, preferred_auth_method, model, reasoning_effort = manager._session_run_settings(
+        model_provider, preferred_auth_method, model, reasoning_effort = manager.session_run_settings(
             backend=backend,
             meta=meta,
             log_path=log_path,
@@ -90,9 +90,9 @@ def refresh_session_meta(manager: Any, session_id: str, *, strict: bool = True) 
     except Exception as exc:
         if strict:
             raise
-        manager._quarantine_sidecar(sock, exc, log=False)
+        manager.quarantine_sidecar(sock, exc, log=False)
         return
-    manager._clear_sidecar_quarantine(sock)
+    manager.clear_sidecar_quarantine(sock)
 
     pi_session_switched = False
     old_session_path: Path | None = None
@@ -110,7 +110,7 @@ def refresh_session_meta(manager: Any, session_id: str, *, strict: bool = True) 
             old_session_path = current.session_path
 
     if pi_session_switched and old_session_path is not None:
-        claimed = manager._claimed_pi_session_paths(exclude_sid=session_id)
+        claimed = manager.claimed_pi_session_paths(exclude_sid=session_id)
         claimed.add(old_session_path)
         new_sp, new_sp_source = sv.api.resolve_pi_session_path(
             thread_id=thread_id,
@@ -132,7 +132,7 @@ def refresh_session_meta(manager: Any, session_id: str, *, strict: bool = True) 
         if pi_session_switched:
             current.session_path = None
             current.pi_attention_scan_activity_ts = None
-            manager._reset_log_caches(current, meta_log_off=0)
+            manager.reset_log_caches(current, meta_log_off=0)
         current.thread_id = str(thread_id)
         current.agent_backend = agent_backend
         current.backend = backend
@@ -141,7 +141,7 @@ def refresh_session_meta(manager: Any, session_id: str, *, strict: bool = True) 
         current.transport = transport
         current.supports_live_ui = supports_live_ui
         current.ui_protocol_version = ui_protocol_version
-        manager._apply_session_source(current, log_path=log_path, session_path=session_path)
+        manager.apply_session_source(current, log_path=log_path, session_path=session_path)
         current.model_provider = model_provider
         current.preferred_auth_method = preferred_auth_method
         current.model = model
@@ -151,5 +151,5 @@ def refresh_session_meta(manager: Any, session_id: str, *, strict: bool = True) 
         current.tmux_window = tmux_window
         current.resume_session_id = resume_session_id
         current.pi_session_path_discovered = bool(current.pi_session_path_discovered or session_path_discovered)
-    if manager._queue_len(session_id) > 0:
-        manager._maybe_drain_session_queue(session_id)
+    if manager.queue_len(session_id) > 0:
+        manager.maybe_drain_session_queue(session_id)

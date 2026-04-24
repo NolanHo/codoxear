@@ -53,27 +53,39 @@ class SessionManagerStateDelegates:
             cwd_groups = dict(self._cwd_groups)
         db.save_cwd_groups(cwd_groups)
 
-    def _reset_log_caches(self, s: Any, *, meta_log_off: int) -> None:
+    def reset_log_caches(self, s: Any, *, meta_log_off: int) -> None:
         _sv(self).api.session_lifecycle.service(self).reset_log_caches(s, meta_log_off=meta_log_off)
 
-    def _session_source_changed(self, s: Any, *, log_path: Any, session_path: Any) -> bool:
+    def _reset_log_caches(self, s: Any, *, meta_log_off: int) -> None:
+        self.reset_log_caches(s, meta_log_off=meta_log_off)
+
+    def session_source_changed(self, s: Any, *, log_path: Any, session_path: Any) -> bool:
         return _sv(self).api.session_lifecycle.service(self).session_source_changed(
             s,
             log_path=log_path,
             session_path=session_path,
         )
 
-    def _claimed_pi_session_paths(self, *, exclude_sid: str = "") -> set[Any]:
+    def _session_source_changed(self, s: Any, *, log_path: Any, session_path: Any) -> bool:
+        return self.session_source_changed(s, log_path=log_path, session_path=session_path)
+
+    def claimed_pi_session_paths(self, *, exclude_sid: str = "") -> set[Any]:
         return _sv(self).api.session_lifecycle.service(self).claimed_pi_session_paths(exclude_sid=exclude_sid)
 
-    def _apply_session_source(self, s: Any, *, log_path: Any, session_path: Any) -> None:
+    def _claimed_pi_session_paths(self, *, exclude_sid: str = "") -> set[Any]:
+        return self.claimed_pi_session_paths(exclude_sid=exclude_sid)
+
+    def apply_session_source(self, s: Any, *, log_path: Any, session_path: Any) -> None:
         _sv(self).api.session_lifecycle.service(self).apply_session_source(
             s,
             log_path=log_path,
             session_path=session_path,
         )
 
-    def _session_run_settings(
+    def _apply_session_source(self, s: Any, *, log_path: Any, session_path: Any) -> None:
+        self.apply_session_source(s, log_path=log_path, session_path=session_path)
+
+    def session_run_settings(
         self,
         *,
         meta: dict[str, Any],
@@ -88,13 +100,31 @@ class SessionManagerStateDelegates:
             agent_backend=agent_backend,
         )
 
-    def _session_transport(self, *, meta: dict[str, Any]) -> tuple[str | None, str | None, str | None]:
+    def _session_run_settings(
+        self,
+        *,
+        meta: dict[str, Any],
+        log_path: Any,
+        backend: str | None = None,
+        agent_backend: str | None = None,
+    ) -> tuple[str | None, str | None, str | None, str | None]:
+        return self.session_run_settings(
+            meta=meta,
+            log_path=log_path,
+            backend=backend,
+            agent_backend=agent_backend,
+        )
+
+    def session_transport(self, *, meta: dict[str, Any]) -> tuple[str | None, str | None, str | None]:
         transport = _sv(self).api.clean_optional_text(meta.get("transport"))
         tmux_session = _sv(self).api.clean_optional_text(meta.get("tmux_session"))
         tmux_window = _sv(self).api.clean_optional_text(meta.get("tmux_window"))
         if transport is None and (tmux_session is not None or tmux_window is not None):
             transport = "tmux"
         return transport, tmux_session, tmux_window
+
+    def _session_transport(self, *, meta: dict[str, Any]) -> tuple[str | None, str | None, str | None]:
+        return self.session_transport(meta=meta)
 
     def _discover_existing_if_stale(self, *, force: bool = False) -> None:
         now = _sv(self).api.time.time()
@@ -133,7 +163,7 @@ class SessionManagerStateDelegates:
         bad_sidecars.pop(key, None)
         return False
 
-    def _quarantine_sidecar(
+    def quarantine_sidecar(
         self,
         sock: Any,
         exc: BaseException,
@@ -152,10 +182,23 @@ class SessionManagerStateDelegates:
             )
             _sv(self).api.sys.stderr.flush()
 
-    def _clear_sidecar_quarantine(self, sock: Any) -> None:
+    def _quarantine_sidecar(
+        self,
+        sock: Any,
+        exc: BaseException,
+        *,
+        reason: str = "invalid sidecar",
+        log: bool = True,
+    ) -> None:
+        self.quarantine_sidecar(sock, exc, reason=reason, log=log)
+
+    def clear_sidecar_quarantine(self, sock: Any) -> None:
         bad_sidecars = getattr(self, "_bad_sidecars", None)
         if isinstance(bad_sidecars, dict):
             bad_sidecars.pop(str(sock), None)
+
+    def _clear_sidecar_quarantine(self, sock: Any) -> None:
+        self.clear_sidecar_quarantine(sock)
 
     def _load_harness(self) -> None:
         _sv(self).api.page_state.service(self).load_harness()
@@ -363,8 +406,11 @@ class SessionManagerStateDelegates:
             limit=sv.api.RECENT_CWD_MAX if limit is None else limit
         )
 
-    def _queue_len(self, session_id: str) -> int:
+    def queue_len(self, session_id: str) -> int:
         return _sv(self).api.page_state.service(self).queue_len(session_id)
+
+    def _queue_len(self, session_id: str) -> int:
+        return self.queue_len(session_id)
 
     def _queue_list_local(self, session_id: str) -> list[str]:
         return _sv(self).api.page_state.service(self).queue_list_local(session_id)

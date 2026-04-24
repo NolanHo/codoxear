@@ -37,7 +37,7 @@ class SessionManagerRuntimeDelegates:
     def _queue_loop(self) -> None:
         _sv(self).api.session_background.service(self).queue_loop()
 
-    def _maybe_drain_session_queue(
+    def maybe_drain_session_queue(
         self,
         session_id: str,
         *,
@@ -47,6 +47,14 @@ class SessionManagerRuntimeDelegates:
             session_id,
             now_ts=now_ts,
         )
+
+    def _maybe_drain_session_queue(
+        self,
+        session_id: str,
+        *,
+        now_ts: float | None = None,
+    ) -> bool:
+        return self.maybe_drain_session_queue(session_id, now_ts=now_ts)
 
     def _queue_sweep(self) -> None:
         _sv(self).api.session_background.service(self).queue_sweep()
