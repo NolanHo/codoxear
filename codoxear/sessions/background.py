@@ -383,8 +383,7 @@ def observe_rollout_delta(
     manager: Any, session_id: str, *, objs: list[dict[str, Any]], new_off: int
 ) -> None:
     sv = _runtime(manager)
-    voice_push = getattr(manager, "_voice_push", None)
-    if voice_push is None:
+    if not manager.voice_delivery_available():
         with manager._lock:
             session = manager._sessions.get(session_id)
             if session is not None:
@@ -401,7 +400,7 @@ def observe_rollout_delta(
                 session.delivery_log_off = max(int(session.delivery_log_off), int(new_off))
         return
     session_name = manager._session_display_name(session_id)
-    voice_push.observe_messages(
+    manager.voice_observe_messages(
         session_id=session_id,
         session_display_name=session_name,
         messages=messages,

@@ -248,8 +248,7 @@ def append_chat_events(
 
 
 def attach_notification_texts(manager: Any, events: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    voice_push = getattr(manager, "_voice_push", None)
-    if voice_push is None:
+    if not manager.voice_delivery_available():
         return list(events)
     out: list[dict[str, Any]] = []
     for ev in events:
@@ -263,7 +262,7 @@ def attach_notification_texts(manager: Any, events: list[dict[str, Any]]) -> lis
         if not isinstance(message_id, str) or not message_id:
             out.append(ev)
             continue
-        notification_text = voice_push.notification_text_for_message(message_id)
+        notification_text = manager.voice_notification_text_for_message(message_id)
         if not notification_text:
             out.append(ev)
             continue

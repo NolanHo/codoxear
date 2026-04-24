@@ -306,6 +306,33 @@ class SessionManagerRuntimeDelegates:
     def get_state(self, session_id: str) -> dict[str, Any]:
         return _sv(self).api.session_transport.service(self).get_state(session_id)
 
+    def voice_delivery_available(self) -> bool:
+        return getattr(self, "_voice_push", None) is not None
+
+    def voice_observe_messages(
+        self,
+        *,
+        session_id: str,
+        session_display_name: str,
+        messages: list[Any],
+    ) -> bool:
+        voice_push = getattr(self, "_voice_push", None)
+        if voice_push is None:
+            return False
+        voice_push.observe_messages(
+            session_id=session_id,
+            session_display_name=session_display_name,
+            messages=messages,
+        )
+        return True
+
+    def voice_notification_text_for_message(self, message_id: str) -> str | None:
+        voice_push = getattr(self, "_voice_push", None)
+        if voice_push is None:
+            return None
+        text = voice_push.notification_text_for_message(message_id)
+        return text if isinstance(text, str) and text else None
+
     def voice_settings_snapshot(self) -> dict[str, Any]:
         return self._voice_push.settings_snapshot()
 
