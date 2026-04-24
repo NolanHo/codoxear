@@ -397,9 +397,9 @@ def finalize_pending_pi_spawn(
     ref = ("pi", durable_session_id)
     try:
         if proc is not None:
-            sv.api.wait_or_raise(proc, label="pi broker", timeout_s=0.25)
+            sv.api.spawn_utils.service(sv).wait_or_raise(proc, label="pi broker", timeout_s=0.25)
             sv.api.start_proc_stderr_drain(proc)
-        meta = sv.api.wait_for_spawned_broker_meta(spawn_nonce)
+        meta = sv.api.spawn_utils.service(sv).wait_for_spawned_broker_meta(spawn_nonce)
         live_session_id = sv.api.clean_optional_text(meta.get("session_id")) or durable_session_id
         if live_session_id != durable_session_id:
             raise RuntimeError(

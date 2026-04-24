@@ -165,8 +165,12 @@ class RuntimeFacadeSessionMixin:
                 continue
             seen.add(row)
             merged.append(row)
-        stats = self.api.parse_git_numstat(unstaged_numstat)
-        for path_key, vals in self.api.parse_git_numstat(staged_numstat).items():
+        stats = self.api.spawn_utils.service(self.runtime).parse_git_numstat(
+            unstaged_numstat
+        )
+        for path_key, vals in self.api.spawn_utils.service(
+            self.runtime
+        ).parse_git_numstat(staged_numstat).items():
             prev = stats.get(path_key)
             if prev is None:
                 stats[path_key] = vals

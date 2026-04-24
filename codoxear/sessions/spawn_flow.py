@@ -132,7 +132,7 @@ def spawn_web_session(
             env["CODEX_WEB_TRANSPORT"] = "tmux"
             env["CODEX_WEB_TMUX_SESSION"] = sv.api.TMUX_SESSION_NAME
             env["CODEX_WEB_TMUX_WINDOW"] = tmux_window
-            short_app_dir = sv.api.ensure_tmux_short_app_dir()
+            short_app_dir = sv.api.spawn_utils.service(sv).ensure_tmux_short_app_dir()
             inline_env = {
                 "CODEX_WEB_OWNER": "web",
                 "CODEX_WEB_AGENT_BACKEND": "pi",
@@ -211,8 +211,8 @@ def spawn_web_session(
                     "tmux_session": sv.api.TMUX_SESSION_NAME,
                     "tmux_window": tmux_window,
                 }
-            meta = sv.api.wait_for_spawned_broker_meta(spawn_nonce)
-            payload = sv.api.spawn_result_from_meta(meta)
+            meta = sv.api.spawn_utils.service(sv).wait_for_spawned_broker_meta(spawn_nonce)
+            payload = sv.api.spawn_utils.service(sv).spawn_result_from_meta(meta)
             return {**payload, "tmux_session": sv.api.TMUX_SESSION_NAME, "tmux_window": tmux_window}
         try:
             proc = sv.api.subprocess.Popen(
@@ -252,10 +252,10 @@ def spawn_web_session(
             }
             sv.api.event_publish.service(sv).publish_sessions_invalidate(reason="session_created")
             return payload
-        sv.api.wait_or_raise(proc, label="pi broker", timeout_s=1.5)
+        sv.api.spawn_utils.service(sv).wait_or_raise(proc, label="pi broker", timeout_s=1.5)
         sv.api.start_proc_stderr_drain(proc)
-        meta = sv.api.wait_for_spawned_broker_meta(spawn_nonce)
-        payload = sv.api.spawn_result_from_meta(meta)
+        meta = sv.api.spawn_utils.service(sv).wait_for_spawned_broker_meta(spawn_nonce)
+        payload = sv.api.spawn_utils.service(sv).spawn_result_from_meta(meta)
         sv.api.event_publish.service(sv).publish_sessions_invalidate(reason="session_created")
         return payload
 
@@ -263,7 +263,7 @@ def spawn_web_session(
         raise ValueError("worktree_branch cannot be used when resuming a session")
     spawn_cwd = cwd_path
     if worktree_branch is not None:
-        spawn_cwd = sv.api.create_git_worktree(cwd_path, worktree_branch)
+        spawn_cwd = sv.api.spawn_utils.service(sv).create_git_worktree(cwd_path, worktree_branch)
 
     argv = [sv.api.sys.executable, "-m", "codoxear.broker", "--cwd", str(spawn_cwd), "--"]
     codex_args: list[str] = []
@@ -361,7 +361,7 @@ def spawn_web_session(
         env["CODEX_WEB_TMUX_SESSION"] = sv.api.TMUX_SESSION_NAME
         env["CODEX_WEB_TMUX_WINDOW"] = tmux_window
         env["CODEX_WEB_SPAWN_NONCE"] = spawn_nonce
-        short_app_dir = sv.api.ensure_tmux_short_app_dir()
+        short_app_dir = sv.api.spawn_utils.service(sv).ensure_tmux_short_app_dir()
         inline_env = {
             "CODEX_WEB_OWNER": "web",
             "CODEX_WEB_AGENT_BACKEND": backend_name,
@@ -432,8 +432,8 @@ def spawn_web_session(
         if tmux_proc.returncode != 0:
             detail = (tmux_proc.stderr or tmux_proc.stdout or f"exit status {tmux_proc.returncode}").strip()
             raise RuntimeError(f"tmux launch failed: {detail}")
-        meta = sv.api.wait_for_spawned_broker_meta(spawn_nonce)
-        payload = sv.api.spawn_result_from_meta(meta)
+        meta = sv.api.spawn_utils.service(sv).wait_for_spawned_broker_meta(spawn_nonce)
+        payload = sv.api.spawn_utils.service(sv).spawn_result_from_meta(meta)
         return {**payload, "tmux_session": sv.api.TMUX_SESSION_NAME, "tmux_window": tmux_window}
 
     try:
@@ -448,13 +448,13 @@ def spawn_web_session(
     except Exception as exc:
         raise RuntimeError(f"spawn failed: {exc}") from exc
 
-    sv.api.wait_or_raise(proc, label="broker", timeout_s=1.5)
+    sv.api.spawn_utils.service(sv).wait_or_raise(proc, label="broker", timeout_s=1.5)
     if proc.stderr is not None:
         sv.api.threading.Thread(target=sv.api.drain_stream, args=(proc.stderr,), daemon=True).start()
 
     sv.api.threading.Thread(target=proc.wait, daemon=True).start()
-    meta = sv.api.wait_for_spawned_broker_meta(spawn_nonce)
-    payload = sv.api.spawn_result_from_meta(meta)
+    meta = sv.api.spawn_utils.service(sv).wait_for_spawned_broker_meta(spawn_nonce)
+    payload = sv.api.spawn_utils.service(sv).spawn_result_from_meta(meta)
     sv.api.event_publish.service(sv).publish_sessions_invalidate(reason="session_created")
     return payload
 

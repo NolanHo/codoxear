@@ -82,7 +82,7 @@ from .sessions import process_kill as _session_process_kill
 from .sessions import resume_candidates as _resume_candidates
 from .sessions import session_catalog as _session_catalog
 from .sessions import session_settings as _session_settings
-from .sessions import spawn_utils as _session_spawn_utils
+from .sessions import spawn_utils as _spawn_utils
 from .sessions import session_control as _session_control
 from .sessions import session_display as _session_display
 from .sessions import sidebar_state as _sidebar_state_module
@@ -330,17 +330,11 @@ def _metrics_snapshot() -> dict[str, dict[str, float | int]]:
 def _wait_or_raise(
     proc: subprocess.Popen[bytes], *, label: str, timeout_s: float = 1.5
 ) -> None:
-    deadline = time.time() + float(timeout_s)
-    while time.time() < deadline:
-        rc = proc.poll()
-        if rc is None:
-            time.sleep(0.05)
-            continue
-        _out, err = proc.communicate(timeout=0.5)
-        err2 = err if isinstance(err, (bytes, bytearray)) else b""
-        msg = bytes(err2).decode("utf-8", errors="replace").strip()
-        msg = msg[-4000:] if msg else ""
-        raise RuntimeError(f"{label} exited early (rc={rc}): {msg}")
+    return _spawn_utils.service(RUNTIME).wait_or_raise(
+        proc,
+        label=label,
+        timeout_s=timeout_s,
+    )
 
 
 def _drain_stream(f: Any) -> None:
@@ -363,35 +357,20 @@ def _tmux_available() -> bool:
 
 
 def _ensure_tmux_short_app_dir() -> str:
-    return _session_spawn_utils.ensure_tmux_short_app_dir(RUNTIME)
+    return _spawn_utils.service(RUNTIME).ensure_tmux_short_app_dir()
 
 
 def _wait_for_spawned_broker_meta(
     spawn_nonce: str, *, timeout_s: float = TMUX_META_WAIT_SECONDS
 ) -> dict[str, Any]:
-    return _session_spawn_utils.wait_for_spawned_broker_meta(
-        RUNTIME,
+    return _spawn_utils.service(RUNTIME).wait_for_spawned_broker_meta(
         spawn_nonce,
         timeout_s=timeout_s,
     )
 
 
 def _spawn_result_from_meta(meta: dict[str, Any]) -> dict[str, Any]:
-    broker_pid = meta.get("broker_pid")
-    if not isinstance(broker_pid, int):
-        raise RuntimeError("spawn metadata is missing broker_pid")
-    sock_path = _clean_optional_text(meta.get("sock_path"))
-    runtime_id = Path(sock_path).stem if sock_path else None
-    session_id = _clean_optional_text(meta.get("session_id")) or runtime_id
-    payload: dict[str, Any] = {"broker_pid": int(broker_pid)}
-    if session_id:
-        payload["session_id"] = session_id
-    if runtime_id:
-        payload["runtime_id"] = runtime_id
-    backend = _clean_optional_text(meta.get("backend"))
-    if backend:
-        payload["backend"] = backend
-    return payload
+    return _spawn_utils.service(RUNTIME).spawn_result_from_meta(meta)
 
 
 def _pid_alive(pid: int) -> bool:
@@ -798,15 +777,14 @@ def _default_worktree_path(source_cwd: Path, branch: str) -> Path:
 
 
 def _create_git_worktree(source_cwd: Path, worktree_branch: str) -> Path:
-    return _session_spawn_utils.create_git_worktree(
-        RUNTIME,
+    return _spawn_utils.service(RUNTIME).create_git_worktree(
         source_cwd,
         worktree_branch,
     )
 
 
 def _parse_git_numstat(text: str) -> dict[str, dict[str, int | None]]:
-    return _session_spawn_utils.parse_git_numstat(text)
+    return _spawn_utils.service(RUNTIME).parse_git_numstat(text)
 
 
 def _safe_filename(name: str, *, default: str = "file") -> str:
