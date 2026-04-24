@@ -306,6 +306,59 @@ class SessionManagerRuntimeDelegates:
     def get_state(self, session_id: str) -> dict[str, Any]:
         return _sv(self).api.session_transport.service(self).get_state(session_id)
 
+    def voice_settings_snapshot(self) -> dict[str, Any]:
+        return self._voice_push.settings_snapshot()
+
+    def voice_subscriptions_snapshot(self) -> dict[str, Any]:
+        return self._voice_push.subscriptions_snapshot()
+
+    def voice_notification_state_for_message(self, message_id: str) -> dict[str, Any] | None:
+        return self._voice_push.notification_state_for_message(message_id)
+
+    def voice_notification_feed_since(self, since_ts: float) -> list[dict[str, Any]]:
+        return self._voice_push.notification_feed_since(since_ts)
+
+    def voice_playlist_bytes(self) -> bytes:
+        return self._voice_push.playlist_bytes()
+
+    def voice_segment_bytes(self, segment_name: str) -> bytes:
+        segment_path = self._voice_push.segment_path(segment_name)
+        return segment_path.read_bytes()
+
+    def voice_set_settings(self, obj: dict[str, Any]) -> dict[str, Any]:
+        return self._voice_push.set_settings(obj)
+
+    def voice_upsert_subscription(
+        self,
+        *,
+        subscription: Any,
+        user_agent: str,
+        device_label: str,
+        device_class: str,
+    ) -> dict[str, Any]:
+        return self._voice_push.upsert_subscription(
+            subscription=subscription,
+            user_agent=user_agent,
+            device_label=device_label,
+            device_class=device_class,
+        )
+
+    def voice_toggle_subscription(self, *, endpoint: str, enabled: bool) -> dict[str, Any]:
+        return self._voice_push.toggle_subscription(endpoint=endpoint, enabled=enabled)
+
+    def voice_send_test_push(self, *, session_display_name: str) -> dict[str, Any]:
+        return self._voice_push.send_test_push_notification(
+            session_display_name=session_display_name,
+        )
+
+    def voice_listener_heartbeat(self, *, client_id: str, enabled: bool) -> dict[str, Any]:
+        return self._voice_push.listener_heartbeat(client_id=client_id, enabled=enabled)
+
+    def voice_enqueue_test_announcement(self, *, session_display_name: str) -> dict[str, Any]:
+        return self._voice_push.enqueue_test_announcement(
+            session_display_name=session_display_name,
+        )
+
     def get_ui_state(self, session_id: str) -> dict[str, Any]:
         sv = _sv(self)
         return sv.api.pi_ui_bridge.get_ui_state(sv, self, session_id)

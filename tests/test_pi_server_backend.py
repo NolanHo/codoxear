@@ -4639,7 +4639,7 @@ class TestPiBackendRouting(unittest.TestCase):
             patch("codoxear.server._require_auth", return_value=True),
             patch("codoxear.server.MANAGER") as manager,
         ):
-            manager._voice_push.send_test_push_notification.return_value = {
+            manager.voice_send_test_push.return_value = {
                 "sent_count": 1,
                 "failed_count": 0,
                 "target_count": 1,
@@ -4651,7 +4651,7 @@ class TestPiBackendRouting(unittest.TestCase):
         payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
         self.assertEqual(handler.status, 200)
         self.assertEqual(payload["sent_count"], 1)
-        manager._voice_push.send_test_push_notification.assert_called_once_with(
+        manager.voice_send_test_push.assert_called_once_with(
             session_display_name="Codoxear test"
         )
 
@@ -4664,7 +4664,7 @@ class TestPiBackendRouting(unittest.TestCase):
             patch("codoxear.server._require_auth", return_value=True),
             patch("codoxear.server.MANAGER") as manager,
         ):
-            manager._voice_push.send_test_push_notification.side_effect = ValueError(
+            manager.voice_send_test_push.side_effect = ValueError(
                 "no enabled mobile subscriptions"
             )
 
