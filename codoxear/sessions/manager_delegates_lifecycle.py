@@ -6,7 +6,7 @@ from .manager_delegates_shared import _sv
 
 
 class SessionManagerLifecycleDelegates:
-    def _page_state_ref_for_session(self, session: Any):
+    def page_state_ref_for_session(self, session: Any):
         durable_id = _sv(self).api.clean_optional_text(session.thread_id) or _sv(self).api.clean_optional_text(session.session_id)
         if durable_id is None:
             return None
@@ -16,11 +16,17 @@ class SessionManagerLifecycleDelegates:
         )
         return backend, durable_id
 
-    def _durable_session_id_for_session(self, session: Any) -> str:
-        ref = self._page_state_ref_for_session(session)
+    def _page_state_ref_for_session(self, session: Any):
+        return self.page_state_ref_for_session(session)
+
+    def durable_session_id_for_session(self, session: Any) -> str:
+        ref = self.page_state_ref_for_session(session)
         if ref is not None:
             return ref[1]
         return str(session.session_id)
+
+    def _durable_session_id_for_session(self, session: Any) -> str:
+        return self.durable_session_id_for_session(session)
 
     def runtime_session_id_for_identifier(self, session_id: str) -> str | None:
         return _sv(self).api.session_catalog.service(self).runtime_session_id_for_identifier(session_id)

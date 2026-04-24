@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from .runtime_access import manager_runtime
+
 
 def refresh_session_state(
     manager: Any,
@@ -10,9 +12,9 @@ def refresh_session_state(
     sock_path: Path,
     timeout_s: float = 0.4,
 ) -> tuple[bool, BaseException | None]:
-    sv = manager._runtime
+    sv = manager_runtime(manager)
     try:
-        resp = manager._sock_call(sock_path, {"cmd": "state"}, timeout_s=timeout_s)
+        resp = manager.sock_call(sock_path, {"cmd": "state"}, timeout_s=timeout_s)
         sv.api.validated_session_state(resp)
     except Exception as exc:
         return False, exc
@@ -26,10 +28,16 @@ def refresh_session_state(
         if session:
             next_busy = sv.api.state_busy_value(resp)
             next_queue_len = sv.api.state_queue_len_value(resp)
-            next_token = resp.get("token") if isinstance(resp.get("token"), dict) else session.token
-            durable_session_id = manager._durable_session_id_for_session(session)
+            next_token = (
+                resp.get("token") if isinstance(resp.get("token"), dict) else session.token
+            )
+            durable_session_id = manager.durable_session_id_for_session(session)
             publish_sessions = session.busy != next_busy
-            publish_live = publish_sessions or session.queue_len != next_queue_len or next_token != session.token
+            publish_live = (
+                publish_sessions
+                or session.queue_len != next_queue_len
+                or next_token != session.token
+            )
             publish_workspace = session.queue_len != next_queue_len
             session.busy = next_busy
             session.queue_len = next_queue_len
@@ -56,7 +64,7 @@ def refresh_session_state(
 
 
 def prune_dead_sessions(manager: Any) -> None:
-    sv = manager._runtime
+    sv = manager_runtime(manager)
     with manager._lock:
         items = list(manager._sessions.items())
 
@@ -83,10 +91,10 @@ def prune_dead_sessions(manager: Any) -> None:
         for sid, _sock in dead:
             session = manager._sessions.pop(sid, None)
             if session is not None:
-                dead_events.append((manager._durable_session_id_for_session(session), sid))
+                dead_events.append((manager.durable_session_id_for_session(session), sid))
 
     for sid, sock in dead:
-        manager._clear_deleted_session_state(sid)
+        manager.clear_deleted_session_state(sid)
         sv.api.unlink_quiet(sock)
         sv.api.unlink_quiet(sock.with_suffix(".json"))
 

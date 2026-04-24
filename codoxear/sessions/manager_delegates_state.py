@@ -366,8 +366,11 @@ class SessionManagerStateDelegates:
         _sv(self).api.publish_sessions_invalidate(reason="session_edited")
         return payload
 
-    def _clear_deleted_session_state(self, session_id: str) -> None:
+    def clear_deleted_session_state(self, session_id: str) -> None:
         _sv(self).api.page_state.service(self).clear_deleted_session_state(session_id)
+
+    def _clear_deleted_session_state(self, session_id: str) -> None:
+        self.clear_deleted_session_state(session_id)
 
     def _load_files(self) -> None:
         _sv(self).api.page_state.service(self).load_files()

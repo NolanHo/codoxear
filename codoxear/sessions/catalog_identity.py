@@ -36,7 +36,7 @@ def runtime_session_id_for_identifier(manager: Any, session_id: str) -> str | No
             return target
         matches: list[tuple[float, str]] = []
         for runtime_id, session in manager._sessions.items():
-            ref = manager._page_state_ref_for_session(session)
+            ref = manager.page_state_ref_for_session(session)
             if ref is not None and ref[1] == target:
                 matches.append((float(session.start_ts or 0.0), runtime_id))
                 continue
@@ -55,7 +55,7 @@ def durable_session_id_for_identifier(manager: Any, session_id: str) -> str | No
         with manager._lock:
             session = manager._sessions.get(runtime_id)
         if session is not None:
-            return manager._durable_session_id_for_session(session)
+            return manager.durable_session_id_for_session(session)
     target = _clean_optional_text(session_id)
     return target if target is not None else None
 
@@ -66,7 +66,7 @@ def page_state_ref_for_session_id(manager: Any, session_id: str) -> SessionRef |
         with manager._lock:
             session = manager._sessions.get(runtime_id)
         if session is not None:
-            return manager._page_state_ref_for_session(session)
+            return manager.page_state_ref_for_session(session)
     parsed = _parse_historical_session_id(session_id)
     if parsed is not None:
         return parsed
