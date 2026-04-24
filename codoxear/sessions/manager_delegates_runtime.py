@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .manager_delegates_shared import _sv
+from .manager_delegates_shared import _instance_override, _sv
 
 
 class SessionManagerRuntimeDelegates:
@@ -43,6 +43,13 @@ class SessionManagerRuntimeDelegates:
         *,
         now_ts: float | None = None,
     ) -> bool:
+        override = _instance_override(
+            self,
+            "_maybe_drain_session_queue",
+            SessionManagerRuntimeDelegates._maybe_drain_session_queue,
+        )
+        if override is not None:
+            return override(session_id, now_ts=now_ts)
         return _sv(self).api.session_background.service(self).maybe_drain_session_queue(
             session_id,
             now_ts=now_ts,
@@ -59,13 +66,38 @@ class SessionManagerRuntimeDelegates:
     def _queue_sweep(self) -> None:
         _sv(self).api.session_background.service(self).queue_sweep()
 
+    def discover_existing(
+        self,
+        *,
+        force: bool = False,
+        skip_invalid_sidecars: bool = False,
+    ) -> None:
+        override = _instance_override(
+            self,
+            "_discover_existing",
+            SessionManagerRuntimeDelegates._discover_existing,
+        )
+        if override is not None:
+            try:
+                override(force=force, skip_invalid_sidecars=skip_invalid_sidecars)
+            except TypeError:
+                try:
+                    override(force=force)
+                except TypeError:
+                    override()
+            return
+        _sv(self).api.session_catalog.service(self).discover_existing(
+            force=force,
+            skip_invalid_sidecars=skip_invalid_sidecars,
+        )
+
     def _discover_existing(
         self,
         *,
         force: bool = False,
         skip_invalid_sidecars: bool = False,
     ) -> None:
-        _sv(self).api.session_catalog.service(self).discover_existing(
+        self.discover_existing(
             force=force,
             skip_invalid_sidecars=skip_invalid_sidecars,
         )
@@ -82,11 +114,33 @@ class SessionManagerRuntimeDelegates:
             timeout_s=timeout_s,
         )
 
-    def _prune_dead_sessions(self) -> None:
+    def prune_dead_sessions(self) -> None:
+        override = _instance_override(
+            self,
+            "_prune_dead_sessions",
+            SessionManagerRuntimeDelegates._prune_dead_sessions,
+        )
+        if override is not None:
+            override()
+            return
         _sv(self).api.session_catalog.service(self).prune_dead_sessions()
 
-    def _update_meta_counters(self) -> None:
+    def _prune_dead_sessions(self) -> None:
+        self.prune_dead_sessions()
+
+    def update_meta_counters(self) -> None:
+        override = _instance_override(
+            self,
+            "_update_meta_counters",
+            SessionManagerRuntimeDelegates._update_meta_counters,
+        )
+        if override is not None:
+            override()
+            return
         _sv(self).api.session_background.service(self).update_meta_counters()
+
+    def _update_meta_counters(self) -> None:
+        self.update_meta_counters()
 
     def list_sessions(self) -> list[dict[str, Any]]:
         return _sv(self).api.session_catalog.service(self).list_sessions()

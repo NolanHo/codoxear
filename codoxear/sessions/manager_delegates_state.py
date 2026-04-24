@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .manager_delegates_shared import _sv
+from .manager_delegates_shared import _instance_override, _sv
 
 
 class SessionManagerStateDelegates:
@@ -126,19 +126,27 @@ class SessionManagerStateDelegates:
     def _session_transport(self, *, meta: dict[str, Any]) -> tuple[str | None, str | None, str | None]:
         return self.session_transport(meta=meta)
 
-    def _discover_existing_if_stale(self, *, force: bool = False) -> None:
+    def discover_existing_if_stale(self, *, force: bool = False) -> None:
+        override = _instance_override(
+            self,
+            "_discover_existing_if_stale",
+            SessionManagerStateDelegates._discover_existing_if_stale,
+        )
+        if override is not None:
+            try:
+                override(force=force)
+            except TypeError:
+                override()
+            return
         now = _sv(self).api.time.time()
         with self._lock:
             last = float(getattr(self, "_last_discover_ts", 0.0))
         if (not force) and ((now - last) < _sv(self).api.DISCOVER_MIN_INTERVAL_SECONDS):
             return
-        try:
-            self._discover_existing(force=force, skip_invalid_sidecars=True)
-        except TypeError:
-            try:
-                self._discover_existing(force=force)
-            except TypeError:
-                self._discover_existing()
+        self.discover_existing(force=force, skip_invalid_sidecars=True)
+
+    def _discover_existing_if_stale(self, *, force: bool = False) -> None:
+        self.discover_existing_if_stale(force=force)
 
     def _sidecar_quarantine_signature(self, sock: Any) -> tuple[bool, int, int]:
         meta_path = sock.with_suffix(".json")
@@ -218,14 +226,51 @@ class SessionManagerStateDelegates:
     def _load_sidebar_meta(self) -> None:
         self._sidebar_state_facade().load_sidebar_meta()
 
-    def _save_sidebar_meta(self) -> None:
+    def save_sidebar_meta(self) -> None:
+        override = _instance_override(
+            self,
+            "_save_sidebar_meta",
+            SessionManagerStateDelegates._save_sidebar_meta,
+        )
+        if override is not None:
+            override()
+            return
         self._persist_session_ui_state()
+
+    def _save_sidebar_meta(self) -> None:
+        self.save_sidebar_meta()
 
     def _load_hidden_sessions(self) -> None:
         self._sidebar_state_facade().load_hidden_sessions()
 
     def _save_hidden_sessions(self) -> None:
         self._persist_session_ui_state()
+
+    def hidden_session_keys(
+        self,
+        session_id: str | None,
+        thread_id: str | None,
+        resume_session_id: str | None,
+        backend: str | None,
+    ) -> set[str]:
+        override = _instance_override(
+            self,
+            "_hidden_session_keys",
+            SessionManagerStateDelegates._hidden_session_keys,
+        )
+        if override is not None:
+            return override(
+                session_id,
+                thread_id,
+                resume_session_id,
+                backend,
+            )
+        return self._sidebar_state_facade().hidden_session_keys(
+            session_id,
+            thread_id,
+            resume_session_id,
+            backend,
+        )
 
     def _hidden_session_keys(
         self,
@@ -234,7 +279,7 @@ class SessionManagerStateDelegates:
         resume_session_id: str | None,
         backend: str | None,
     ) -> set[str]:
-        return self._sidebar_state_facade().hidden_session_keys(
+        return self.hidden_session_keys(
             session_id,
             thread_id,
             resume_session_id,

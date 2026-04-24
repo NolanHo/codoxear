@@ -75,7 +75,7 @@ def resume_historical_pi_session(manager: Any, session_id: str) -> dict[str, Any
         backend="pi",
         resume_session_id=resume_session_id,
     )
-    manager._discover_existing(force=True, skip_invalid_sidecars=True)
+    manager.discover_existing(force=True, skip_invalid_sidecars=True)
     live_runtime_id = clean_optional_text(spawn_res.get("runtime_id"))
     live_session_id = clean_optional_text(spawn_res.get("session_id"))
     if live_runtime_id is None or live_session_id is None:

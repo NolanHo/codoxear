@@ -6,6 +6,7 @@ from typing import Any
 
 from ..agent_backend import normalize_agent_backend
 from ..page_state_sqlite import PageStateDB
+from .runtime_access import manager_runtime
 
 
 def _clean_optional_text(value: Any) -> str | None:
@@ -112,7 +113,7 @@ def _build_live_item(
         if prev_recent_ts is None or prev_recent_ts < updated_ts:
             recent_map[cwd_recent] = updated_ts
 
-    ref = manager._page_state_ref_for_session(session)
+    ref = manager.page_state_ref_for_session(session)
     queue_len = 0
     if isinstance(qmap, dict):
         q0 = qmap.get(session.session_id)
@@ -182,7 +183,7 @@ def _build_live_item(
         except Exception:
             pass
 
-    durable_session_id = ref[1] if ref is not None else manager._durable_session_id_for_session(session)
+    durable_session_id = ref[1] if ref is not None else manager.durable_session_id_for_session(session)
     row = {
         "session_id": durable_session_id,
         "runtime_id": session.session_id,
@@ -293,7 +294,7 @@ def _collect_recovered_catalog_items(
 
         session_row_id = durable_session_id if record.pending_startup else sv.api.historical_session_id(backend, durable_session_id)
         if hidden_sessions.intersection(
-            manager._hidden_session_keys(
+            manager.hidden_session_keys(
                 session_row_id,
                 durable_session_id,
                 durable_session_id,
@@ -444,17 +445,16 @@ def _sort_and_dedupe_rows(sv: Any, rows: list[dict[str, Any]]) -> list[dict[str,
 
 
 def list_sessions(manager: Any) -> list[dict[str, Any]]:
-    sv = manager._runtime
+    sv = manager_runtime(manager)
     recovered_catalog: dict[Any, Any] = {}
     db = getattr(manager, "_page_state_db", None)
     if isinstance(db, PageStateDB):
         recovered_catalog = db.load_sessions()
 
     if float(getattr(manager, "_last_discover_ts", 0.0) or 0.0) <= 0.0:
-        manager._discover_existing_if_stale(force=True)
-    manager._update_meta_counters()
+        manager.discover_existing_if_stale(force=True)
+    manager.update_meta_counters()
 
-    files_dirty = False
     sidebar_dirty = False
     now_ts = time.time()
 
@@ -489,7 +489,7 @@ def list_sessions(manager: Any) -> list[dict[str, Any]]:
         if bool(getattr(manager, "_include_historical_sessions", False)):
             for hist in sv.api.historical_sidebar_items(live_resume_keys=live_resume_keys, now_ts=now_ts):
                 if hidden_sessions.intersection(
-                    manager._hidden_session_keys(
+                    manager.hidden_session_keys(
                         hist.get("session_id"),
                         hist.get("thread_id"),
                         hist.get("resume_session_id"),
@@ -504,11 +504,9 @@ def list_sessions(manager: Any) -> list[dict[str, Any]]:
     for item in out:
         if item.get("busy") or int(item.get("queue_len", 0)) <= 0:
             continue
-        manager._maybe_drain_session_queue(str(item["session_id"]))
+        manager.maybe_drain_session_queue(str(item["session_id"]))
 
-    if files_dirty:
-        manager._save_files()
     if sidebar_dirty:
-        manager._save_sidebar_meta()
+        manager.save_sidebar_meta()
 
     return _sort_and_dedupe_rows(sv, out)
