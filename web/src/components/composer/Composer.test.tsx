@@ -285,6 +285,39 @@ describe("Composer", () => {
     expect(modelCurrent?.textContent).not.toContain("unknown");
   });
 
+  it("disables model switch while session is busy", async () => {
+    const sendMessage = vi.spyOn(api, "sendMessage").mockResolvedValue({ ok: true, session_id: "sess-1" } as any);
+    renderComposer({
+      items: [{ session_id: "sess-1", agent_backend: "pi", busy: true, model: "gpt-5" }],
+      liveBusyBySessionId: { "sess-1": true },
+      newSessionDefaults: {
+        backends: {
+          pi: {
+            models: ["gpt-5", "gpt-5.4"],
+          },
+        },
+      },
+    });
+
+    const modelInput = getRoot().querySelector("[data-testid='composer-model-input']") as HTMLInputElement;
+    const modelSwitch = getRoot().querySelector("[data-testid='composer-model-switch']") as HTMLButtonElement;
+
+    act(() => {
+      modelInput.value = "gpt-5.4";
+      modelInput.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    expect(modelSwitch.disabled).toBe(true);
+
+    act(() => {
+      modelSwitch.click();
+    });
+
+    await flushEffects();
+
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
   it("switches model by sending slash command", async () => {
     const sendMessage = vi.spyOn(api, "sendMessage").mockResolvedValue({ ok: true, session_id: "sess-1" } as any);
     renderComposer({

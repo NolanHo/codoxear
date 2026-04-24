@@ -490,6 +490,7 @@ export function Composer({ compactMobile = false }: ComposerProps = {}) {
   const modelSwitchDisabled = !activeSessionId
     || !activeSessionIsPi
     || activeSessionPending
+    || activeSessionBusy
     || sending
     || modelSwitching
     || !modelDraftTrimmed
@@ -887,7 +888,17 @@ export function Composer({ compactMobile = false }: ComposerProps = {}) {
   };
 
   const switchSessionModel = () => {
-    if (modelSwitchDisabled || !activeSessionId) {
+    if (!activeSessionId || !activeSessionIsPi) {
+      return;
+    }
+    if (activeSessionBusy) {
+      setModelErrorBySessionId((value) => ({
+        ...value,
+        [activeSessionId]: "Wait until the current turn finishes before switching model.",
+      }));
+      return;
+    }
+    if (modelSwitchDisabled) {
       return;
     }
     const targetModel = modelDraftTrimmed;
