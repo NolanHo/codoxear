@@ -226,6 +226,9 @@ class SessionManagerRuntimeDelegates:
             timeout_s=timeout_s,
         )
 
+    def kill_session_via_pids(self, s: Any) -> bool:
+        return self._kill_session_via_pids(s)
+
     def _kill_session_via_pids(self, s: Any) -> bool:
         return _sv(self).api.session_transport.service(self).kill_session_via_pids(s)
 
@@ -337,17 +340,23 @@ class SessionManagerRuntimeDelegates:
         req: dict[str, Any],
         timeout_s: float = 2.0,
     ) -> dict[str, Any]:
-        return self._sock_call(sock_path, req, timeout_s=timeout_s)
+        return _sv(self).api.session_transport.service(self).sock_call(
+            sock_path,
+            req,
+            timeout_s=timeout_s,
+        )
 
     def discard_runtime_session(
         self,
         runtime_id: str,
         *,
         sock_path: Any | None = None,
+        clear_state: bool = True,
     ) -> None:
         with self._lock:
             self._sessions.pop(runtime_id, None)
-        self._clear_deleted_session_state(runtime_id)
+        if clear_state:
+            self.clear_deleted_session_state(runtime_id)
         if sock_path is None:
             return
         sv = _sv(self)
