@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from pathlib import Path
+from types import FunctionType
 from typing import Any
 
 from ..agent_backend import normalize_agent_backend
+from ..runtime import ServerRuntime
 from .runtime_access import manager_runtime
 
 
@@ -18,6 +21,22 @@ def _listed_session_row(manager: Any, session_id: str) -> dict[str, Any] | None:
         if str(row.get("session_id") or "") == session_id:
             return dict(row)
     return None
+
+
+def _runtime_wrapper(runtime: ServerRuntime, name: str) -> Any | None:
+    module = getattr(runtime, "module", None)
+    if module is None:
+        return None
+    wrapper = getattr(module, name, None)
+    if not callable(wrapper):
+        return None
+    if (
+        isinstance(wrapper, FunctionType)
+        and getattr(wrapper, "__module__", None) == getattr(module, "__name__", None)
+        and getattr(wrapper, "__name__", None) == name
+    ):
+        return None
+    return wrapper
 
 
 def restart_session(manager: Any, session_id: str) -> dict[str, Any]:
@@ -180,17 +199,25 @@ def handoff_session(manager: Any, session_id: str) -> dict[str, Any]:
     thinking_level = _clean_optional_text(source.reasoning_effort) or thinking_level
     create_in_tmux = (source.transport or "").strip().lower() == "tmux"
     copied_history = False
+    handoff_signal_path: Path | None = None
     launched_session_id = new_session_id
     launched_runtime_id: str | None = None
     try:
         sv.api.pi_session_files.service(sv).copy_file_atomic(source_path, history_path)
         copied_history = True
+        export_signal = _runtime_wrapper(sv, "_export_pi_handoff_signal")
+        if export_signal is not None:
+            handoff_signal_path = export_signal(
+                history_path=history_path,
+                source_session_id=source_session_id,
+            )
         sv.api.pi_session_files.service(sv).write_pi_handoff_session(
             new_session_path,
             session_id=new_session_id,
             cwd=cwd,
             source_session_id=source_session_id,
             history_path=history_path,
+            signal_path=handoff_signal_path,
             provider=provider,
             model_id=model_id,
             thinking_level=thinking_level,
@@ -204,9 +231,7 @@ def handoff_session(manager: Any, session_id: str) -> dict[str, Any]:
             reasoning_effort=thinking_level,
             create_in_tmux=create_in_tmux,
         )
-        launched_session_id = (
-            _clean_optional_text(spawn_res.get("session_id")) or new_session_id
-        )
+        launched_session_id = new_session_id
         launched = manager.wait_for_live_session(launched_session_id)
         launched_runtime_id = launched.session_id
         alias = manager.copy_session_ui_identity(
@@ -221,6 +246,8 @@ def handoff_session(manager: Any, session_id: str) -> dict[str, Any]:
         payload["backend"] = "pi"
         payload["history_path"] = str(history_path)
         payload["previous_session_id"] = source_session_id
+        if handoff_signal_path is not None:
+            payload["handoff_signal_path"] = str(handoff_signal_path)
         if alias:
             payload["alias"] = alias
         return payload

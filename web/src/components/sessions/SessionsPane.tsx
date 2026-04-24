@@ -57,14 +57,22 @@ export function SessionsPane({ onNewSession }: SessionsPaneProps) {
   const [pendingDialog, setPendingDialog] = useState<PendingSessionDialog>(null);
   const [dialogBusy, setDialogBusy] = useState(false);
   const [actionError, setActionError] = useState("");
-  const [surfaceTab, setSurfaceTab] = useState<SessionsSurfaceTab>("sessions");
+  const [surfaceTab, setSurfaceTab] = useState<SessionsSurfaceTab>("focus");
   const [loadingMore, setLoadingMore] = useState(false);
 
   const focusedItems = useMemo(
     () => items.filter((session) => session.focused === true),
     [items],
   );
-  const visibleSessions = surfaceTab === "focus" ? focusedItems : items;
+  const sessionsItems = useMemo(() => {
+    const focused = items.filter((session) => session.focused === true);
+    if (!focused.length) {
+      return items;
+    }
+    const rest = items.filter((session) => session.focused !== true);
+    return [...focused, ...rest];
+  }, [items]);
+  const visibleSessions = surfaceTab === "focus" ? focusedItems : sessionsItems;
   const canLoadMoreSessions = surfaceTab === "sessions" && remainingCount > 0;
 
   const switchSurfaceTab = (nextTab: SessionsSurfaceTab) => {
@@ -265,17 +273,6 @@ export function SessionsPane({ onNewSession }: SessionsPaneProps) {
           <Button
             type="button"
             size="sm"
-            variant={surfaceTab === "sessions" ? "default" : "outline"}
-            className="sessionsSurfaceTab"
-            role="tab"
-            aria-selected={surfaceTab === "sessions"}
-            onClick={() => switchSurfaceTab("sessions")}
-          >
-            Sessions
-          </Button>
-          <Button
-            type="button"
-            size="sm"
             variant={surfaceTab === "focus" ? "default" : "outline"}
             className="sessionsSurfaceTab"
             role="tab"
@@ -283,6 +280,17 @@ export function SessionsPane({ onNewSession }: SessionsPaneProps) {
             onClick={() => switchSurfaceTab("focus")}
           >
             Focus
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant={surfaceTab === "sessions" ? "default" : "outline"}
+            className="sessionsSurfaceTab"
+            role="tab"
+            aria-selected={surfaceTab === "sessions"}
+            onClick={() => switchSurfaceTab("sessions")}
+          >
+            Sessions
           </Button>
         </div>
         {actionError ? <p className="px-1 pb-2 text-sm font-medium text-red-600">{actionError}</p> : null}

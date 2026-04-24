@@ -33,7 +33,17 @@ import { createComposerStore } from "../../domains/composer/store";
 
 interface RenderComposerOptions {
   activeSessionId?: string | null;
-  items?: Array<{ session_id: string; agent_backend: string; busy: boolean; historical?: boolean; pending_startup?: boolean }>;
+  items?: Array<{
+    session_id: string;
+    agent_backend: string;
+    busy: boolean;
+    historical?: boolean;
+    pending_startup?: boolean;
+    runtime_id?: string | null;
+    model?: string | null;
+    provider_choice?: string | null;
+    reasoning_effort?: string | null;
+  }>;
   liveBusyBySessionId?: Record<string, boolean>;
   liveContextUsageBySessionId?: Record<string, { used_tokens?: number; total_tokens?: number; percent_used?: number } | null>;
   liveTurnTimingBySessionId?: Record<string, { started_ts?: number; last_event_ts?: number | null } | null>;
@@ -44,6 +54,7 @@ interface RenderComposerOptions {
   submitResult?: unknown;
   composerStore?: any;
   compactMobile?: boolean;
+  newSessionDefaults?: Record<string, unknown> | null;
 }
 
 let root: HTMLDivElement | null = null;
@@ -116,6 +127,7 @@ function renderComposer(options: RenderComposerOptions = {}) {
     submitResult,
     composerStore: providedComposerStore,
     compactMobile = false,
+    newSessionDefaults = null,
   } = options;
   const submit = vi.fn().mockResolvedValue(submitResult);
   const liveSessionStore = createStore(
@@ -147,7 +159,7 @@ function renderComposer(options: RenderComposerOptions = {}) {
     () => ({ applyLive: vi.fn(), loadInitial: vi.fn(), poll: vi.fn(), loadOlder: vi.fn() }),
   );
   const sessionsStore = createStore(
-    { items, activeSessionId, loading: false, newSessionDefaults: null },
+    { items, activeSessionId, loading: false, newSessionDefaults },
     (setState) => ({ refresh: vi.fn(), select: vi.fn(), setState }),
   );
   const composerStore = providedComposerStore ?? createStore(
@@ -232,6 +244,87 @@ describe("Composer", () => {
     });
 
     expect(getRoot().textContent).toContain("82K/200K 41%");
+  });
+
+  it("shows current active model and effort for pi sessions", () => {
+    renderComposer({
+      items: [{ session_id: "sess-1", runtime_id: "rt-1", agent_backend: "pi", busy: false, model: "gpt-5.4", reasoning_effort: "high" }],
+    });
+
+    const modelCurrent = getRoot().querySelector("[data-testid='composer-model-current']");
+    expect(modelCurrent?.textContent).toContain("gpt-5.4");
+    expect(modelCurrent?.textContent).toContain("high");
+  });
+
+  it("falls back to diagnostics model when session summary model is missing", () => {
+    renderComposer({
+      items: [{ session_id: "sess-1", runtime_id: "rt-1", agent_backend: "pi", busy: false, model: null, reasoning_effort: null }],
+      diagnostics: { model: "gpt-5.4", reasoning_effort: "high" },
+      sessionUiSessionId: "sess-1",
+    });
+
+    const modelCurrent = getRoot().querySelector("[data-testid='composer-model-current']");
+    expect(modelCurrent?.textContent).toContain("gpt-5.4");
+    expect(modelCurrent?.textContent).toContain("high");
+    expect(modelCurrent?.textContent).not.toContain("unknown");
+  });
+
+  it("falls back to latest /model user command when backend model fields are empty", () => {
+    renderComposer({
+      items: [{ session_id: "sess-1", runtime_id: "rt-1", agent_backend: "pi", busy: false, model: null, reasoning_effort: null }],
+      diagnostics: null,
+      messageEventsBySessionId: {
+        "sess-1": [
+          { role: "user", text: "/model gpt-5.4", ts: 100 },
+        ],
+      },
+    });
+
+    const modelCurrent = getRoot().querySelector("[data-testid='composer-model-current']");
+    expect(modelCurrent?.textContent).toContain("gpt-5.4");
+    expect(modelCurrent?.textContent).not.toContain("unknown");
+  });
+
+  it("hides model switch controls for historical pi sessions", () => {
+    renderComposer({
+      items: [{ session_id: "history:pi:sess-1", agent_backend: "pi", busy: false, historical: true, model: "gpt-5.4" }],
+      activeSessionId: "history:pi:sess-1",
+    });
+
+    expect(getRoot().querySelector("[data-testid='composer-model-switch']")).toBeNull();
+    expect(getRoot().querySelector("[data-testid='composer-model-input']")).toBeNull();
+  });
+
+  it("switches model via backend model endpoint instead of chat message", async () => {
+    const switchSessionModel = vi.spyOn(api, "switchSessionModel").mockResolvedValue({ ok: true, model: "gpt-5.4" } as any);
+    const sendMessage = vi.spyOn(api, "sendMessage").mockResolvedValue({ ok: true, session_id: "sess-1" } as any);
+    renderComposer({
+      items: [{ session_id: "sess-1", runtime_id: "rt-1", agent_backend: "pi", busy: false, model: "gpt-5" }],
+      newSessionDefaults: {
+        backends: {
+          pi: {
+            models: ["gpt-5", "gpt-5.4"],
+          },
+        },
+      },
+    });
+
+    const modelInput = getRoot().querySelector("[data-testid='composer-model-input']") as HTMLInputElement;
+    const modelSwitch = getRoot().querySelector("[data-testid='composer-model-switch']") as HTMLButtonElement;
+
+    act(() => {
+      modelInput.value = "gpt-5.4";
+      modelInput.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    act(() => {
+      modelSwitch.click();
+    });
+
+    await flushEffects();
+
+    expect(switchSessionModel).toHaveBeenCalledWith("sess-1", { model: "gpt-5.4" }, "rt-1");
+    expect(sendMessage).not.toHaveBeenCalledWith("sess-1", "/model gpt-5.4");
   });
 
   it("shows zero-used fallback when the total context is known", async () => {
@@ -551,6 +644,26 @@ describe("Composer", () => {
     });
 
     expect(textarea.value).toBe("/reload ");
+  });
+
+  it("shows built-in Pi slash commands like /name when provided by the backend", async () => {
+    const getSessionCommands = vi.spyOn(api, "getSessionCommands").mockResolvedValue({
+      commands: [
+        { name: "name", description: "Set session display name", source: "builtin" },
+        { name: "new", description: "Start a new session", source: "builtin" },
+      ],
+    });
+    renderComposer({ draft: "/na" });
+    const composerRoot = getRoot();
+
+    await flushEffects();
+    await act(async () => {
+      await getSessionCommands.mock.results[0]?.value;
+    });
+    await flushEffects();
+
+    expect(composerRoot.textContent).toContain("/name");
+    expect(composerRoot.textContent).not.toContain("/new");
   });
 
   it("does not request slash commands for non-pi sessions", async () => {

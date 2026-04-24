@@ -142,6 +142,21 @@ class TestSessionSidebarPriority(unittest.TestCase):
         mgr = _make_manager()
         mgr._refresh_durable_session_catalog = lambda *args, **kwargs: None  # type: ignore[method-assign]
         with tempfile.TemporaryDirectory() as td:
+            session_path = Path(td) / "resume-pi.jsonl"
+            _write_jsonl(
+                session_path,
+                [
+                    {
+                        "type": "session",
+                        "id": "resume-pi",
+                        "cwd": "/repo",
+                        "timestamp": "2026-04-10T01:00:05Z",
+                        "provider": "openai",
+                        "modelId": "gpt-5.4",
+                        "thinkingLevel": "high",
+                    }
+                ],
+            )
             db = PageStateDB(Path(td) / "state.sqlite")
             db.save_sessions(
                 {
@@ -149,7 +164,7 @@ class TestSessionSidebarPriority(unittest.TestCase):
                         backend="pi",
                         session_id="resume-pi",
                         cwd="/repo",
-                        source_path=str(Path(td) / "resume-pi.jsonl"),
+                        source_path=str(session_path),
                         title="Recovered",
                         first_user_message="hello",
                         created_at=100.0,
@@ -177,6 +192,8 @@ class TestSessionSidebarPriority(unittest.TestCase):
         self.assertEqual(rows[0]["alias"], "Recovered alias")
         self.assertEqual(rows[0]["title"], "Recovered")
         self.assertEqual(rows[0]["display_name"], "Recovered alias")
+        self.assertEqual(rows[0]["model"], "gpt-5.4")
+        self.assertEqual(rows[0]["reasoning_effort"], "high")
 
     def test_list_sessions_includes_recovered_sqlite_sessions_when_no_live_sessions(
         self,
@@ -184,6 +201,21 @@ class TestSessionSidebarPriority(unittest.TestCase):
         mgr = _make_manager()
         mgr._refresh_durable_session_catalog = lambda *args, **kwargs: None  # type: ignore[method-assign]
         with tempfile.TemporaryDirectory() as td:
+            session_path = Path(td) / "resume-pi.jsonl"
+            _write_jsonl(
+                session_path,
+                [
+                    {
+                        "type": "session",
+                        "id": "resume-pi",
+                        "cwd": "/repo",
+                        "timestamp": "2026-04-10T01:00:05Z",
+                        "provider": "openai",
+                        "modelId": "gpt-5.4",
+                        "thinkingLevel": "high",
+                    }
+                ],
+            )
             db = PageStateDB(Path(td) / "state.sqlite")
             db.save_sessions(
                 {
@@ -191,7 +223,7 @@ class TestSessionSidebarPriority(unittest.TestCase):
                         backend="pi",
                         session_id="resume-pi",
                         cwd="/repo",
-                        source_path=str(Path(td) / "resume-pi.jsonl"),
+                        source_path=str(session_path),
                         title="Recovered",
                         first_user_message="hello",
                         created_at=100.0,
@@ -218,6 +250,8 @@ class TestSessionSidebarPriority(unittest.TestCase):
         self.assertEqual(rows[0]["title"], "Recovered")
         self.assertEqual(rows[0]["first_user_message"], "hello")
         self.assertEqual(rows[0]["display_name"], "Recovered alias")
+        self.assertEqual(rows[0]["model"], "gpt-5.4")
+        self.assertEqual(rows[0]["reasoning_effort"], "high")
 
     def test_list_sessions_includes_historical_resumable_sessions_when_no_live_sessions(
         self,
@@ -251,6 +285,9 @@ class TestSessionSidebarPriority(unittest.TestCase):
                         "id": "resume-pi",
                         "cwd": "/repo",
                         "timestamp": "2026-04-10T01:00:05Z",
+                        "provider": "openai",
+                        "modelId": "gpt-5.4",
+                        "thinkingLevel": "high",
                     }
                 ],
             )
@@ -271,6 +308,8 @@ class TestSessionSidebarPriority(unittest.TestCase):
         )
         self.assertTrue(all(row.get("runtime_id") is None for row in rows))
         self.assertEqual({row["cwd"] for row in rows}, {"/repo"})
+        self.assertEqual(rows[0]["model"], "gpt-5.4")
+        self.assertEqual(rows[0]["reasoning_effort"], "high")
 
     def test_list_sessions_skips_historical_entry_when_matching_live_session_exists(
         self,

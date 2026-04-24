@@ -15,7 +15,7 @@ import { cn } from "@/lib/utils";
 import { AskUserCard, askUserHistorySignature, isUnresolvedAskUserEvent } from "./AskUserCard";
 import { useComposerStore, useComposerStoreApi, useLiveSessionStore, useLiveSessionStoreApi, useMessagesStore, useMessagesStoreApi, useSessionsStore } from "../../app/providers";
 import { getSessionRuntimeId } from "../../lib/session-identity";
-import type { MessageEvent } from "../../lib/types";
+import type { MessageEvent, TodoSnapshotItem } from "../../lib/types";
 
 const MAIN_TIMELINE_KINDS = new Set([
   "user",
@@ -36,7 +36,9 @@ const MAIN_TIMELINE_KINDS = new Set([
 
 const MACHINE_TRACE_KINDS = new Set(["reasoning", "tool", "tool_result", "todo_snapshot"]);
 const PI_EVENT_COMPACT_VARIANTS = {
+  turn_terminal: "turn_terminal",
   empty_output: "empty_output",
+  retry_error: "retry_error",
   compaction: "compaction",
 } as const;
 const CHAT_GROUPABLE_KINDS = new Set(["user", "assistant", "ask_user"]);
@@ -551,8 +553,14 @@ function piEventCompactVariant(event: MessageEvent): (typeof PI_EVENT_COMPACT_VA
   if (!summary) {
     return null;
   }
-  if (summary.includes("without assistant output") || summary.includes("assistant returned empty message")) {
+  if (summary.includes("turn finished without assistant output")) {
+    return PI_EVENT_COMPACT_VARIANTS.turn_terminal;
+  }
+  if (summary.includes("assistant returned empty message")) {
     return PI_EVENT_COMPACT_VARIANTS.empty_output;
+  }
+  if (summary.includes("retry") || summary.includes("rate limit") || summary.includes("429")) {
+    return PI_EVENT_COMPACT_VARIANTS.retry_error;
   }
   if (summary.includes("compaction") || summary.includes("compacting")) {
     return PI_EVENT_COMPACT_VARIANTS.compaction;
@@ -624,6 +632,48 @@ function messageSurfaceTone(kind: string, isError = false): string {
 
 function isDisplayableEpochTs(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value) && value >= 1_000_000_000;
+}
+
+function eventTimestampSeconds(event: MessageEvent): number | null {
+  for (const key of ["ts", "timestamp", "created_at", "updated_at"] as const) {
+    const value = event[key];
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return value > 1_000_000_000_000 ? value / 1000 : value;
+    }
+    if (typeof value === "string" && value.trim()) {
+      const parsed = Date.parse(value);
+      if (Number.isFinite(parsed)) {
+        return parsed / 1000;
+      }
+    }
+  }
+  return null;
+}
+
+function sortEventsByTimestamp<T extends MessageEvent>(events: T[]): T[] {
+  if (events.length <= 1) {
+    return events;
+  }
+  let lastTs: number | null = null;
+  const rows = events.map((event, index) => {
+    const parsedTs = eventTimestampSeconds(event);
+    const ts = parsedTs ?? (lastTs != null ? lastTs + 1e-6 : (index + 1) * 1e-6);
+    if (lastTs == null || ts > lastTs) {
+      lastTs = ts;
+    }
+    return { event, index, ts };
+  });
+  rows.sort((a, b) => {
+    if (a.ts !== b.ts) {
+      return a.ts - b.ts;
+    }
+    return a.index - b.index;
+  });
+  return rows.map((row) => row.event);
+}
+
+function sortMachineTraceEvents(events: MessageEvent[]): MessageEvent[] {
+  return sortEventsByTimestamp(events);
 }
 
 function formatMessageTimestamp(ts: number): string {
@@ -980,6 +1030,16 @@ function EmptyOutputIcon() {
   );
 }
 
+function TurnTerminalIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M7 5v14" />
+      <path d="M7 6h10l-3 3 3 3H7" />
+      <path d="M4 20h16" />
+    </svg>
+  );
+}
+
 function CompactionIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -1037,6 +1097,421 @@ function machineTraceSummary(event: MessageEvent, kind: CompactTraceKind) {
   return compactSingleLine(firstNonEmptyText(event.summary, event.text, detailsSummary(event.details), detailsText), 90);
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
+function toolCallArgumentDetails(event: MessageEvent): Record<string, unknown> | null {
+  const details = asRecord(event.details);
+  if (!details) {
+    return null;
+  }
+  return asRecord(details.arguments);
+}
+
+function toolCallRawArguments(event: MessageEvent): string | null {
+  const details = asRecord(event.details);
+  const raw = details?.raw_arguments;
+  return typeof raw === "string" && raw.trim() ? raw.trim() : null;
+}
+
+function processDetails(event: MessageEvent): Record<string, unknown> | null {
+  return asRecord(event.details);
+}
+
+function processNameFromDetails(details: Record<string, unknown> | null): string {
+  return firstNonEmptyText(
+    typeof details?.processName === "string" ? details.processName : "",
+    typeof details?.name === "string" ? details.name : "",
+    typeof asRecord(details?.process)?.name === "string" ? asRecord(details?.process)?.name as string : "",
+    "process",
+  );
+}
+
+function isBashTool(name: unknown): boolean {
+  if (typeof name !== "string") {
+    return false;
+  }
+  return name === "bash" || name.startsWith("bashExecution");
+}
+
+function isRawCodeToolOutput(name: unknown): boolean {
+  if (typeof name !== "string") {
+    return false;
+  }
+  if (isBashTool(name)) {
+    return true;
+  }
+  return name === "read" || name === "grep" || name === "find" || name === "ls";
+}
+
+function todoStatusClass(status: unknown): string {
+  if (typeof status !== "string") {
+    return "unknown";
+  }
+  const normalized = status.trim().toLowerCase().replace(/_/g, "-");
+  return normalized || "unknown";
+}
+
+function todoStatusLabel(status: unknown): string {
+  if (typeof status !== "string") {
+    return "unknown";
+  }
+  return status.trim().replace(/_/g, "-") || "unknown";
+}
+
+function normalizeTodoItems(todos: unknown[]): TodoSnapshotItem[] {
+  return todos
+    .map((item) => asRecord(item))
+    .filter((item): item is Record<string, unknown> => Boolean(item))
+    .map((item) => ({
+      id: typeof item.id === "number" || typeof item.id === "string" ? item.id : undefined,
+      title: typeof item.title === "string" ? item.title : undefined,
+      description: typeof item.description === "string" ? item.description : undefined,
+      status: todoStatusLabel(item.status),
+    }));
+}
+
+function maybeParseJsonObject(value: string): unknown {
+  const text = value.trim();
+  if (!text || (text[0] !== "{" && text[0] !== "[")) {
+    return null;
+  }
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+function todoItemsFromUnknown(value: unknown): TodoSnapshotItem[] {
+  if (Array.isArray(value)) {
+    return normalizeTodoItems(value);
+  }
+  if (typeof value === "string") {
+    return todoItemsFromUnknown(maybeParseJsonObject(value));
+  }
+  const record = asRecord(value);
+  if (!record) {
+    return [];
+  }
+  if (Array.isArray(record.todos)) {
+    return normalizeTodoItems(record.todos);
+  }
+  if (typeof record.todos === "string") {
+    const parsed = maybeParseJsonObject(record.todos);
+    const fromTodos = todoItemsFromUnknown(parsed);
+    if (fromTodos.length > 0) {
+      return fromTodos;
+    }
+  }
+  if (record.details) {
+    const nested = todoItemsFromUnknown(record.details);
+    if (nested.length > 0) {
+      return nested;
+    }
+  }
+  return [];
+}
+
+function todoItemsFromEvent(event: MessageEvent): TodoSnapshotItem[] {
+  const fromDetails = todoItemsFromUnknown(event.details);
+  if (fromDetails.length > 0) {
+    return fromDetails;
+  }
+  return todoItemsFromUnknown(firstNonEmptyText(event.text));
+}
+
+function todoItemsFromText(value: string | null | undefined): TodoSnapshotItem[] {
+  if (!value) {
+    return [];
+  }
+  return todoItemsFromUnknown(value);
+}
+
+function renderCodeBlock(value: string) {
+  return <pre className="messageCardPre overflow-x-auto rounded-xl bg-background/80 p-3 text-sm"><code>{value}</code></pre>;
+}
+
+function renderTodoItemsList(items: TodoSnapshotItem[]) {
+  if (!items.length) {
+    return null;
+  }
+  return (
+    <ul className="messageTodoList space-y-2">
+      {items.map((item, index) => (
+        <li key={`${item.id ?? item.title ?? "todo"}-${index}`} className="messageTodoItem flex items-start gap-3 rounded-xl px-3 py-2 text-sm">
+          <span className={cn("messageTodoStatus rounded-full px-2 py-0.5 text-xs font-semibold uppercase tracking-wide", todoStatusClass(item.status))}>{todoStatusLabel(item.status)}</span>
+          <span>{item.title || item.description || "Untitled item"}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function stripTrailingPeriod(value: string): string {
+  return value.endsWith(".") ? value.slice(0, -1) : value;
+}
+
+function parseWriteResult(text: string): { bytes: string; path: string } | null {
+  const match = text.match(/^Successfully wrote\s+(\d+)\s+bytes\s+to\s+(.+)$/);
+  if (!match) {
+    return null;
+  }
+  return { bytes: match[1] || "", path: stripTrailingPeriod((match[2] || "").trim()) };
+}
+
+function parseEditResult(text: string, details: Record<string, unknown> | null): { path: string; blocks: string; firstChangedLine: string | null } | null {
+  const match = text.match(/^Successfully replaced(?:\s+(\d+)\s+block\(s\)|\s+text)\s+in\s+(.+)$/);
+  if (!match) {
+    return null;
+  }
+  const firstChangedLine = typeof details?.firstChangedLine === "number" ? String(details.firstChangedLine) : null;
+  return {
+    path: stripTrailingPeriod((match[2] || "").trim()),
+    blocks: (match[1] || "1").trim(),
+    firstChangedLine,
+  };
+}
+
+function parseContextTagResult(text: string): { tag: string; target: string } | null {
+  const match = text.match(/^Created tag '([^']+)' at\s+([0-9a-fA-F]+)$/);
+  if (!match) {
+    return null;
+  }
+  return { tag: match[1] || "", target: match[2] || "" };
+}
+
+function parseContextLogDashboard(text: string): { usage: string; segment: string } | null {
+  if (!text.startsWith("[Context Dashboard]")) {
+    return null;
+  }
+  const usageLine = text.split("\n").find((line) => line.includes("Context Usage:"));
+  const segmentLine = text.split("\n").find((line) => line.includes("Segment Size:"));
+  if (!usageLine || !segmentLine) {
+    return null;
+  }
+  const usage = usageLine.split("Context Usage:")[1]?.trim() || "";
+  const segment = segmentLine.split("Segment Size:")[1]?.trim() || "";
+  if (!usage || !segment) {
+    return null;
+  }
+  return { usage, segment };
+}
+
+function parseContextCheckoutResult(text: string): { phase: string; note: string } | null {
+  if (text.trim().toLowerCase() === "checkout start") {
+    return { phase: "start", note: "Checkout procedure started" };
+  }
+  const match = text.match(/^Checked out to\s+(.+)$/i);
+  if (match) {
+    return { phase: "completed", note: (match[1] || "").trim() };
+  }
+  return null;
+}
+
+function renderStructuredToolCall(event: MessageEvent, args: Record<string, unknown> | null, rawArgs: string | null) {
+  if (event.name === "bash" || (typeof event.name === "string" && event.name.startsWith("bashExecution"))) {
+    const command = typeof args?.command === "string" ? args.command : rawArgs;
+    const timeout = typeof args?.timeout === "number" ? String(args.timeout) : null;
+    if (!command) {
+      return null;
+    }
+    return (
+      <div className="space-y-2">
+        {timeout ? (
+          <div className="messageMetaItem rounded-xl bg-background/70 p-3 text-sm">
+            <span className="block text-xs uppercase tracking-wide text-muted-foreground">Timeout</span>
+            <strong>{timeout}</strong>
+          </div>
+        ) : null}
+        {renderCodeBlock(command)}
+      </div>
+    );
+  }
+
+  if (event.name === "grep") {
+    const pattern = typeof args?.pattern === "string" ? args.pattern : rawArgs;
+    const path = typeof args?.path === "string" ? args.path : null;
+    const glob = typeof args?.glob === "string" ? args.glob : null;
+    const limit = typeof args?.limit === "number" ? String(args.limit) : null;
+    const context = typeof args?.context === "number" ? String(args.context) : null;
+    if (!pattern) {
+      return null;
+    }
+    return (
+      <div className="space-y-2">
+        <div className="grid grid-cols-2 gap-2">
+          {path ? (
+            <div className="messageMetaItem rounded-xl bg-background/70 p-3 text-sm col-span-2">
+              <span className="block text-xs uppercase tracking-wide text-muted-foreground">Path</span>
+              <strong>{path}</strong>
+            </div>
+          ) : null}
+          {glob ? (
+            <div className="messageMetaItem rounded-xl bg-background/70 p-3 text-sm">
+              <span className="block text-xs uppercase tracking-wide text-muted-foreground">Glob</span>
+              <strong>{glob}</strong>
+            </div>
+          ) : null}
+          {limit ? (
+            <div className="messageMetaItem rounded-xl bg-background/70 p-3 text-sm">
+              <span className="block text-xs uppercase tracking-wide text-muted-foreground">Limit</span>
+              <strong>{limit}</strong>
+            </div>
+          ) : null}
+          {context ? (
+            <div className="messageMetaItem rounded-xl bg-background/70 p-3 text-sm">
+              <span className="block text-xs uppercase tracking-wide text-muted-foreground">Context</span>
+              <strong>{context}</strong>
+            </div>
+          ) : null}
+        </div>
+        {renderCodeBlock(pattern)}
+      </div>
+    );
+  }
+
+  if (event.name === "edit") {
+    const path = typeof args?.path === "string" ? args.path : "";
+    const hasEdits = Array.isArray(args?.edits);
+    const mode = hasEdits ? "multi" : "single";
+    const blocks = hasEdits ? String((args?.edits as unknown[]).length) : "1";
+    if (!path) {
+      return null;
+    }
+    return (
+      <div className="grid grid-cols-2 gap-2">
+        <div className="messageMetaItem rounded-xl bg-background/70 p-3 text-sm">
+          <span className="block text-xs uppercase tracking-wide text-muted-foreground">Mode</span>
+          <strong>{mode}</strong>
+        </div>
+        <div className="messageMetaItem rounded-xl bg-background/70 p-3 text-sm">
+          <span className="block text-xs uppercase tracking-wide text-muted-foreground">Blocks</span>
+          <strong>{blocks}</strong>
+        </div>
+        <div className="messageMetaItem rounded-xl bg-background/70 p-3 text-sm col-span-2">
+          <span className="block text-xs uppercase tracking-wide text-muted-foreground">Path</span>
+          <strong>{path}</strong>
+        </div>
+      </div>
+    );
+  }
+
+  return null;
+}
+
+function renderStructuredToolResult(event: MessageEvent) {
+  const text = firstNonEmptyText(event.text);
+  if (!text) {
+    return null;
+  }
+  const details = asRecord(event.details);
+
+  if (event.name === "write") {
+    const parsed = parseWriteResult(text);
+    if (!parsed) {
+      return null;
+    }
+    return (
+      <div className="grid grid-cols-2 gap-2">
+        <div className="messageMetaItem rounded-xl bg-background/70 p-3 text-sm">
+          <span className="block text-xs uppercase tracking-wide text-muted-foreground">Bytes</span>
+          <strong>{parsed.bytes}</strong>
+        </div>
+        <div className="messageMetaItem rounded-xl bg-background/70 p-3 text-sm col-span-2">
+          <span className="block text-xs uppercase tracking-wide text-muted-foreground">Path</span>
+          <strong>{parsed.path}</strong>
+        </div>
+      </div>
+    );
+  }
+
+  if (event.name === "edit") {
+    const parsed = parseEditResult(text, details);
+    if (!parsed) {
+      return null;
+    }
+    return (
+      <div className="grid grid-cols-2 gap-2">
+        <div className="messageMetaItem rounded-xl bg-background/70 p-3 text-sm">
+          <span className="block text-xs uppercase tracking-wide text-muted-foreground">Blocks Changed</span>
+          <strong>{parsed.blocks}</strong>
+        </div>
+        {parsed.firstChangedLine ? (
+          <div className="messageMetaItem rounded-xl bg-background/70 p-3 text-sm">
+            <span className="block text-xs uppercase tracking-wide text-muted-foreground">First Changed Line</span>
+            <strong>{parsed.firstChangedLine}</strong>
+          </div>
+        ) : null}
+        <div className="messageMetaItem rounded-xl bg-background/70 p-3 text-sm col-span-2">
+          <span className="block text-xs uppercase tracking-wide text-muted-foreground">Path</span>
+          <strong>{parsed.path}</strong>
+        </div>
+      </div>
+    );
+  }
+
+  if (event.name === "context_tag") {
+    const parsed = parseContextTagResult(text);
+    if (!parsed) {
+      return null;
+    }
+    return (
+      <div className="grid grid-cols-2 gap-2">
+        <div className="messageMetaItem rounded-xl bg-background/70 p-3 text-sm">
+          <span className="block text-xs uppercase tracking-wide text-muted-foreground">Tag</span>
+          <strong>{parsed.tag}</strong>
+        </div>
+        <div className="messageMetaItem rounded-xl bg-background/70 p-3 text-sm">
+          <span className="block text-xs uppercase tracking-wide text-muted-foreground">Target</span>
+          <strong>{parsed.target}</strong>
+        </div>
+      </div>
+    );
+  }
+
+  if (event.name === "context_log") {
+    const parsed = parseContextLogDashboard(text);
+    if (!parsed) {
+      return null;
+    }
+    return (
+      <div className="grid grid-cols-1 gap-2">
+        <div className="messageMetaItem rounded-xl bg-background/70 p-3 text-sm">
+          <span className="block text-xs uppercase tracking-wide text-muted-foreground">Context Usage</span>
+          <strong>{parsed.usage}</strong>
+        </div>
+        <div className="messageMetaItem rounded-xl bg-background/70 p-3 text-sm">
+          <span className="block text-xs uppercase tracking-wide text-muted-foreground">Segment Size</span>
+          <strong>{parsed.segment}</strong>
+        </div>
+      </div>
+    );
+  }
+
+  if (event.name === "context_checkout") {
+    const parsed = parseContextCheckoutResult(text);
+    if (!parsed) {
+      return null;
+    }
+    return (
+      <div className="grid grid-cols-2 gap-2">
+        <div className="messageMetaItem rounded-xl bg-background/70 p-3 text-sm">
+          <span className="block text-xs uppercase tracking-wide text-muted-foreground">Checkout</span>
+          <strong>{parsed.phase}</strong>
+        </div>
+        <div className="messageMetaItem rounded-xl bg-background/70 p-3 text-sm">
+          <span className="block text-xs uppercase tracking-wide text-muted-foreground">Note</span>
+          <strong>{parsed.note}</strong>
+        </div>
+      </div>
+    );
+  }
+
+  return null;
+}
+
 function hasTrailingUnresolvedTool(events: MessageEvent[]) {
   for (let index = events.length - 1; index >= 0; index -= 1) {
     const kind = eventKind(events[index]);
@@ -1076,10 +1551,41 @@ function renderMachineTraceDetail(event: MessageEvent, kind: CompactTraceKind, o
 
   if (kind === "tool") {
     const body = firstNonEmptyText(event.text, event.summary, event.context);
+    const args = toolCallArgumentDetails(event);
+    const rawArgs = toolCallRawArguments(event);
+    const argsText = args ? JSON.stringify(args, null, 2) : rawArgs;
+    const structuredCall = renderStructuredToolCall(event, args, rawArgs);
+    const isProcessTool = event.name === "process";
+    const isRawCode = isRawCodeToolOutput(event.name);
     return (
-      <div className="machineTraceDetailBody space-y-3">
+      <div className={cn("machineTraceDetailBody space-y-3", isProcessTool && "processToolDetail")}> 
         {renderCardHeader("tool", machineTraceTitle(event, kind), event.summary || undefined, event.ts)}
-        {body ? renderRichText(body, "messageBody", options) : <div className="messageCardFooterText text-sm text-muted-foreground">No additional tool input.</div>}
+        {isProcessTool && args ? (
+          <div className="grid grid-cols-2 gap-2">
+            {typeof args.action === "string" ? (
+              <div className="messageMetaItem rounded-xl bg-background/70 p-3 text-sm">
+                <span className="block text-xs uppercase tracking-wide text-muted-foreground">Action</span>
+                <strong>{args.action}</strong>
+              </div>
+            ) : null}
+            {typeof args.name === "string" ? (
+              <div className="messageMetaItem rounded-xl bg-background/70 p-3 text-sm">
+                <span className="block text-xs uppercase tracking-wide text-muted-foreground">Process Name</span>
+                <strong>{args.name}</strong>
+              </div>
+            ) : null}
+            {typeof args.id === "string" ? (
+              <div className="messageMetaItem rounded-xl bg-background/70 p-3 text-sm col-span-2">
+                <span className="block text-xs uppercase tracking-wide text-muted-foreground">Process ID</span>
+                <strong>{args.id}</strong>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+        {structuredCall}
+        {body ? (isRawCode ? renderCodeBlock(body) : renderRichText(body, "messageBody", options)) : null}
+        {!structuredCall && argsText ? renderCodeBlock(argsText) : null}
+        {!structuredCall && !argsText ? <div className="messageCardFooterText text-sm text-muted-foreground">No additional tool input.</div> : null}
       </div>
     );
   }
@@ -1106,10 +1612,38 @@ function renderMachineTraceDetail(event: MessageEvent, kind: CompactTraceKind, o
 
   if (kind === "custom_message") {
     const body = firstNonEmptyText(event.description, event.summary, event.text);
+    const details = processDetails(event);
     const detailsText = event.details ? JSON.stringify(event.details, null, 2) : "";
+    const isProcessUpdate = typeof event.custom_type === "string" && event.custom_type.startsWith("ad-process:");
     return (
-      <div className="machineTraceDetailBody space-y-3">
+      <div className={cn("machineTraceDetailBody space-y-3", isProcessUpdate && "processToolDetail")}> 
         {renderCardHeader("custom_message", machineTraceTitle(event, kind), typeof event.custom_type === "string" ? event.custom_type : undefined, event.ts)}
+        {isProcessUpdate ? (
+          <div className="grid grid-cols-2 gap-2">
+            <div className="messageMetaItem rounded-xl bg-background/70 p-3 text-sm">
+              <span className="block text-xs uppercase tracking-wide text-muted-foreground">Process</span>
+              <strong>{processNameFromDetails(details)}</strong>
+            </div>
+            {typeof details?.status === "string" ? (
+              <div className="messageMetaItem rounded-xl bg-background/70 p-3 text-sm">
+                <span className="block text-xs uppercase tracking-wide text-muted-foreground">Status</span>
+                <strong>{details.status}</strong>
+              </div>
+            ) : null}
+            {typeof details?.exitCode === "number" ? (
+              <div className="messageMetaItem rounded-xl bg-background/70 p-3 text-sm">
+                <span className="block text-xs uppercase tracking-wide text-muted-foreground">Exit Code</span>
+                <strong>{details.exitCode}</strong>
+              </div>
+            ) : null}
+            {typeof details?.runtime === "string" ? (
+              <div className="messageMetaItem rounded-xl bg-background/70 p-3 text-sm">
+                <span className="block text-xs uppercase tracking-wide text-muted-foreground">Runtime</span>
+                <strong>{details.runtime}</strong>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
         {body ? renderRichText(body, "messageBody", options) : null}
         {detailsText ? <pre className="messageCardPre overflow-x-auto rounded-xl bg-background/80 p-3 text-sm">{detailsText}</pre> : null}
       </div>
@@ -1130,27 +1664,61 @@ function renderMachineTraceDetail(event: MessageEvent, kind: CompactTraceKind, o
 
   const body = firstNonEmptyText(event.text, detailsSummary(event.details));
   const detailsText = !event.text && event.details ? JSON.stringify(event.details, null, 2) : "";
+  const details = processDetails(event);
+  const process = asRecord(details?.process);
+  const todoItems = todoItemsFromEvent(event);
+  const structured = renderStructuredToolResult(event);
+  const isProcessResult = event.name === "process";
+  const isRawCode = isRawCodeToolOutput(event.name);
+  const todoItemsFromBody = todoItemsFromText(body);
+  const isTodoToolResult = todoItems.length > 0;
+  const hideTodoJsonBody = isTodoToolResult && todoItemsFromBody.length > 0;
   return (
-    <div className="machineTraceDetailBody space-y-3">
+    <div className={cn("machineTraceDetailBody space-y-3", isProcessResult && "processToolDetail")}> 
       {renderCardHeader("tool_result", machineTraceTitle(event, kind), event.summary || undefined, event.ts)}
-      {body ? renderRichText(body, "messageBody", options) : null}
-      {detailsText ? <pre className="messageCardPre overflow-x-auto rounded-xl bg-background/80 p-3 text-sm">{detailsText}</pre> : null}
+      {isProcessResult ? (
+        <div className="grid grid-cols-2 gap-2">
+          <div className="messageMetaItem rounded-xl bg-background/70 p-3 text-sm">
+            <span className="block text-xs uppercase tracking-wide text-muted-foreground">Action</span>
+            <strong>{typeof details?.action === "string" ? details.action : "output"}</strong>
+          </div>
+          <div className="messageMetaItem rounded-xl bg-background/70 p-3 text-sm">
+            <span className="block text-xs uppercase tracking-wide text-muted-foreground">Status</span>
+            <strong>{typeof process?.status === "string" ? process.status : (typeof details?.success === "boolean" ? (details.success ? "ok" : "failed") : "unknown")}</strong>
+          </div>
+          <div className="messageMetaItem rounded-xl bg-background/70 p-3 text-sm">
+            <span className="block text-xs uppercase tracking-wide text-muted-foreground">Process</span>
+            <strong>{processNameFromDetails(details)}</strong>
+          </div>
+          {typeof process?.id === "string" ? (
+            <div className="messageMetaItem rounded-xl bg-background/70 p-3 text-sm">
+              <span className="block text-xs uppercase tracking-wide text-muted-foreground">Process ID</span>
+              <strong>{process.id}</strong>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+      {structured}
+      {isTodoToolResult ? renderTodoItemsList(todoItems) : null}
+      {body && !hideTodoJsonBody ? (isRawCode ? renderCodeBlock(body) : renderRichText(body, "messageBody", options)) : null}
+      {!isTodoToolResult && !structured && detailsText ? renderCodeBlock(detailsText) : null}
     </div>
   );
 }
 
 function CompactMachineTrace({ events, options, isBusy }: { events: MessageEvent[]; options: MarkdownRenderOptions; isBusy: boolean }) {
-  const runningIndex = machineTraceRunningIndex(events, isBusy);
+  const traceEvents = sortMachineTraceEvents(events);
+  const runningIndex = machineTraceRunningIndex(traceEvents, isBusy);
   const initialSelected = runningIndex >= 0 ? runningIndex : null;
   const [selectedIndex, setSelectedIndex] = useState<number | null>(initialSelected);
-  const selectedEvent = selectedIndex == null ? null : events[selectedIndex] ?? null;
+  const selectedEvent = selectedIndex == null ? null : traceEvents[selectedIndex] ?? null;
   const selectedKind = selectedEvent ? compactTraceKind(selectedEvent) : null;
   const selectedVariant = selectedEvent ? piEventCompactVariant(selectedEvent) : null;
 
   return (
     <MessageSurface kind="event" compact className="machineTraceSurface" contentClassName="space-y-3">
       <div className="machineTraceStrip" data-testid="machine-trace-strip">
-        {events.map((event, index) => {
+        {traceEvents.map((event, index) => {
           const kind = compactTraceKind(event);
           if (!kind || !isMachineTraceKind(kind)) {
             return null;
@@ -1180,7 +1748,9 @@ function CompactMachineTrace({ events, options, isBusy }: { events: MessageEvent
                 isSelected && "isSelected",
                 isRunning && "isRunning",
                 event.is_error && "isError",
-                piEventVariant === PI_EVENT_COMPACT_VARIANTS.empty_output && "isAlert",
+                (kind === "tool" || kind === "tool_result") && event.name === "process" && "isProcessTool",
+                (piEventVariant === PI_EVENT_COMPACT_VARIANTS.turn_terminal || piEventVariant === PI_EVENT_COMPACT_VARIANTS.empty_output || piEventVariant === PI_EVENT_COMPACT_VARIANTS.retry_error) && "isAlert",
+                piEventVariant === PI_EVENT_COMPACT_VARIANTS.turn_terminal && "isTurnTerminal",
                 piEventVariant === PI_EVENT_COMPACT_VARIANTS.compaction && "isCompaction",
               )}
               aria-expanded={isSelected ? "true" : "false"}
@@ -1189,9 +1759,13 @@ function CompactMachineTrace({ events, options, isBusy }: { events: MessageEvent
             >
               <span className="machineTraceTokenIcon" aria-hidden="true">
                 {kind === "tool"
-                  ? <ToolCallIcon />
+                  ? event.name === "process"
+                    ? <ProcessUpdateIcon />
+                    : <ToolCallIcon />
                   : kind === "tool_result"
-                    ? <ToolResultIcon />
+                    ? event.name === "process"
+                      ? <ProcessUpdateIcon />
+                      : <ToolResultIcon />
                     : kind === "todo_snapshot"
                       ? <TodoChangeIcon />
                       : kind === "custom_message"
@@ -1199,7 +1773,9 @@ function CompactMachineTrace({ events, options, isBusy }: { events: MessageEvent
                         : kind === "pi_event"
                           ? piEventVariant === PI_EVENT_COMPACT_VARIANTS.compaction
                             ? <CompactionIcon />
-                            : <EmptyOutputIcon />
+                            : piEventVariant === PI_EVENT_COMPACT_VARIANTS.turn_terminal
+                              ? <TurnTerminalIcon />
+                              : <EmptyOutputIcon />
                           : <ReasoningIcon />}
               </span>
               {isRunning ? <span className="machineTraceTokenPulse" aria-hidden="true" /> : null}
@@ -1213,7 +1789,9 @@ function CompactMachineTrace({ events, options, isBusy }: { events: MessageEvent
             "machineTraceDetail",
             selectedKind,
             selectedEvent.is_error && "isError",
-            selectedVariant === PI_EVENT_COMPACT_VARIANTS.empty_output && "isAlert",
+            (selectedKind === "tool" || selectedKind === "tool_result") && selectedEvent.name === "process" && "isProcessTool",
+            (selectedVariant === PI_EVENT_COMPACT_VARIANTS.turn_terminal || selectedVariant === PI_EVENT_COMPACT_VARIANTS.empty_output || selectedVariant === PI_EVENT_COMPACT_VARIANTS.retry_error) && "isAlert",
+            selectedVariant === PI_EVENT_COMPACT_VARIANTS.turn_terminal && "isTurnTerminal",
             selectedVariant === PI_EVENT_COMPACT_VARIANTS.compaction && "isCompaction",
           )}
           data-testid="machine-trace-detail"
@@ -1263,16 +1841,7 @@ function renderTodoSnapshotCard(event: MessageEvent, options: MarkdownRenderOpti
   return (
     <MessageSurface kind="todo_snapshot">
       {renderCardHeader("todo_snapshot", firstNonEmptyText(event.progress_text, "Todo snapshot"), firstNonEmptyText(event.operation), event.ts)}
-      {items.length ? (
-        <ul className="messageTodoList space-y-2">
-          {items.map((item, index) => (
-            <li key={`${item.title || "todo"}-${index}`} className="messageTodoItem flex items-start gap-3 rounded-xl px-3 py-2 text-sm">
-              <span className={cn("messageTodoStatus rounded-full px-2 py-0.5 text-xs font-semibold uppercase tracking-wide", typeof item.status === "string" ? item.status : "unknown")}>{item.status || "unknown"}</span>
-              <span>{item.title || item.description || "Untitled item"}</span>
-            </li>
-          ))}
-        </ul>
-      ) : null}
+      {items.length ? renderTodoItemsList(items) : null}
       {event.text ? renderRichText(event.text, "messageBody", options) : null}
     </MessageSurface>
   );
@@ -1328,12 +1897,20 @@ function renderSystemCard(event: MessageEvent, kind: string, options: MarkdownRe
   const title = firstNonEmptyText(event.summary, event.name);
   const body = firstNonEmptyText(event.text, event.context, event.question, title === event.summary ? "" : event.summary);
   const detailsText = event.details ? JSON.stringify(event.details, null, 2) : "";
+  const isToolResult = kind === "tool_result";
+  const isRawCode = (kind === "tool" || kind === "tool_result") && isRawCodeToolOutput(event.name);
+  const structured = isToolResult ? renderStructuredToolResult(event) : null;
+  const todoItems = isToolResult ? todoItemsFromEvent(event) : [];
+  const todoItemsFromBody = isToolResult ? todoItemsFromText(body) : [];
+  const hideTodoJsonBody = todoItems.length > 0 && todoItemsFromBody.length > 0;
 
   return (
     <MessageSurface kind={kind}>
       {renderCardHeader(kind, title || undefined, undefined, event.ts)}
-      {body ? renderRichText(body, "messageBody", options) : null}
-      {detailsText ? <pre className="messageCardPre overflow-x-auto rounded-xl bg-background/80 p-3 text-sm">{detailsText}</pre> : null}
+      {structured}
+      {todoItems.length ? renderTodoItemsList(todoItems) : null}
+      {body && !hideTodoJsonBody ? (isRawCode ? renderCodeBlock(body) : renderRichText(body, "messageBody", options)) : null}
+      {!todoItems.length && !structured && detailsText ? renderCodeBlock(detailsText) : null}
     </MessageSurface>
   );
 }
@@ -1554,7 +2131,7 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
   const pendingMessages = activeSessionId ? pendingBySessionId[activeSessionId] ?? [] : [];
   const hasLocalConversationState = persistedMessages.length > 0 || pendingMessages.length > 0;
   const rawMessages = [...persistedMessages, ...pendingMessages];
-  const messages = rawMessages.filter(shouldRenderInMainConversation);
+  const messages = sortEventsByTimestamp(rawMessages.filter(shouldRenderInMainConversation));
   const rows = messages.reduce<Array<{
     key: string;
     kind: string;
@@ -1569,7 +2146,7 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
     const traceKind = compactTraceKind(message);
     if (traceKind) {
       const last = out[out.length - 1];
-      const ts = typeof message.ts === "number" ? message.ts : null;
+      const ts = eventTimestampSeconds(message);
       if (last && last.kind === "machine_trace") {
         last.events.push(message);
         last.lastTs = ts;
@@ -1591,7 +2168,7 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
 
     const prevKind = index > 0 ? eventKind(messages[index - 1]) : null;
     const rowKey = messageRowKey(message, kind, index);
-    const ts = typeof message.ts === "number" ? message.ts : null;
+    const ts = eventTimestampSeconds(message);
     out.push({
       key: rowKey,
       kind,

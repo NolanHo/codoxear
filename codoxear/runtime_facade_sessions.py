@@ -443,7 +443,23 @@ class RuntimeFacadeSessionMixin:
             backend=res.get("backend") or payload["backend"],
             name=payload["name"],
         )
-        out = {"ok": True, **res}
+        focused = False
+        focus_targets: list[str] = []
+        for candidate in (res.get("session_id"), res.get("runtime_id")):
+            if not isinstance(candidate, str):
+                continue
+            target = candidate.strip()
+            if not target or target in focus_targets:
+                continue
+            focus_targets.append(target)
+        for target in focus_targets:
+            try:
+                focused = bool(self.manager.focus_set(target, True))
+                if focused:
+                    break
+            except (KeyError, ValueError):
+                continue
+        out = {"ok": True, **res, "focused": bool(focused)}
         if alias:
             out["alias"] = alias
         self.api.event_publish.service(self.runtime).publish_sessions_invalidate(reason="session_created")
@@ -503,6 +519,35 @@ class RuntimeFacadeSessionMixin:
             reason="ui_response",
         )
         return {"ok": True}
+
+    def session_set_model(
+        self,
+        session_id: str,
+        *,
+        model: str,
+        provider: str | None = None,
+    ) -> dict[str, Any]:
+        payload = self.manager.set_session_model(
+            session_id,
+            model=model,
+            provider=provider,
+        )
+        durable_session_id = self.manager.durable_session_id_for_identifier(session_id) or session_id
+        runtime_id = self.manager.runtime_session_id_for_identifier(session_id)
+        self.api.event_publish.service(self.runtime).publish_session_live_invalidate(
+            durable_session_id,
+            runtime_id=runtime_id,
+            reason="model_switched",
+        )
+        self.api.event_publish.service(self.runtime).publish_session_workspace_invalidate(
+            durable_session_id,
+            runtime_id=runtime_id,
+            reason="model_switched",
+        )
+        self.api.event_publish.service(self.runtime).publish_sessions_invalidate(
+            reason="model_switched",
+        )
+        return payload
 
     def session_harness_set(
         self,

@@ -374,6 +374,12 @@ class TestPiBackendRouting(unittest.TestCase):
                 return None
 
             mgr.runtime_session_id_for_identifier = resolve_runtime  # type: ignore[method-assign]
+            mgr._runtime_session_id_for_identifier = resolve_runtime  # type: ignore[method-assign]
+            handoff_signal_path = root / "handoff.signal.jsonl"
+            handoff_signal_path.write_text(
+                '{"kind":"user_message","text":"summary"}\n',
+                encoding="utf-8",
+            )
 
             with (
                 patch(
@@ -381,6 +387,10 @@ class TestPiBackendRouting(unittest.TestCase):
                     return_value=new_session_path,
                 ),
                 patch("codoxear.server.uuid.uuid4", return_value="dur-new"),
+                patch(
+                    "codoxear.server._export_pi_handoff_signal",
+                    return_value=handoff_signal_path,
+                ) as export_signal,
             ):
                 payload = mgr.handoff_session("rt-old")
 
@@ -390,13 +400,155 @@ class TestPiBackendRouting(unittest.TestCase):
             history_path = Path(payload["history_path"])
             self.assertTrue(history_path.exists())
             self.assertIn("old context", history_path.read_text(encoding="utf-8"))
+            self.assertEqual(payload["handoff_signal_path"], str(handoff_signal_path))
             new_text = new_session_path.read_text(encoding="utf-8")
             self.assertIn('"id": "dur-new"', new_text)
             self.assertIn("Archived history file", new_text)
+            self.assertIn(f"Extracted handoff JSONL: {handoff_signal_path}", new_text)
+            self.assertIn(
+                "Read the extracted handoff JSONL carefully before you respond or take action.",
+                new_text,
+            )
+            self.assertIn(
+                "Do not start with the archived history file: it is large, and the extracted handoff JSONL already contains the effective handoff signal.",
+                new_text,
+            )
+            self.assertIn(
+                "Start by reading the beginning and the end of the extracted handoff JSONL to establish current state, then scan the middle only if needed.",
+                new_text,
+            )
+            self.assertIn(
+                "Reply in the language used by the user's next message in this session.",
+                new_text,
+            )
+            self.assertIn(
+                "Use that archived context to prepare to take over the work without asking the user to restate the whole session.",
+                new_text,
+            )
+            export_signal.assert_called_once_with(
+                history_path=history_path,
+                source_session_id="dur-old",
+            )
             mgr.spawn_web_session.assert_called_once()
             self.assertEqual(
                 mgr.spawn_web_session.call_args.kwargs["resume_session_id"], "dur-new"
             )
+            mgr.delete_session.assert_called_once_with("rt-old")
+            mgr.alias_set.assert_called_once_with("dur-new", "Inbox cleanup")
+            mgr.focus_set.assert_called_once_with("dur-new", True)
+
+    def test_handoff_session_uses_stable_durable_id_when_spawn_returns_runtime_id(
+        self,
+    ) -> None:
+        mgr = _make_manager()
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            source_path = root / "source.jsonl"
+            new_session_path = root / "handoff.jsonl"
+            sock = root / "pi.sock"
+            sock.touch()
+            _write_jsonl(
+                source_path,
+                [
+                    {
+                        "type": "session",
+                        "id": "dur-old",
+                        "cwd": td,
+                        "timestamp": "2026-03-28T12:00:00Z",
+                    },
+                    {
+                        "type": "message",
+                        "message": {
+                            "role": "user",
+                            "content": [{"type": "text", "text": "old context"}],
+                        },
+                    },
+                ],
+            )
+            mgr._sessions["rt-old"] = Session(
+                session_id="rt-old",
+                thread_id="dur-old",
+                agent_backend="pi",
+                backend="pi",
+                broker_pid=3333,
+                codex_pid=4444,
+                owned=True,
+                start_ts=123.0,
+                cwd=td,
+                log_path=None,
+                sock_path=sock,
+                session_path=source_path,
+                model_provider="openai",
+                model="gpt-5.4",
+                reasoning_effort="high",
+                transport="pi-rpc",
+            )
+            mgr._sessions["rt-new"] = Session(
+                session_id="rt-new",
+                thread_id="dur-new",
+                agent_backend="pi",
+                backend="pi",
+                broker_pid=5555,
+                codex_pid=6666,
+                owned=True,
+                start_ts=456.0,
+                cwd=td,
+                log_path=None,
+                sock_path=root / "pi-new.sock",
+                session_path=new_session_path,
+                model_provider="openai",
+                model="gpt-5.4",
+                reasoning_effort="high",
+                transport="pi-rpc",
+            )
+            mgr.spawn_web_session = Mock(
+                return_value={
+                    "session_id": "rt-new",
+                    "runtime_id": "rt-new",
+                    "backend": "pi",
+                }
+            )
+            mgr.delete_session = Mock(return_value=True)
+            mgr.alias_get = Mock(return_value="Inbox cleanup")
+            mgr.alias_set = Mock(return_value="Inbox cleanup")
+            mgr.sidebar_meta_get = Mock(
+                return_value={
+                    "priority_offset": 0.25,
+                    "snooze_until": None,
+                    "dependency_session_id": None,
+                    "focused": True,
+                }
+            )
+            mgr.sidebar_meta_set = Mock(return_value={})
+            mgr.focus_set = Mock(return_value=True)
+            mgr._discover_existing = lambda *args, **kwargs: None  # type: ignore[method-assign]
+
+            def resolve_runtime(session_id: str) -> str | None:
+                if session_id == "rt-old":
+                    return "rt-old"
+                if session_id in {"rt-new", "dur-new"}:
+                    return "rt-new"
+                return None
+
+            mgr._runtime_session_id_for_identifier = resolve_runtime  # type: ignore[method-assign]
+            handoff_signal_path = root / "handoff.signal.jsonl"
+            handoff_signal_path.write_text('{"kind":"user_message","text":"summary"}\n', encoding="utf-8")
+
+            with (
+                patch(
+                    "codoxear.server._pi_new_session_file_for_cwd",
+                    return_value=new_session_path,
+                ),
+                patch("codoxear.server.uuid.uuid4", return_value="dur-new"),
+                patch(
+                    "codoxear.server._export_pi_handoff_signal",
+                    return_value=handoff_signal_path,
+                ),
+            ):
+                payload = mgr.handoff_session("rt-old")
+
+            self.assertEqual(payload["session_id"], "dur-new")
+            self.assertEqual(payload["runtime_id"], "rt-new")
             mgr.delete_session.assert_called_once_with("rt-old")
             mgr.alias_set.assert_called_once_with("dur-new", "Inbox cleanup")
             mgr.focus_set.assert_called_once_with("dur-new", True)
@@ -442,6 +594,24 @@ class TestPiBackendRouting(unittest.TestCase):
                 "commands": [
                     {"name": "reload", "description": "Reload Pi"},
                     {"name": "resume", "description": "Resume session"},
+                    {"name": "login", "description": "OAuth authentication", "source": "builtin"},
+                    {"name": "logout", "description": "OAuth authentication", "source": "builtin"},
+                    {"name": "model", "description": "Switch models", "source": "builtin"},
+                    {"name": "scoped-models", "description": "Enable or disable models for Ctrl+P cycling", "source": "builtin"},
+                    {"name": "settings", "description": "Thinking level, theme, message delivery, transport", "source": "builtin"},
+                    {"name": "new", "description": "Start a new session", "source": "builtin"},
+                    {"name": "name", "description": "Set session display name", "source": "builtin"},
+                    {"name": "session", "description": "Show session info", "source": "builtin"},
+                    {"name": "tree", "description": "Jump to any point in the session and continue from there", "source": "builtin"},
+                    {"name": "fork", "description": "Create a new session from the current branch", "source": "builtin"},
+                    {"name": "compact", "description": "Manually compact context", "source": "builtin"},
+                    {"name": "copy", "description": "Copy last assistant message to clipboard", "source": "builtin"},
+                    {"name": "export", "description": "Export session to HTML", "source": "builtin"},
+                    {"name": "share", "description": "Upload as a private GitHub gist with shareable HTML link", "source": "builtin"},
+                    {"name": "hotkeys", "description": "Show all keyboard shortcuts", "source": "builtin"},
+                    {"name": "changelog", "description": "Display version history", "source": "builtin"},
+                    {"name": "quit", "description": "Quit pi", "source": "builtin"},
+                    {"name": "exit", "description": "Quit pi", "source": "builtin"},
                 ]
             },
         )
@@ -1636,6 +1806,7 @@ class TestPiBackendRouting(unittest.TestCase):
             }
         )
         mgr.set_created_session_name = Mock(return_value="Inbox cleanup")
+        mgr.focus_set = Mock(return_value=True)
         handler = _HandlerHarness(
             "/api/sessions",
             body=json.dumps(
@@ -1656,12 +1827,14 @@ class TestPiBackendRouting(unittest.TestCase):
         payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
         self.assertEqual(handler.status, 200)
         self.assertEqual(payload["alias"], "Inbox cleanup")
+        self.assertTrue(payload["focused"])
         mgr.set_created_session_name.assert_called_once_with(
             session_id="pending-pi-session",
             runtime_id=None,
             backend="pi",
             name="Inbox cleanup",
         )
+        mgr.focus_set.assert_called_once_with("pending-pi-session", True)
 
     def test_delete_session_uses_shutdown_for_pi_backend(self) -> None:
         mgr = _make_manager()
@@ -2581,6 +2754,45 @@ class TestPiBackendRouting(unittest.TestCase):
         self.assertEqual(payload["requests"], [])
         self.assertFalse(payload["busy"])
 
+    def test_session_live_payload_inserts_historical_bridge_events_by_timestamp(self) -> None:
+        mgr = _make_manager()
+        mgr.get_session = lambda _sid: None  # type: ignore[method-assign]
+        mgr.get_messages_page = lambda _sid, **_kwargs: {
+            "events": [
+                {"role": "assistant", "text": "historical-before", "ts": 1.0},
+                {"role": "assistant", "text": "historical-after", "ts": 5.0},
+            ],
+            "offset": 2,
+            "has_older": False,
+            "next_before": 0,
+        }  # type: ignore[method-assign]
+        mgr._append_bridge_event(
+            "resume-1",
+            {
+                "type": "pi_event",
+                "summary": "Bridge buffered prompt during compaction",
+                "ts": 3.0,
+            },
+        )
+
+        with patch(
+            "codoxear.server._historical_session_row",
+            return_value={
+                "session_id": "history:pi:resume-1",
+                "resume_session_id": "resume-1",
+                "agent_backend": "pi",
+                "backend": "pi",
+                "cwd": "/tmp/hist",
+                "historical": True,
+            },
+        ):
+            payload = _session_live_payload(mgr, "history:pi:resume-1", offset=2)
+
+        self.assertEqual(
+            [event.get("summary") or event.get("text") for event in payload["events"]],
+            ["historical-before", "Bridge buffered prompt during compaction", "historical-after"],
+        )
+
     def test_session_live_payload_falls_back_to_listed_stale_session_row(self) -> None:
         mgr = _make_manager()
         mgr.get_session = lambda _sid: None  # type: ignore[method-assign]
@@ -2793,6 +3005,181 @@ class TestPiBackendRouting(unittest.TestCase):
         self.assertEqual(
             [event.get("summary") or event.get("text") for event in payload["events"]],
             ["before", "Auto-compacting context", "Compaction finished", "after"],
+        )
+
+    def test_session_live_payload_inserts_bridge_events_by_timestamp(self) -> None:
+        mgr = _make_manager()
+        with tempfile.TemporaryDirectory() as td:
+            sock = Path(td) / "pi.sock"
+            sock.touch()
+            session_path = Path(td) / "pi-session.jsonl"
+            mgr._sessions["pi-session"] = Session(
+                session_id="pi-session",
+                thread_id="pi-thread-001",
+                agent_backend="pi",
+                backend="pi",
+                broker_pid=3333,
+                codex_pid=4444,
+                owned=True,
+                start_ts=123.0,
+                cwd=td,
+                log_path=None,
+                sock_path=sock,
+                session_path=session_path,
+                transport="pi-rpc",
+                supports_live_ui=False,
+            )
+            mgr.refresh_session_meta = lambda *_args, **_kwargs: None  # type: ignore[method-assign]
+            mgr.get_state = lambda *_args, **_kwargs: {"busy": True, "queue_len": 0, "token": None}  # type: ignore[method-assign]
+            mgr.get_ui_state = lambda *_args, **_kwargs: {"requests": []}  # type: ignore[method-assign]
+            mgr.get_messages_page = lambda *_args, **_kwargs: {
+                "thread_id": "pi-thread-001",
+                "log_path": str(session_path),
+                "offset": 2,
+                "events": [
+                    {"role": "user", "text": "before", "ts": 1.0},
+                    {"role": "assistant", "text": "after", "ts": 5.0},
+                ],
+                "busy": True,
+                "queue_len": 0,
+                "token": None,
+            }  # type: ignore[method-assign]
+            mgr._append_bridge_event(
+                "pi-thread-001",
+                {
+                    "type": "pi_event",
+                    "summary": "Bridge send failed",
+                    "event_id": "bridge:test-ts",
+                    "request_state": "failed",
+                    "ts": 3.0,
+                },
+            )
+
+            payload = _session_live_payload(
+                mgr, "pi-session", offset=0, bridge_offset=0
+            )
+
+        self.assertEqual(
+            [event.get("summary") or event.get("text") for event in payload["events"]],
+            ["before", "Bridge send failed", "after"],
+        )
+
+    def test_session_live_payload_orders_bridge_against_iso_timestamp_strings(
+        self,
+    ) -> None:
+        mgr = _make_manager()
+        with tempfile.TemporaryDirectory() as td:
+            sock = Path(td) / "pi.sock"
+            sock.touch()
+            session_path = Path(td) / "pi-session.jsonl"
+            mgr._sessions["pi-session"] = Session(
+                session_id="pi-session",
+                thread_id="pi-thread-001",
+                agent_backend="pi",
+                backend="pi",
+                broker_pid=3333,
+                codex_pid=4444,
+                owned=True,
+                start_ts=123.0,
+                cwd=td,
+                log_path=None,
+                sock_path=sock,
+                session_path=session_path,
+                transport="pi-rpc",
+                supports_live_ui=False,
+            )
+            mgr.refresh_session_meta = lambda *_args, **_kwargs: None  # type: ignore[method-assign]
+            mgr.get_state = lambda *_args, **_kwargs: {"busy": True, "queue_len": 0, "token": None}  # type: ignore[method-assign]
+            mgr.get_ui_state = lambda *_args, **_kwargs: {"requests": []}  # type: ignore[method-assign]
+            mgr.get_messages_page = lambda *_args, **_kwargs: {
+                "thread_id": "pi-thread-001",
+                "log_path": str(session_path),
+                "offset": 2,
+                "events": [
+                    {"role": "user", "text": "before", "timestamp": "2026-01-01T00:00:01Z"},
+                    {"role": "assistant", "text": "after", "timestamp": "2026-01-01T00:00:05Z"},
+                ],
+                "busy": True,
+                "queue_len": 0,
+                "token": None,
+            }  # type: ignore[method-assign]
+            mgr._append_bridge_event(
+                "pi-thread-001",
+                {
+                    "type": "pi_event",
+                    "summary": "Bridge send failed",
+                    "event_id": "bridge:test-iso-ts",
+                    "request_state": "failed",
+                    "ts": 1767225603.0,
+                },
+            )
+
+            payload = _session_live_payload(
+                mgr, "pi-session", offset=0, bridge_offset=0
+            )
+
+        self.assertEqual(
+            [event.get("summary") or event.get("text") for event in payload["events"]],
+            ["before", "Bridge send failed", "after"],
+        )
+
+    def test_session_live_payload_uses_monotonic_fallback_for_missing_ts(
+        self,
+    ) -> None:
+        mgr = _make_manager()
+        with tempfile.TemporaryDirectory() as td:
+            sock = Path(td) / "pi.sock"
+            sock.touch()
+            session_path = Path(td) / "pi-session.jsonl"
+            mgr._sessions["pi-session"] = Session(
+                session_id="pi-session",
+                thread_id="pi-thread-001",
+                agent_backend="pi",
+                backend="pi",
+                broker_pid=3333,
+                codex_pid=4444,
+                owned=True,
+                start_ts=123.0,
+                cwd=td,
+                log_path=None,
+                sock_path=sock,
+                session_path=session_path,
+                transport="pi-rpc",
+                supports_live_ui=False,
+            )
+            mgr.refresh_session_meta = lambda *_args, **_kwargs: None  # type: ignore[method-assign]
+            mgr.get_state = lambda *_args, **_kwargs: {"busy": True, "queue_len": 0, "token": None}  # type: ignore[method-assign]
+            mgr.get_ui_state = lambda *_args, **_kwargs: {"requests": []}  # type: ignore[method-assign]
+            mgr.get_messages_page = lambda *_args, **_kwargs: {
+                "thread_id": "pi-thread-001",
+                "log_path": str(session_path),
+                "offset": 2,
+                "events": [
+                    {"role": "user", "text": "before-no-ts"},
+                    {"role": "assistant", "text": "after", "ts": 5.0},
+                ],
+                "busy": True,
+                "queue_len": 0,
+                "token": None,
+            }  # type: ignore[method-assign]
+            mgr._append_bridge_event(
+                "pi-thread-001",
+                {
+                    "type": "pi_event",
+                    "summary": "Bridge buffered prompt during compaction",
+                    "event_id": "bridge:test-fallback-ts",
+                    "request_state": "buffered",
+                    "ts": 3.0,
+                },
+            )
+
+            payload = _session_live_payload(
+                mgr, "pi-session", offset=0, bridge_offset=0
+            )
+
+        self.assertEqual(
+            [event.get("summary") or event.get("text") for event in payload["events"]],
+            ["before-no-ts", "Bridge buffered prompt during compaction", "after"],
         )
 
     def test_session_live_payload_appends_streaming_pi_rpc_assistant_event(
@@ -3740,6 +4127,7 @@ class TestPiBackendRouting(unittest.TestCase):
         cases = [
             ("/api/sessions//rename", b'{"name":"alias"}'),
             ("/api/sessions//focus", b'{"focused":true}'),
+            ("/api/sessions//model", b'{"model":"gpt-5.4"}'),
             ("/api/sessions//send", b'{"text":"hello"}'),
             ("/api/sessions//ui_response", b'{"id":"ui-1","value":"x"}'),
             ("/api/sessions//enqueue", b'{"text":"later"}'),
@@ -3757,6 +4145,31 @@ class TestPiBackendRouting(unittest.TestCase):
                     handler.wfile.getvalue().decode("utf-8"),
                     '{"error":"unknown session"}',
                 )
+
+    def test_model_route_calls_set_session_model(self) -> None:
+        handler = _HandlerHarness(
+            "/api/sessions/pi-session/model",
+            body=json.dumps({"model": "gpt-5.4"}).encode("utf-8"),
+        )
+
+        with (
+            patch("codoxear.server.MANAGER") as manager,
+            patch("codoxear.server._require_auth", return_value=True),
+        ):
+            manager.set_session_model.return_value = {
+                "ok": True,
+                "model": "gpt-5.4",
+                "provider": "openai",
+            }
+            manager._durable_session_id_for_identifier.return_value = "pi-session"
+            manager._runtime_session_id_for_identifier.return_value = "runtime-1"
+
+            Handler.do_POST(handler)  # type: ignore[arg-type]
+
+        self.assertEqual(handler.status, 200)
+        payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertEqual(payload, {"ok": True, "model": "gpt-5.4", "provider": "openai"})
+        manager.set_session_model.assert_called_once_with("pi-session", model="gpt-5.4", provider=None)
 
     def test_ui_response_route_does_not_fallback_to_send_for_live_pi_rpc_session(
         self,
@@ -4241,14 +4654,14 @@ class TestPiBackendRouting(unittest.TestCase):
                         "busy": True,
                         "queue_len": 2,
                         "alias": "Active",
+                        "provider_choice": "openai-api",
+                        "model": "gpt-5.4",
+                        "reasoning_effort": "high",
+                        "service_tier": "fast",
                     }
                 ],
             },
         )
-        self.assertNotIn("model", payload["sessions"][0])
-        self.assertNotIn("provider_choice", payload["sessions"][0])
-        self.assertNotIn("reasoning_effort", payload["sessions"][0])
-        self.assertNotIn("service_tier", payload["sessions"][0])
         self.assertNotIn("priority_offset", payload["sessions"][0])
         self.assertNotIn("snooze_until", payload["sessions"][0])
         self.assertNotIn("dependency_session_id", payload["sessions"][0])
@@ -6157,8 +6570,14 @@ class TestPiMessageNormalization(unittest.TestCase):
         ]
         events, meta, _flags, diag = pi_messages.normalize_pi_entries(entries)
         self.assertEqual(len(events), 2)
-        self.assertEqual(events[0], {"type": "tool", "name": "read", "ts": 0.0})
-        self.assertEqual(events[1], {"type": "tool", "name": "grep", "ts": 0.1})
+        self.assertEqual(events[0]["type"], "tool")
+        self.assertEqual(events[0]["name"], "read")
+        self.assertEqual(events[0]["ts"], 0.0)
+        self.assertEqual(events[0].get("details"), {"arguments": {"file": "a.py"}})
+        self.assertEqual(events[1]["type"], "tool")
+        self.assertEqual(events[1]["name"], "grep")
+        self.assertEqual(events[1]["ts"], 0.1)
+        self.assertEqual(events[1].get("details"), {"arguments": {"pattern": "foo"}})
         self.assertEqual(meta["tool"], 2)
         self.assertEqual(diag["tool_names"], ["read", "grep"])
         self.assertEqual(diag["last_tool"], "grep")

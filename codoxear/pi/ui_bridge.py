@@ -102,7 +102,71 @@ def get_session_commands(runtime: ServerRuntime, manager: Any, session_id: str) 
 
 
 
-def submit_ui_response(runtime: ServerRuntime, manager: Any, session_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+def set_session_model(
+    runtime: ServerRuntime,
+    manager: Any,
+    session_id: str,
+    *,
+    model: str,
+    provider: str | None = None,
+) -> dict[str, Any]:
+    runtime_id, session = manager.resolve_pi_bridge_session(
+        session_id,
+        unsupported_message="model switch is only supported for pi sessions",
+    )
+    model_id = model.strip() if isinstance(model, str) else ""
+    if not model_id:
+        raise ValueError("model required")
+    provider_name = provider.strip() if isinstance(provider, str) and provider.strip() else None
+    if provider_name is None:
+        resolved_provider, _preferred_auth_method, _resolved_model, _resolved_effort = (
+            runtime.api.session_display.service(runtime).resolved_session_run_settings(session)
+        )
+        provider_name = runtime.api.clean_optional_text(session.model_provider) or resolved_provider
+    request: dict[str, Any] = {"cmd": "set_model", "model": model_id}
+    if provider_name is not None:
+        request["provider"] = provider_name
+    try:
+        resp = manager.sock_call(session.sock_path, request, timeout_s=4.0)
+    except Exception:
+        raise _broker_unavailable_error(
+            runtime,
+            manager,
+            runtime_id=runtime_id,
+            session=session,
+        )
+    if resp.get("error") == "unknown cmd":
+        raise ValueError("model switch is unavailable for this pi session")
+    error = resp.get("error")
+    if isinstance(error, str) and error:
+        raise ValueError(error)
+    data = resp.get("data") if isinstance(resp.get("data"), dict) else {}
+    resolved_provider = runtime.api.clean_optional_text(data.get("provider")) or provider_name
+    resolved_model = (
+        runtime.api.clean_optional_text(data.get("id"))
+        or runtime.api.clean_optional_text(data.get("modelId"))
+        or model_id
+    )
+    with manager._lock:
+        current = manager._sessions.get(runtime_id)
+        if current is not None:
+            current.model_provider = resolved_provider
+            current.model = resolved_model
+    return {
+        "ok": True,
+        "provider": resolved_provider,
+        "model": resolved_model,
+        "data": data,
+    }
+
+
+
+def submit_ui_response(
+    runtime: ServerRuntime,
+    manager: Any,
+    session_id: str,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
     runtime_id, session = manager.resolve_pi_bridge_session(
         session_id,
         unsupported_message="ui interactions are only supported for pi sessions",

@@ -162,13 +162,25 @@ def normalize_session_cwd_row(
 def frontend_session_list_row(
     runtime: ServerRuntime, row: dict[str, Any]
 ) -> dict[str, Any]:
-    sv = runtime
     normalized = normalize_session_cwd_row(runtime, row)
     if not isinstance(normalized, dict):
         return normalized
-    return {
-        key: normalized[key] for key in sv.api.SESSION_LIST_ROW_KEYS if key in normalized
-    }
+    keys = (
+        "session_id",
+        "runtime_id",
+        "thread_id",
+        "display_name",
+        "cwd",
+        "agent_backend",
+        "busy",
+        "queue_len",
+        "alias",
+        "provider_choice",
+        "model",
+        "reasoning_effort",
+        "service_tier",
+    )
+    return {key: normalized[key] for key in keys if key in normalized}
 
 
 def session_list_group_key(runtime: ServerRuntime, row: dict[str, Any]) -> str:
@@ -387,6 +399,11 @@ def historical_sidebar_items(
                     )
         except Exception:
             first_user_message = ""
+        historical_model_provider = sv.api.clean_optional_text(row.get("model_provider"))
+        historical_model = sv.api.clean_optional_text(row.get("model"))
+        historical_reasoning_effort = sv.api.display_pi_reasoning_effort(
+            row.get("reasoning_effort")
+        )
         out.append(
             {
                 "session_id": historical_session_id(runtime, backend, resume_session_id),
@@ -418,12 +435,16 @@ def historical_sidebar_items(
                 "first_user_message": first_user_message,
                 "files": [],
                 "git_branch": row.get("git_branch"),
-                "model_provider": None,
+                "model_provider": historical_model_provider,
                 "preferred_auth_method": None,
-                "provider_choice": None,
-                "model": None,
-                "reasoning_effort": None,
-                "service_tier": None,
+                "provider_choice": sv.api.session_settings.service(runtime).provider_choice_for_backend(
+                    backend=backend,
+                    model_provider=historical_model_provider,
+                    preferred_auth_method=None,
+                ),
+                "model": historical_model,
+                "reasoning_effort": historical_reasoning_effort,
+                "service_tier": sv.api.clean_optional_text(row.get("service_tier")),
                 "tmux_session": None,
                 "tmux_window": None,
                 "priority_offset": 0.0,

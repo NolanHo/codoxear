@@ -90,6 +90,44 @@ class TestPiLogRunSettings(unittest.TestCase):
 
             self.assertEqual(read_pi_run_settings(path), ("openai", "gpt-5.4", "high"))
 
+    def test_read_pi_run_settings_recovers_late_model_events_from_mid_sized_file(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "session.jsonl"
+            filler = "x" * (320 * 1024)
+            with path.open("w", encoding="utf-8") as f:
+                f.write(json.dumps({
+                    "type": "session",
+                    "version": 3,
+                    "id": "sess-1",
+                    "timestamp": "2026-04-16T14:45:09.869Z",
+                    "cwd": "/tmp/project",
+                    "provider": "openai",
+                    "modelId": "gpt-5.3-codex",
+                    "thinkingLevel": "high",
+                }) + "\n")
+                f.write(json.dumps({
+                    "type": "message",
+                    "id": "msg-1",
+                    "parentId": None,
+                    "timestamp": "2026-04-16T14:46:00.000Z",
+                    "message": {
+                        "role": "assistant",
+                        "provider": "openai",
+                        "model": "gpt-5.3-codex",
+                        "content": [{"type": "text", "text": filler}],
+                    },
+                }) + "\n")
+                f.write(json.dumps({
+                    "type": "model_change",
+                    "id": "model-1",
+                    "parentId": "msg-1",
+                    "timestamp": "2026-04-16T14:47:00.000Z",
+                    "provider": "openai",
+                    "modelId": "gpt-5.4",
+                }) + "\n")
+
+            self.assertEqual(read_pi_run_settings(path), ("openai", "gpt-5.4", "high"))
+
     def test_read_pi_message_tail_snapshot_returns_latest_token_usage(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             path = Path(td) / "session.jsonl"

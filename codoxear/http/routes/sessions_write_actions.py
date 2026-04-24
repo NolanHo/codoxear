@@ -94,6 +94,43 @@ def _handle_focus(
     return responder.ok(payload)
 
 
+def _handle_model(
+    ctx: _route.RouteContext,
+    guard: _route.SessionRouteGuard,
+    responder: _route.RouteResponder,
+) -> bool:
+    if not (ctx.path.startswith("/api/sessions/") and ctx.path.endswith("/model")):
+        return False
+    session_id = guard.session_id("model")
+    if session_id is None:
+        return responder.not_found()
+    if not guard.require_auth():
+        return True
+    obj = _common.read_json_object(ctx.facade, ctx.handler)
+    model_raw = obj.get("model")
+    model = model_raw.strip() if isinstance(model_raw, str) else ""
+    if not model:
+        return responder.bad_request("model required")
+    provider_raw = obj.get("provider")
+    provider = (
+        provider_raw.strip()
+        if isinstance(provider_raw, str) and provider_raw.strip()
+        else None
+    )
+    assert ctx.facade is not None
+    try:
+        payload = ctx.facade.session_set_model(
+            session_id,
+            model=model,
+            provider=provider,
+        )
+    except KeyError:
+        return responder.not_found()
+    except ValueError as exc:
+        return responder.upstream_error(str(exc))
+    return responder.ok(payload)
+
+
 def _handle_send(
     ctx: _route.RouteContext,
     guard: _route.SessionRouteGuard,
@@ -228,6 +265,7 @@ def handle_post(runtime: ServerRuntime, handler: Any, path: str) -> bool:
         _handle_edit,
         _handle_rename,
         _handle_focus,
+        _handle_model,
         _handle_send,
         _handle_ui_response,
         _handle_enqueue,

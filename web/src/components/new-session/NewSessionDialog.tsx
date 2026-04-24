@@ -100,6 +100,7 @@ function buildOptimisticCreatedSession(
     agent_backend: String(response.backend || fallback.backend || "").trim() || fallback.backend,
     cwd: fallback.cwd,
     alias,
+    focused: response.focused === true,
     pending_startup: response.pending_startup === true,
     busy: response.pending_startup === true,
   };

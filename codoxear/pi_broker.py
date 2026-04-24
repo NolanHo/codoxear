@@ -1044,6 +1044,31 @@ class PiBroker:
             return
         _send_socket_json_line(conn, {"commands": rpc.get_commands()})
 
+    def _cmd_set_model(self, conn: socket.socket, req: dict[str, Any]) -> None:
+        model_raw = req.get("model")
+        if model_raw is None:
+            model_raw = req.get("model_id")
+        if model_raw is None:
+            model_raw = req.get("modelId")
+        model_id = model_raw.strip() if isinstance(model_raw, str) else ""
+        if not model_id:
+            _send_socket_json_line(conn, {"error": "model required"})
+            return
+        provider_raw = req.get("provider")
+        provider = provider_raw.strip() if isinstance(provider_raw, str) else None
+        with self._lock:
+            st = self.state
+            if st is not None:
+                self._drain_rpc_output_locked(st)
+                rpc = st.rpc
+            else:
+                rpc = None
+        if rpc is None:
+            _send_socket_json_line(conn, {"error": "no state"})
+            return
+        data = rpc.set_model(model_id, provider=provider)
+        _send_socket_json_line(conn, {"ok": True, "data": data})
+
     def _parse_ui_response_request(
         self,
         req: dict[str, Any],
@@ -1161,6 +1186,7 @@ class PiBroker:
             "live_messages": self._cmd_live_messages,
             "ui_state": self._cmd_ui_state,
             "commands": self._cmd_commands,
+            "set_model": self._cmd_set_model,
             "ui_response": self._cmd_ui_response,
             "send": self._cmd_send,
             "keys": self._cmd_keys,

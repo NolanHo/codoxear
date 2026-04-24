@@ -88,12 +88,18 @@ class PiSessionFilesService:
         append_pi_user_message(self.runtime, session_path, text=text)
 
     def pi_handoff_message_text(
-        self, *, source_session_id: str, history_path: Path, cwd: str
+        self,
+        *,
+        source_session_id: str,
+        history_path: Path,
+        cwd: str,
+        signal_path: Path | None = None,
     ) -> str:
         return pi_handoff_message_text(
             source_session_id=source_session_id,
             history_path=history_path,
             cwd=cwd,
+            signal_path=signal_path,
         )
 
     def write_pi_handoff_session(
@@ -104,6 +110,7 @@ class PiSessionFilesService:
         cwd: str,
         source_session_id: str,
         history_path: Path,
+        signal_path: Path | None = None,
         provider: str | None = None,
         model_id: str | None = None,
         thinking_level: str | None = None,
@@ -115,6 +122,7 @@ class PiSessionFilesService:
             cwd=cwd,
             source_session_id=source_session_id,
             history_path=history_path,
+            signal_path=signal_path,
             provider=provider,
             model_id=model_id,
             thinking_level=thinking_level,
@@ -268,18 +276,42 @@ def append_pi_user_message(
 
 
 def pi_handoff_message_text(
-    *, source_session_id: str, history_path: Path, cwd: str
+    *,
+    source_session_id: str,
+    history_path: Path,
+    cwd: str,
+    signal_path: Path | None = None,
 ) -> str:
-    return "\n".join(
+    lines = [
+        "Handoff context:",
+        f"- Source session id: {source_session_id}",
+        f"- Archived history file: {history_path}",
+        f"- Working directory: {cwd}",
+        "- This is a fresh session with no inherited chat context.",
+    ]
+    if signal_path is not None:
+        lines.extend(
+            [
+                f"- Extracted handoff JSONL: {signal_path}",
+                "- Read the extracted handoff JSONL carefully before you respond or take action.",
+                "- Do not start with the archived history file: it is large, and the extracted handoff JSONL already contains the effective handoff signal.",
+                "- Open the archived history file only when you explicitly need raw-data operations that require original records.",
+            ]
+        )
+    else:
+        lines.append(
+            "- Read the archived history file carefully before you respond or take action."
+        )
+    lines.extend(
         [
-            "Handoff context:",
-            f"- Source session id: {source_session_id}",
-            f"- Archived history file: {history_path}",
-            f"- Working directory: {cwd}",
-            "- This is a fresh session with no inherited chat context.",
-            "- Read the archived history file only when you need prior context.",
+            "- Extract the current goal, constraints, prior decisions, files changed, validation already run, and any remaining open work.",
+            "- Start by reading the beginning and the end of the extracted handoff JSONL to establish current state, then scan the middle only if needed.",
+            "- Use that archived context to prepare to take over the work without asking the user to restate the whole session.",
+            "- Reply in the language used by the user's next message in this session.",
+            "- After reviewing the history, continue from the latest confirmed state and be ready to proceed.",
         ]
     )
+    return "\n".join(lines)
 
 
 def write_pi_handoff_session(
@@ -290,6 +322,7 @@ def write_pi_handoff_session(
     cwd: str,
     source_session_id: str,
     history_path: Path,
+    signal_path: Path | None = None,
     provider: str | None = None,
     model_id: str | None = None,
     thinking_level: str | None = None,
@@ -311,6 +344,7 @@ def write_pi_handoff_session(
             source_session_id=source_session_id,
             history_path=history_path,
             cwd=cwd,
+            signal_path=signal_path,
         ),
     )
 

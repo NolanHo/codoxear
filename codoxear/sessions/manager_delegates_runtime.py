@@ -565,6 +565,22 @@ class SessionManagerRuntimeDelegates:
         sv = _sv(self)
         return sv.api.pi_ui_bridge.submit_ui_response(sv, self, session_id, payload)
 
+    def set_session_model(
+        self,
+        session_id: str,
+        *,
+        model: str,
+        provider: str | None = None,
+    ) -> dict[str, Any]:
+        sv = _sv(self)
+        return sv.api.pi_ui_bridge.set_session_model(
+            sv,
+            self,
+            session_id,
+            model=model,
+            provider=provider,
+        )
+
     def get_tail(self, session_id: str) -> str:
         return _sv(self).api.session_transport.service(self).get_tail(session_id)
 

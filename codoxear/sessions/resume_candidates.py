@@ -274,6 +274,9 @@ def pi_resume_candidate_from_session_file(
                 )
                 if updated_ts is None:
                     return None
+                model_provider, model, reasoning_effort = sv.api.read_pi_run_settings(
+                    session_path
+                )
                 return {
                     "session_id": session_id,
                     "cwd": cwd,
@@ -286,6 +289,9 @@ def pi_resume_candidate_from_session_file(
                     "title": sv.api.pi_session_files.service(sv).pi_session_name_from_session_file(
                         session_path
                     ),
+                    "model_provider": model_provider,
+                    "model": model,
+                    "reasoning_effort": reasoning_effort,
                 }
     except OSError:
         return None

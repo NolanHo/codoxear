@@ -78,6 +78,7 @@ export interface CreateSessionResponse {
   backend?: string;
   broker_pid?: number;
   pending_startup?: boolean;
+  focused?: boolean;
   alias?: string;
 }
 
@@ -110,6 +111,13 @@ export interface EditSessionResponse extends RenameSessionResponse {
 export interface FocusSessionResponse {
   ok?: boolean;
   focused?: boolean;
+}
+
+export interface SwitchSessionModelResponse {
+  ok?: boolean;
+  model?: string | null;
+  provider?: string | null;
+  data?: Record<string, unknown>;
 }
 
 export interface CwdGroupMeta {

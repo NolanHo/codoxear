@@ -143,6 +143,15 @@ class SessionDisplayService:
             return wrapper(session)
         return resolved_session_run_settings(self.runtime, session)
 
+    def run_settings_from_state(
+        self,
+        state: dict[str, Any],
+    ) -> tuple[str | None, str | None, str | None]:
+        wrapper = _runtime_wrapper(self.runtime, "_run_settings_from_state")
+        if wrapper is not None:
+            return wrapper(state)
+        return run_settings_from_state(state)
+
     def resolved_session_token(
         self,
         session: Any,
@@ -366,6 +375,27 @@ def resolved_session_run_settings(runtime: Any, session: Any) -> tuple[str | Non
         if reasoning_effort is None:
             reasoning_effort = log_effort
     return model_provider, preferred_auth_method, model, reasoning_effort
+
+
+def run_settings_from_state(
+    state: dict[str, Any],
+) -> tuple[str | None, str | None, str | None]:
+    provider = state.get("provider")
+    if not isinstance(provider, str):
+        provider = state.get("modelProvider")
+    if not isinstance(provider, str):
+        provider = None
+    model = state.get("model")
+    if not isinstance(model, str):
+        model = state.get("modelId")
+    if not isinstance(model, str):
+        model = None
+    reasoning_effort = state.get("reasoning_effort")
+    if not isinstance(reasoning_effort, str):
+        reasoning_effort = state.get("thinkingLevel")
+    if not isinstance(reasoning_effort, str):
+        reasoning_effort = None
+    return provider, model, reasoning_effort
 
 
 def resolved_session_token(

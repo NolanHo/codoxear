@@ -1021,6 +1021,30 @@ def _ui_requests_version(requests: list[dict[str, Any]]) -> str:
     return base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
 
 
+_PI_BUILTIN_COMMANDS: list[dict[str, str]] = [
+    {"name": "login", "description": "OAuth authentication", "source": "builtin"},
+    {"name": "logout", "description": "OAuth authentication", "source": "builtin"},
+    {"name": "model", "description": "Switch models", "source": "builtin"},
+    {"name": "scoped-models", "description": "Enable or disable models for Ctrl+P cycling", "source": "builtin"},
+    {"name": "settings", "description": "Thinking level, theme, message delivery, transport", "source": "builtin"},
+    {"name": "resume", "description": "Pick from previous sessions", "source": "builtin"},
+    {"name": "new", "description": "Start a new session", "source": "builtin"},
+    {"name": "name", "description": "Set session display name", "source": "builtin"},
+    {"name": "session", "description": "Show session info", "source": "builtin"},
+    {"name": "tree", "description": "Jump to any point in the session and continue from there", "source": "builtin"},
+    {"name": "fork", "description": "Create a new session from the current branch", "source": "builtin"},
+    {"name": "compact", "description": "Manually compact context", "source": "builtin"},
+    {"name": "copy", "description": "Copy last assistant message to clipboard", "source": "builtin"},
+    {"name": "export", "description": "Export session to HTML", "source": "builtin"},
+    {"name": "share", "description": "Upload as a private GitHub gist with shareable HTML link", "source": "builtin"},
+    {"name": "reload", "description": "Reload keybindings, extensions, skills, prompts, and context files", "source": "builtin"},
+    {"name": "hotkeys", "description": "Show all keyboard shortcuts", "source": "builtin"},
+    {"name": "changelog", "description": "Display version history", "source": "builtin"},
+    {"name": "quit", "description": "Quit pi", "source": "builtin"},
+    {"name": "exit", "description": "Quit pi", "source": "builtin"},
+]
+
+
 def _sanitize_pi_commands_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return _pi_ui_payloads.sanitize_pi_commands_payload(payload)
 
@@ -1199,6 +1223,158 @@ def _copy_file_atomic(source_path: Path, target_path: Path) -> None:
     return _pi_session_files.service(RUNTIME).copy_file_atomic(source_path, target_path)
 
 
+def _append_pi_user_message(session_path: Path, *, text: str) -> None:
+    now = float(_now())
+    millis = int(round(now * 1000))
+    entry = {
+        "type": "message",
+        "message": {
+            "role": "user",
+            "content": [{"type": "text", "text": text}],
+            "timestamp": millis,
+        },
+    }
+    with session_path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+
+def _export_pi_handoff_signal(
+    *, history_path: Path, source_session_id: str
+) -> Path | None:
+    extractor_path = _pi_handoff_extractor_path()
+    if not extractor_path.exists():
+        LOG.warning(
+            "pi handoff extractor missing; fallback to raw history",
+            extra={"extractor_path": str(extractor_path)},
+        )
+        return None
+    output_dir = (
+        _pi_handoff_export_dir() / _safe_filename(source_session_id, default="session")
+    ).resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / f"{history_path.name}.signal.jsonl"
+    cmd = [
+        sys.executable,
+        str(extractor_path),
+        str(history_path),
+        "--format",
+        "jsonl",
+        "--output",
+        str(output_path),
+    ]
+    try:
+        proc = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except Exception:
+        LOG.exception(
+            "pi handoff export failed",
+            extra={
+                "history_path": str(history_path),
+                "extractor_path": str(extractor_path),
+            },
+        )
+        return None
+    if proc.returncode != 0:
+        LOG.warning(
+            "pi handoff export exited non-zero",
+            extra={
+                "history_path": str(history_path),
+                "extractor_path": str(extractor_path),
+                "returncode": int(proc.returncode),
+                "stderr": (proc.stderr or "")[-2000:],
+            },
+        )
+        _unlink_quiet(output_path)
+        return None
+    if not output_path.exists():
+        LOG.warning(
+            "pi handoff export produced no output file",
+            extra={
+                "history_path": str(history_path),
+                "output_path": str(output_path),
+            },
+        )
+        return None
+    return output_path
+
+
+def _pi_handoff_message_text(
+    *,
+    source_session_id: str,
+    history_path: Path,
+    cwd: str,
+    signal_path: Path | None = None,
+) -> str:
+    lines = [
+        "Handoff context:",
+        f"- Source session id: {source_session_id}",
+        f"- Archived history file: {history_path}",
+        f"- Working directory: {cwd}",
+        "- This is a fresh session with no inherited chat context.",
+    ]
+    if signal_path is not None:
+        lines.extend(
+            [
+                f"- Extracted handoff JSONL: {signal_path}",
+                "- Read the extracted handoff JSONL carefully before you respond or take action.",
+                "- Do not start with the archived history file: it is large, and the extracted handoff JSONL already contains the effective handoff signal.",
+                "- Open the archived history file only when you explicitly need raw-data operations that require original records.",
+            ]
+        )
+    else:
+        lines.append(
+            "- Read the archived history file carefully before you respond or take action."
+        )
+    lines.extend(
+        [
+            "- Extract the current goal, constraints, prior decisions, files changed, validation already run, and any remaining open work.",
+            "- Start by reading the beginning and the end of the extracted handoff JSONL to establish current state, then scan the middle only if needed.",
+            "- Use that archived context to prepare to take over the work without asking the user to restate the whole session.",
+            "- Reply in the language used by the user's next message in this session.",
+            "- After reviewing the history, continue from the latest confirmed state and be ready to proceed.",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def _write_pi_handoff_session(
+    session_path: Path,
+    *,
+    session_id: str,
+    cwd: str,
+    source_session_id: str,
+    history_path: Path,
+    signal_path: Path | None = None,
+    provider: str | None = None,
+    model_id: str | None = None,
+    thinking_level: str | None = None,
+) -> None:
+    _write_pi_session_header(
+        session_path,
+        session_id=session_id,
+        cwd=cwd,
+        parent_session=source_session_id,
+        provider=provider,
+        model_id=model_id,
+        thinking_level=thinking_level,
+    )
+    _append_pi_user_message(
+        session_path,
+        text=_pi_handoff_message_text(
+            source_session_id=source_session_id,
+            history_path=history_path,
+            cwd=cwd,
+            signal_path=signal_path,
+        ),
+    )
+
+
 def _pi_session_name_from_session_file(
     session_path: Path, *, max_scan_bytes: int = 512 * 1024
 ) -> str:
@@ -1206,6 +1382,18 @@ def _pi_session_name_from_session_file(
         session_path,
         max_scan_bytes=max_scan_bytes,
     )
+
+
+
+def _safe_read_pi_run_settings(
+    session_path: Path | None,
+) -> tuple[str | None, str | None, str | None]:
+    if session_path is None or (not session_path.exists()):
+        return None, None, None
+    try:
+        return _read_pi_run_settings(session_path)
+    except Exception:
+        return None, None, None
 
 
 
@@ -1500,6 +1688,26 @@ def _display_session_busy(
         s,
         state,
     )
+
+
+def _run_settings_from_state(
+    state: dict[str, Any] | None,
+) -> tuple[str | None, str | None, str | None]:
+    if not isinstance(state, dict):
+        return None, None, None
+    model_payload = state.get("model")
+    provider: str | None = None
+    model: str | None = None
+    if isinstance(model_payload, dict):
+        provider = _clean_optional_text(model_payload.get("provider"))
+        model = _clean_optional_text(
+            model_payload.get("id") or model_payload.get("modelId")
+        )
+    elif isinstance(model_payload, str):
+        model = _clean_optional_text(model_payload)
+    reasoning_effort = _display_pi_reasoning_effort(state.get("thinkingLevel"))
+    return provider, model, reasoning_effort
+
 
 
 def _resolved_session_run_settings(

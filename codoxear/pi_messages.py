@@ -440,6 +440,15 @@ def _coerce_tool_arguments(args: Any) -> dict[str, Any]:
     return args if isinstance(args, dict) else {}
 
 
+def _tool_call_details(args: Any) -> dict[str, Any] | None:
+    normalized = _coerce_tool_arguments(args)
+    if normalized:
+        return {"arguments": normalized}
+    if isinstance(args, str) and args.strip():
+        return {"raw_arguments": args.strip()}
+    return None
+
+
 def _is_ask_user_tool_name(name: Any) -> bool:
     return isinstance(name, str) and name in _ASK_USER_TOOL_NAMES
 
@@ -1267,13 +1276,15 @@ def _assistant_handle_tool_call_item(
         assistant_state["fallback_ts"] = fallback_ts
         return True
 
-    events.append(
-        {
-            "type": "tool",
-            "name": tool_name,
-            "ts": float(_event_ts_value(preferred_ts=assistant_ts, fallback_ts=fallback_ts)),
-        }
-    )
+    tool_event: dict[str, Any] = {
+        "type": "tool",
+        "name": tool_name,
+        "ts": float(_event_ts_value(preferred_ts=assistant_ts, fallback_ts=fallback_ts)),
+    }
+    tool_details = _tool_call_details(item.get("arguments"))
+    if tool_details is not None:
+        tool_event["details"] = tool_details
+    events.append(tool_event)
     meta_delta["tool"] += 1
     tool_names.append(tool_name)
     assistant_state["active_turn_last_tool"] = tool_name

@@ -418,6 +418,8 @@ def read_pi_run_settings(path: Path, *, max_scan_bytes: int = 8 * 1024 * 1024) -
 
     head_scan_bytes = min(size, 256 * 1024)
     tail_scan_bytes = min(size, int(max_scan_bytes))
+    tail_start = max(head_scan_bytes, size - tail_scan_bytes)
+    tail_limit_bytes = max(0, size - tail_start)
     try:
         provider, model, thinking_level = _scan_pi_run_settings_range(
             path,
@@ -427,11 +429,11 @@ def read_pi_run_settings(path: Path, *, max_scan_bytes: int = 8 * 1024 * 1024) -
             model=model,
             thinking_level=thinking_level,
         )
-        if size > tail_scan_bytes:
+        if tail_limit_bytes > 0:
             provider, model, thinking_level = _scan_pi_run_settings_range(
                 path,
-                start=max(0, size - tail_scan_bytes),
-                limit_bytes=tail_scan_bytes,
+                start=tail_start,
+                limit_bytes=tail_limit_bytes,
                 provider=provider,
                 model=model,
                 thinking_level=thinking_level,

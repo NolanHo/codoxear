@@ -336,6 +336,16 @@ def _collect_recovered_catalog_items(
         cwd = record.cwd or ""
         history_cwd_path: Path | None = sv.api.safe_expanduser(Path(cwd)).resolve() if cwd else None
         git_branch = sv.api.current_git_branch(history_cwd_path) if history_cwd_path is not None else None
+        source_path_raw = record.source_path or ""
+        source_path = Path(source_path_raw) if source_path_raw else None
+        model_provider = model = reasoning_effort = None
+        if source_path is not None and source_path.exists():
+            try:
+                model_provider, model, reasoning_effort = sv.api.read_pi_run_settings(
+                    source_path
+                )
+            except Exception:
+                model_provider = model = reasoning_effort = None
 
         items.append(
             {
@@ -367,11 +377,15 @@ def _collect_recovered_catalog_items(
                 "focused": bool(meta0.get("focused")),
                 "files": list(file_rows) if isinstance(file_rows, list) else [],
                 "git_branch": git_branch,
-                "model_provider": None,
+                "model_provider": model_provider,
                 "preferred_auth_method": None,
-                "provider_choice": None,
-                "model": None,
-                "reasoning_effort": None,
+                "provider_choice": sv.api.session_settings.service(sv).provider_choice_for_backend(
+                    backend=backend,
+                    model_provider=model_provider,
+                    preferred_auth_method=None,
+                ),
+                "model": model,
+                "reasoning_effort": reasoning_effort,
                 "service_tier": None,
                 "tmux_session": None,
                 "tmux_window": None,

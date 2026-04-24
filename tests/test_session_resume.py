@@ -16,12 +16,61 @@ from codoxear.server import _default_worktree_path
 from codoxear.server import _first_user_message_preview_from_log
 from codoxear.server import _first_user_message_preview_from_pi_session
 from codoxear.server import _list_resume_candidates_for_cwd
+from codoxear.server import _pi_handoff_message_text
 from codoxear.server import _pi_session_name_from_session_file
 
 
 def _write_jsonl(path: Path, objs: list[dict]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("".join(json.dumps(obj) + "\n" for obj in objs), encoding="utf-8")
+
+
+class TestPiHandoffMessage(unittest.TestCase):
+    def test_handoff_message_requires_history_review_and_takeover(self) -> None:
+        history_path = Path("/tmp/handoff.jsonl.history")
+        signal_path = Path("/tmp/handoff.signal.jsonl")
+
+        text = _pi_handoff_message_text(
+            source_session_id="source-123",
+            history_path=history_path,
+            cwd="/repo",
+            signal_path=signal_path,
+        )
+
+        self.assertIn("Handoff context:", text)
+        self.assertIn(f"Extracted handoff JSONL: {signal_path}", text)
+        self.assertIn(
+            "Read the extracted handoff JSONL carefully before you respond or take action.",
+            text,
+        )
+        self.assertIn(
+            "Do not start with the archived history file: it is large, and the extracted handoff JSONL already contains the effective handoff signal.",
+            text,
+        )
+        self.assertIn(
+            "Open the archived history file only when you explicitly need raw-data operations that require original records.",
+            text,
+        )
+        self.assertIn(
+            "Extract the current goal, constraints, prior decisions, files changed, validation already run, and any remaining open work.",
+            text,
+        )
+        self.assertIn(
+            "Start by reading the beginning and the end of the extracted handoff JSONL to establish current state, then scan the middle only if needed.",
+            text,
+        )
+        self.assertIn(
+            "Use that archived context to prepare to take over the work without asking the user to restate the whole session.",
+            text,
+        )
+        self.assertIn(
+            "Reply in the language used by the user's next message in this session.",
+            text,
+        )
+        self.assertIn(
+            "After reviewing the history, continue from the latest confirmed state and be ready to proceed.",
+            text,
+        )
 
 
 class TestSessionResumeCandidates(unittest.TestCase):
