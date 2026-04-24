@@ -244,7 +244,7 @@ class TestPiLaunchDelegation(unittest.TestCase):
         pi_broker_cls.assert_called_once_with(
             cwd="/tmp/pi-work",
             session_path=None,
-            agent_args=["-e", str(PI_ASK_USER_BRIDGE_PATH), "--no-session", "--fast"],
+            agent_args=["--no-session", "--fast", "-e", str(PI_ASK_USER_BRIDGE_PATH)],
             resume_session_id=None,
         )
         pi_broker_cls.return_value.run.assert_called_once_with(foreground=True)

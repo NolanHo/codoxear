@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from ..agent_backend import normalize_agent_backend
+from .runtime_access import manager_runtime
 
 
 def _clean_optional_text(value: Any) -> str | None:
@@ -46,7 +47,7 @@ def _discover_one_socket(
         codex_pid = int(codex_pid_raw)
         broker_pid = int(broker_pid_raw)
         owned = (meta.get("owner") == "web") if isinstance(meta.get("owner"), str) else False
-        transport, tmux_session, tmux_window = manager._session_transport(meta=meta)
+        transport, tmux_session, tmux_window = manager.session_transport(meta=meta)
         supports_live_ui = meta.get("supports_live_ui") if isinstance(meta.get("supports_live_ui"), bool) else None
         ui_protocol_version_raw = meta.get("ui_protocol_version")
         ui_protocol_version = ui_protocol_version_raw if type(ui_protocol_version_raw) is int else None
@@ -80,7 +81,7 @@ def _discover_one_socket(
                 inferred_pi_session_path = candidate
                 break
             if inferred_pi_session_path is None and sv.api.pid_alive(codex_pid):
-                ignored_paths = manager._claimed_pi_session_paths(exclude_sid=session_id)
+                ignored_paths = manager.claimed_pi_session_paths(exclude_sid=session_id)
                 inferred_pi_session_path = sv.api.proc_find_open_rollout_log(
                     proc_root=sv.api.PROC_ROOT,
                     root_pid=codex_pid,
@@ -122,7 +123,7 @@ def _discover_one_socket(
                     if "missing session_path" not in str(exc):
                         raise
                 claimed: set[Path] | None = (
-                    manager._claimed_pi_session_paths(exclude_sid=session_id)
+                    manager.claimed_pi_session_paths(exclude_sid=session_id)
                     if preferred_session_path is None
                     else None
                 )
@@ -148,38 +149,38 @@ def _discover_one_socket(
             log_path = None
     except Exception as exc:
         if skip_invalid_sidecars:
-            manager._quarantine_sidecar(sock, exc, log=False)
+            manager.quarantine_sidecar(sock, exc, log=False)
             return
         raise
-    manager._clear_sidecar_quarantine(sock)
+    manager.clear_sidecar_quarantine(sock)
 
     if (log_path is None) and (not sv.api.pid_alive(codex_pid)) and (not sv.api.pid_alive(broker_pid)):
-        manager._unhide_session(session_id)
+        manager.unhide_session(session_id)
         sv.api.unlink_quiet(sock)
         sv.api.unlink_quiet(meta_path)
         return
 
     resume_session_id = _clean_optional_text(meta.get("resume_session_id"))
-    if manager._session_is_hidden(session_id, thread_id, resume_session_id, agent_backend):
+    if manager.session_is_hidden(session_id, thread_id, resume_session_id, agent_backend):
         if (not sv.api.pid_alive(codex_pid)) and (not sv.api.pid_alive(broker_pid)):
-            manager._unhide_session(session_id)
+            manager.unhide_session(session_id)
             sv.api.unlink_quiet(sock)
             sv.api.unlink_quiet(meta_path)
         return
 
     try:
-        model_provider, preferred_auth_method, model, reasoning_effort = manager._session_run_settings(
+        model_provider, preferred_auth_method, model, reasoning_effort = manager.session_run_settings(
             backend=backend, meta=meta, log_path=log_path
         )
         service_tier = sv.api.normalize_requested_service_tier(meta.get("service_tier"))
     except Exception as exc:
         if skip_invalid_sidecars:
-            manager._quarantine_sidecar(sock, exc, log=False)
+            manager.quarantine_sidecar(sock, exc, log=False)
             return
         raise
 
     try:
-        resp = manager._sock_call(sock, {"cmd": "state"}, timeout_s=0.5)
+        resp = manager.sock_call(sock, {"cmd": "state"}, timeout_s=0.5)
     except Exception as exc:
         if sv.api.probe_failure_safe_to_prune(broker_pid=broker_pid, codex_pid=codex_pid):
             sv.api.unlink_quiet(sock)
@@ -242,7 +243,7 @@ def _discover_one_socket(
     with manager._lock:
         prev = manager._sessions.get(session_id)
         if not prev:
-            manager._reset_log_caches(session, meta_log_off=meta_log_off)
+            manager.reset_log_caches(session, meta_log_off=meta_log_off)
             session.model_provider = model_provider
             session.preferred_auth_method = preferred_auth_method
             session.model = model
@@ -265,7 +266,7 @@ def _discover_one_socket(
             prev.busy = session.busy
             prev.queue_len = session.queue_len
             prev.token = session.token
-            manager._apply_session_source(prev, log_path=session.log_path, session_path=session.session_path)
+            manager.apply_session_source(prev, log_path=session.log_path, session_path=session.session_path)
             prev.model_provider = model_provider
             prev.preferred_auth_method = preferred_auth_method
             prev.model = model
@@ -283,7 +284,7 @@ def discover_existing(
     force: bool = False,
     skip_invalid_sidecars: bool = False,
 ) -> None:
-    sv = manager._runtime
+    sv = manager_runtime(manager)
     if not force:
         now = time.time()
         with manager._lock:
@@ -293,7 +294,7 @@ def discover_existing(
 
     sv.api.SOCK_DIR.mkdir(parents=True, exist_ok=True)
     for sock in sorted(sv.api.SOCK_DIR.glob("*.sock")):
-        if skip_invalid_sidecars and manager._sidecar_is_quarantined(sock):
+        if skip_invalid_sidecars and manager.sidecar_is_quarantined(sock):
             continue
         _discover_one_socket(
             manager,

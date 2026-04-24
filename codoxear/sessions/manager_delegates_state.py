@@ -148,7 +148,7 @@ class SessionManagerStateDelegates:
             return (False, 0, 0)
         return (True, int(st.st_mtime_ns), int(st.st_size))
 
-    def _sidecar_is_quarantined(self, sock: Any) -> bool:
+    def sidecar_is_quarantined(self, sock: Any) -> bool:
         bad_sidecars = getattr(self, "_bad_sidecars", None)
         if not isinstance(bad_sidecars, dict):
             self._bad_sidecars = {}
@@ -162,6 +162,9 @@ class SessionManagerStateDelegates:
             return True
         bad_sidecars.pop(key, None)
         return False
+
+    def _sidecar_is_quarantined(self, sock: Any) -> bool:
+        return self.sidecar_is_quarantined(sock)
 
     def quarantine_sidecar(
         self,
@@ -238,7 +241,7 @@ class SessionManagerStateDelegates:
             backend,
         )
 
-    def _session_is_hidden(
+    def session_is_hidden(
         self,
         session_id: str | None,
         thread_id: str | None,
@@ -246,6 +249,20 @@ class SessionManagerStateDelegates:
         backend: str | None,
     ) -> bool:
         return self._sidebar_state_facade().session_is_hidden(
+            session_id,
+            thread_id,
+            resume_session_id,
+            backend,
+        )
+
+    def _session_is_hidden(
+        self,
+        session_id: str | None,
+        thread_id: str | None,
+        resume_session_id: str | None,
+        backend: str | None,
+    ) -> bool:
+        return self.session_is_hidden(
             session_id,
             thread_id,
             resume_session_id,
@@ -272,8 +289,11 @@ class SessionManagerStateDelegates:
     def _hide_session_identity(self, s: Any) -> None:
         self._sidebar_state_facade().hide_session_identity(s)
 
-    def _unhide_session(self, session_id: str) -> None:
+    def unhide_session(self, session_id: str) -> None:
         self._sidebar_state_facade().unhide_session(session_id)
+
+    def _unhide_session(self, session_id: str) -> None:
+        self.unhide_session(session_id)
 
     def set_created_session_name(
         self,
