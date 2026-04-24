@@ -630,6 +630,20 @@ class RuntimeFacade:
     def metrics_payload(self) -> dict[str, Any]:
         return {"metrics": self.api.metrics_snapshot()}
 
+    def parse_create_session_request(self, obj: dict[str, Any]) -> dict[str, Any]:
+        from .sessions import creation as _session_creation
+
+        return _session_creation.parse_create_session_request(self.runtime, obj)
+
+    def cwd_group_set(
+        self,
+        *,
+        cwd: Any,
+        label: Any,
+        collapsed: Any,
+    ) -> tuple[str, dict[str, Any]]:
+        return self.manager.cwd_group_set(cwd=cwd, label=label, collapsed=collapsed)
+
     def create_session(self, payload: dict[str, Any]) -> dict[str, Any]:
         res = self.manager.spawn_web_session(
             cwd=payload["cwd"],

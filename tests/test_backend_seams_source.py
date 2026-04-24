@@ -73,8 +73,7 @@ class TestBackendSeamsSource(unittest.TestCase):
         self.assertIn("facade.sessions_list_payload(", read_bootstrap)
         self.assertIn("facade.resume_candidates_payload(", read_bootstrap)
         self.assertIn("from . import sessions_write_create as _create", write_source)
-        self.assertIn("from ...sessions import creation as _session_creation", write_create)
-        self.assertIn("_session_creation.parse_create_session_request(runtime, obj)", write_create)
+        self.assertIn("payload = facade.parse_create_session_request(obj)", write_create)
 
     def test_server_delegates_session_catalog_identity_lookups(self) -> None:
         source = SERVER.read_text(encoding="utf-8")

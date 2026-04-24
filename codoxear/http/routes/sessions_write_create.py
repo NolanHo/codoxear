@@ -4,7 +4,6 @@ from typing import Any
 
 from ...runtime import ServerRuntime
 from ...runtime_facade import build_runtime_facade
-from ...sessions import creation as _session_creation
 from . import sessions_write_common as _common
 
 
@@ -17,7 +16,7 @@ def handle_post(runtime: ServerRuntime, handler: Any, path: str) -> bool:
             return True
         try:
             obj = _common.read_json_object(facade, handler)
-            cwd, entry = facade.manager.cwd_group_set(
+            cwd, entry = facade.cwd_group_set(
                 cwd=obj.get("cwd"),
                 label=obj.get("label"),
                 collapsed=obj.get("collapsed"),
@@ -34,7 +33,7 @@ def handle_post(runtime: ServerRuntime, handler: Any, path: str) -> bool:
             return True
         obj = _common.read_json_object(facade, handler)
         try:
-            payload = _session_creation.parse_create_session_request(runtime, obj)
+            payload = facade.parse_create_session_request(obj)
         except ValueError as exc:
             err = str(exc)
             out = {"error": err}
