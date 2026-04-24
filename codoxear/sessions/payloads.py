@@ -32,32 +32,25 @@ def session_details_payload(manager: Any, session_id: str) -> dict[str, Any]:
 
 
 
-def session_context_usage_payload(s: Any, token_val: dict[str, Any] | None) -> dict[str, Any] | None:
-    sv = _sv()
-    if s.backend != "pi":
+def session_context_usage_payload(
+    session_stats: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if not isinstance(session_stats, dict):
         return None
-    context_window = None
-    model_provider, _preferred_auth_method, model, _reasoning_effort = sv._resolved_session_run_settings(s)
-    if model_provider is not None and model is not None:
-        context_window = sv._pi_model_context_window(model_provider, model)
-    if (not isinstance(context_window, int) or context_window <= 0) and isinstance(token_val, dict):
-        token_context_window = token_val.get("context_window")
-        if isinstance(token_context_window, int) and token_context_window > 0:
-            context_window = token_context_window
+    context_usage = session_stats.get("contextUsage")
+    if not isinstance(context_usage, dict):
+        return None
+    context_window = context_usage.get("contextWindow")
     if not isinstance(context_window, int) or context_window <= 0:
         return None
-    used_tokens = 0
-    if isinstance(token_val, dict):
-        raw_used_tokens = token_val.get("tokens_in_context")
-        if isinstance(raw_used_tokens, int) and raw_used_tokens > 0:
-            used_tokens = raw_used_tokens
-    used_tokens = max(used_tokens, 0)
-    percent_used = int(round((used_tokens / context_window) * 100.0)) if context_window > 0 else 0
-    return {
-        "used_tokens": used_tokens,
-        "total_tokens": context_window,
-        "percent_used": percent_used,
-    }
+    payload: dict[str, Any] = {"total_tokens": int(context_window)}
+    tokens = context_usage.get("tokens")
+    if isinstance(tokens, int):
+        payload["used_tokens"] = max(tokens, 0)
+    percent = context_usage.get("percent")
+    if isinstance(percent, int):
+        payload["percent_used"] = int(percent)
+    return payload
 
 
 
@@ -106,14 +99,12 @@ def session_diagnostics_payload(manager: Any, session_id: str, s: Any, state: di
         s,
         st_token if isinstance(st_token, dict) else None,
     )
-    model_provider, preferred_auth_method, model, reasoning_effort = sv._resolved_session_run_settings(s)
-    state_provider, state_model, state_effort = sv._run_settings_from_state(state)
-    if model_provider is None:
-        model_provider = state_provider
-    if model is None:
-        model = state_model
-    if reasoning_effort is None:
-        reasoning_effort = state_effort
+    session_stats = manager.get_session_stats(session_id) if s.backend == "pi" else None
+    if s.backend == "pi":
+        model_provider, model, reasoning_effort = sv._run_settings_from_state(state)
+        preferred_auth_method = None
+    else:
+        model_provider, preferred_auth_method, model, reasoning_effort = sv._resolved_session_run_settings(s)
     service_tier = s.service_tier
     sidebar_meta = manager.sidebar_meta_get(session_id)
     cwd_path = sv._safe_expanduser(Path(s.cwd))
@@ -153,7 +144,7 @@ def session_diagnostics_payload(manager: Any, session_id: str, s: Any, state: di
         "broker_busy": broker_busy,
         "queue_len": manager._queue_len(session_id),
         "token": token_val,
-        "context_usage": session_context_usage_payload(s, token_val),
+        "context_usage": session_context_usage_payload(session_stats),
         "turn_timing": turn_timing,
         "model_provider": model_provider,
         "preferred_auth_method": preferred_auth_method,

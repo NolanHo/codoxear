@@ -435,6 +435,8 @@ class State:
     output_tail: str = ""
     output_tail_max: int = 64 * 1024
     token: dict[str, Any] | None = None
+    rpc_state: dict[str, Any] | None = None
+    session_stats: dict[str, Any] | None = None
     last_turn_id: str | None = None
     is_compacting: bool = False
     backend: str = "pi"
@@ -524,15 +526,26 @@ class PiBroker:
         if not st:
             return
         rpc_state: dict[str, Any] | None = None
+        rpc_session_stats: dict[str, Any] | None = None
         try:
             rpc_state = st.rpc.get_state()
         except Exception:
             rpc_state = None
+        try:
+            rpc_session_stats = st.rpc.get_session_stats()
+        except Exception:
+            rpc_session_stats = None
         rewrite_meta = False
         with self._lock:
             st2 = self.state
             if not st2:
                 return
+            st2.rpc_state = dict(rpc_state) if isinstance(rpc_state, dict) else None
+            st2.session_stats = (
+                dict(rpc_session_stats)
+                if isinstance(rpc_session_stats, dict)
+                else None
+            )
             if isinstance(rpc_state, dict):
                 st2.is_compacting = _extract_is_compacting(rpc_state)
                 rpc_busy = _extract_busy(rpc_state)
@@ -863,6 +876,34 @@ class PiBroker:
                         "token": st.token if st else None,
                         "isCompacting": bool(st.is_compacting) if st else False,
                     }
+                    native_state = st.rpc_state if st is not None else None
+                    if isinstance(native_state, dict):
+                        for key in (
+                            "model",
+                            "thinkingLevel",
+                            "isStreaming",
+                            "sessionFile",
+                            "sessionId",
+                            "sessionName",
+                            "autoCompactionEnabled",
+                            "messageCount",
+                            "pendingMessageCount",
+                        ):
+                            if key in native_state:
+                                resp[key] = native_state.get(key)
+                _send_socket_json_line(conn, resp)
+                return
+
+            if cmd == "session_stats":
+                with self._lock:
+                    st = self.state
+                    if st is not None:
+                        self._drain_rpc_output_locked(st)
+                    resp = (
+                        dict(st.session_stats)
+                        if st is not None and isinstance(st.session_stats, dict)
+                        else {}
+                    )
                 _send_socket_json_line(conn, resp)
                 return
 

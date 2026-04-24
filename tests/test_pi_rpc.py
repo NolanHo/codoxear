@@ -11,11 +11,14 @@ from typing import Any
 from unittest.mock import patch
 
 from codoxear.pi_rpc import PiRpcClient
-from tests.pi_fixtures import pi_rpc_request_payloads
-from tests.pi_fixtures import pi_rpc_response_lines
-from tests.pi_fixtures import pi_stream_events
-from tests.pi_fixtures import pi_ui_request_event
-from tests.pi_fixtures import pi_ui_response_payload
+
+from tests.pi_fixtures import (
+    pi_rpc_request_payloads,
+    pi_rpc_response_lines,
+    pi_stream_events,
+    pi_ui_request_event,
+    pi_ui_response_payload,
+)
 
 
 class _QueueReader:
@@ -364,6 +367,63 @@ class TestPiRpc(unittest.TestCase):
                 time.sleep(0.01)
 
             self.assertEqual(drained, [event])
+        finally:
+            client.close()
+
+    def test_get_session_stats_returns_native_context_usage(self) -> None:
+        proc = _FakeProc()
+        client = PiRpcClient(proc=proc)
+        try:
+            result_box: dict[str, object] = {}
+
+            def _call() -> None:
+                result_box["result"] = client.get_session_stats()
+
+            thread = threading.Thread(target=_call)
+            thread.start()
+            deadline = time.time() + 1.0
+            written: dict[str, Any] = {}
+            while not written:
+                raw = proc.stdin.getvalue()
+                if raw:
+                    written = json.loads(raw)
+                    break
+                if time.time() >= deadline:
+                    self.fail("get_session_stats request was not written to stdin")
+                time.sleep(0.01)
+            self.assertEqual(written.get("type"), "get_session_stats")
+            request_id = written.get("id")
+            proc.stdout.put_line(
+                json.dumps(
+                    {
+                        "type": "response",
+                        "id": request_id,
+                        "command": "get_session_stats",
+                        "success": True,
+                        "data": {
+                            "contextUsage": {
+                                "tokens": 91000,
+                                "contextWindow": 272000,
+                                "percent": 33,
+                            }
+                        },
+                    }
+                )
+                + "\n"
+            )
+            thread.join(1.0)
+
+            self.assertFalse(thread.is_alive())
+            self.assertEqual(
+                result_box["result"],
+                {
+                    "contextUsage": {
+                        "tokens": 91000,
+                        "contextWindow": 272000,
+                        "percent": 33,
+                    }
+                },
+            )
         finally:
             client.close()
 

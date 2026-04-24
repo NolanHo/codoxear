@@ -3681,6 +3681,13 @@ def _safe_path_mtime(path: Path) -> float | None:
         return None
 
 
+def _latest_optional_timestamp(*values: float | None) -> float | None:
+    present = [value for value in values if isinstance(value, (int, float))]
+    if not present:
+        return None
+    return max(float(value) for value in present)
+
+
 def _list_resume_candidates_for_cwd(
     cwd: str,
     *,
@@ -4451,9 +4458,9 @@ def _resolved_session_token(
 
 
 def _session_context_usage_payload(
-    s: Session, token_val: dict[str, Any] | None
+    session_stats: dict[str, Any] | None,
 ) -> dict[str, Any] | None:
-    return _session_payloads.session_context_usage_payload(s, token_val)
+    return _session_payloads.session_context_usage_payload(session_stats)
 
 
 
@@ -5035,20 +5042,26 @@ class SessionManager:
         self, runtime_id: str, ref: SessionRef
     ) -> dict[str, Any]:
         with self._lock:
-            files_src = getattr(self, "_files", None)
-            queues_src = getattr(self, "_queues", None)
+            files_src: dict[SessionRef | str, list[str]] | None = getattr(
+                self, "_files", None
+            )
+            queues_src: dict[SessionRef | str, list[str]] | None = getattr(
+                self, "_queues", None
+            )
             harness_src = getattr(self, "_harness", None)
             harness_last_src = getattr(self, "_harness_last_injected", None)
-            files = (
-                list(files_src.get(runtime_id, files_src.get(ref, [])))
+            files_value = (
+                files_src.get(runtime_id) or files_src.get(ref) or []
                 if isinstance(files_src, dict)
                 else []
             )
-            queue = (
-                list(queues_src.get(runtime_id, queues_src.get(ref, [])))
+            queue_value = (
+                queues_src.get(runtime_id) or queues_src.get(ref) or []
                 if isinstance(queues_src, dict)
                 else []
             )
+            files = list(files_value)
+            queue = list(queue_value)
             harness = (
                 dict(harness_src.get(runtime_id, {}))
                 if isinstance(harness_src, dict) and isinstance(harness_src.get(runtime_id), dict)
@@ -5216,7 +5229,10 @@ class SessionManager:
                 title=restore_record.title,
                 first_user_message=restore_record.first_user_message,
                 created_at=restore_record.created_at,
-                updated_at=max(restore_record.updated_at, _safe_path_mtime(source_path)),
+                updated_at=_latest_optional_timestamp(
+                    restore_record.updated_at,
+                    _safe_path_mtime(source_path),
+                ),
                 pending_startup=True,
             )
         )
@@ -5265,7 +5281,10 @@ class SessionManager:
                     title=restore_record.title,
                     first_user_message=restore_record.first_user_message,
                     created_at=restore_record.created_at,
-                    updated_at=max(restore_record.updated_at, _safe_path_mtime(source_path)),
+                    updated_at=_latest_optional_timestamp(
+                        restore_record.updated_at,
+                        _safe_path_mtime(source_path),
+                    ),
                     pending_startup=False,
                 )
             )
@@ -9549,6 +9568,28 @@ class SessionManager:
                         s2.token = tok
                 return resp
         return cached_state
+
+    def get_session_stats(self, session_id: str) -> dict[str, Any]:
+        runtime_id = self._runtime_session_id_for_identifier(session_id)
+        if runtime_id is None:
+            raise KeyError("unknown session")
+        with self._lock:
+            s = self._sessions.get(runtime_id)
+            if not s:
+                raise KeyError("unknown session")
+            sock = s.sock_path
+        try:
+            resp = self._sock_call(sock, {"cmd": "session_stats"}, timeout_s=1.5)
+        except Exception:
+            if not _pid_alive(s.broker_pid) and not _pid_alive(s.codex_pid):
+                with self._lock:
+                    self._sessions.pop(runtime_id, None)
+                self._clear_deleted_session_state(runtime_id)
+                _unlink_quiet(sock)
+                _unlink_quiet(sock.with_suffix(".json"))
+                raise KeyError("unknown session")
+            return {}
+        return resp if isinstance(resp, dict) else {}
 
     def get_ui_state(self, session_id: str) -> dict[str, Any]:
         return _pi_ui_bridge.get_ui_state(self, session_id)

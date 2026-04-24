@@ -2833,6 +2833,8 @@ class TestPiBackendRouting(unittest.TestCase):
             ) -> dict[str, object]:
                 if req["cmd"] == "state":
                     return {"busy": True, "queue_len": 2, "token": None}
+                if req["cmd"] == "session_stats":
+                    return {}
                 if req["cmd"] == "ui_state":
                     return {
                         "requests": [
@@ -2904,6 +2906,8 @@ class TestPiBackendRouting(unittest.TestCase):
             ) -> dict[str, object]:
                 if req["cmd"] == "state":
                     return {"busy": True, "queue_len": 2, "token": None}
+                if req["cmd"] == "session_stats":
+                    return {}
                 if req["cmd"] == "ui_state":
                     return {
                         "requests": [
@@ -2964,6 +2968,8 @@ class TestPiBackendRouting(unittest.TestCase):
             ) -> dict[str, object]:
                 if req["cmd"] == "state":
                     return {"busy": True, "queue_len": 0, "token": None}
+                if req["cmd"] == "session_stats":
+                    return {}
                 if req["cmd"] == "ui_state":
                     return {"requests": []}
                 if req["cmd"] == "live_messages":
@@ -3021,6 +3027,7 @@ class TestPiBackendRouting(unittest.TestCase):
             )
             mgr.refresh_session_meta = lambda *_args, **_kwargs: None  # type: ignore[method-assign]
             mgr.get_state = lambda *_args, **_kwargs: {"busy": True, "queue_len": 0, "token": None}  # type: ignore[method-assign]
+            mgr.get_session_stats = lambda *_args, **_kwargs: {}  # type: ignore[method-assign]
             mgr.get_ui_state = lambda *_args, **_kwargs: {"requests": []}  # type: ignore[method-assign]
             mgr.get_messages_page = lambda *_args, **_kwargs: {
                 "thread_id": "pi-thread-001",
@@ -3080,6 +3087,7 @@ class TestPiBackendRouting(unittest.TestCase):
             )
             mgr.refresh_session_meta = lambda *_args, **_kwargs: None  # type: ignore[method-assign]
             mgr.get_state = lambda *_args, **_kwargs: {"busy": True, "queue_len": 0, "token": None}  # type: ignore[method-assign]
+            mgr.get_session_stats = lambda *_args, **_kwargs: {}  # type: ignore[method-assign]
             mgr.get_ui_state = lambda *_args, **_kwargs: {"requests": []}  # type: ignore[method-assign]
             mgr.get_messages_page = lambda *_args, **_kwargs: {
                 "thread_id": "pi-thread-001",
@@ -3139,6 +3147,7 @@ class TestPiBackendRouting(unittest.TestCase):
             )
             mgr.refresh_session_meta = lambda *_args, **_kwargs: None  # type: ignore[method-assign]
             mgr.get_state = lambda *_args, **_kwargs: {"busy": True, "queue_len": 0, "token": None}  # type: ignore[method-assign]
+            mgr.get_session_stats = lambda *_args, **_kwargs: {}  # type: ignore[method-assign]
             mgr.get_ui_state = lambda *_args, **_kwargs: {"requests": []}  # type: ignore[method-assign]
             mgr.get_messages_page = lambda *_args, **_kwargs: {
                 "thread_id": "pi-thread-001",
@@ -3203,6 +3212,8 @@ class TestPiBackendRouting(unittest.TestCase):
             ) -> dict[str, object]:
                 if req["cmd"] == "state":
                     return {"busy": True, "queue_len": 0, "token": None}
+                if req["cmd"] == "session_stats":
+                    return {}
                 if req["cmd"] == "ui_state":
                     return {"requests": []}
                 if req["cmd"] == "live_messages":
@@ -3251,7 +3262,7 @@ class TestPiBackendRouting(unittest.TestCase):
             ],
         )
 
-    def test_session_live_payload_falls_back_to_pi_session_file_for_context_usage(
+    def test_session_live_payload_leaves_context_usage_unknown_without_native_session_stats(
         self,
     ) -> None:
         mgr = _make_manager()
@@ -3299,6 +3310,8 @@ class TestPiBackendRouting(unittest.TestCase):
             ) -> dict[str, object]:
                 if req["cmd"] == "state":
                     return {"busy": True, "queue_len": 0, "token": None}
+                if req["cmd"] == "session_stats":
+                    return {}
                 if req["cmd"] == "ui_state":
                     return {"requests": []}
                 if req["cmd"] == "live_messages":
@@ -3319,12 +3332,9 @@ class TestPiBackendRouting(unittest.TestCase):
             payload = _session_live_payload(mgr, "pi-session", offset=0)
 
         self.assertEqual(payload["token"]["tokens_in_context"], 196077)
-        self.assertEqual(
-            payload["context_usage"],
-            {"used_tokens": 196077, "total_tokens": 272000, "percent_used": 72},
-        )
+        self.assertIsNone(payload["context_usage"])
 
-    def test_session_live_payload_allows_context_usage_above_window(self) -> None:
+    def test_session_live_payload_uses_native_session_stats_for_context_usage(self) -> None:
         mgr = _make_manager()
         with tempfile.TemporaryDirectory() as td:
             sock = Path(td) / "pi.sock"
@@ -3370,6 +3380,14 @@ class TestPiBackendRouting(unittest.TestCase):
             ) -> dict[str, object]:
                 if req["cmd"] == "state":
                     return {"busy": True, "queue_len": 0, "token": None}
+                if req["cmd"] == "session_stats":
+                    return {
+                        "contextUsage": {
+                            "tokens": 283891,
+                            "contextWindow": 272000,
+                            "percent": 104,
+                        }
+                    }
                 if req["cmd"] == "ui_state":
                     return {"requests": []}
                 if req["cmd"] == "live_messages":
@@ -3445,6 +3463,8 @@ class TestPiBackendRouting(unittest.TestCase):
             ) -> dict[str, object]:
                 if req["cmd"] == "state":
                     return {"busy": False, "queue_len": 0, "token": None}
+                if req["cmd"] == "session_stats":
+                    return {}
                 if req["cmd"] == "ui_state":
                     return {"requests": []}
                 if req["cmd"] == "live_messages":
@@ -3551,6 +3571,8 @@ class TestPiBackendRouting(unittest.TestCase):
             ) -> dict[str, object]:
                 if req["cmd"] == "state":
                     return {"busy": True, "queue_len": 0, "token": None}
+                if req["cmd"] == "session_stats":
+                    return {}
                 if req["cmd"] == "ui_state":
                     return {"requests": []}
                 if req["cmd"] == "live_messages":
@@ -3630,6 +3652,8 @@ class TestPiBackendRouting(unittest.TestCase):
             ) -> dict[str, object]:
                 if req["cmd"] == "state":
                     return {"busy": True, "queue_len": 0, "token": None}
+                if req["cmd"] == "session_stats":
+                    return {}
                 if req["cmd"] == "ui_state":
                     return {"requests": []}
                 if req["cmd"] == "live_messages":
@@ -3699,6 +3723,8 @@ class TestPiBackendRouting(unittest.TestCase):
             ) -> dict[str, object]:
                 if req["cmd"] == "state":
                     return {"busy": True, "queue_len": 0, "token": None}
+                if req["cmd"] == "session_stats":
+                    return {}
                 if req["cmd"] == "ui_state":
                     return {"requests": []}
                 if req["cmd"] == "live_messages":
@@ -3856,7 +3882,60 @@ class TestPiBackendRouting(unittest.TestCase):
         self.assertNotIn("events", payload)
         self.assertNotIn("requests", payload)
 
-    def test_workspace_diagnostics_fall_back_to_pi_session_file_token_update(self) -> None:
+    def test_workspace_diagnostics_do_not_fallback_to_cached_pi_run_settings(self) -> None:
+        handler = _HandlerHarness("/api/sessions/pi-session/workspace")
+        with tempfile.TemporaryDirectory() as td:
+            session = Session(
+                session_id="pi-session",
+                thread_id="pi-thread-001",
+                agent_backend="pi",
+                backend="pi",
+                broker_pid=3333,
+                codex_pid=4444,
+                owned=True,
+                start_ts=123.0,
+                cwd=td,
+                log_path=None,
+                sock_path=Path(td) / "pi.sock",
+                session_path=Path(td) / "pi-session.jsonl",
+                model_provider="openai",
+                model="gpt-5.4",
+                reasoning_effort="high",
+            )
+
+            with (
+                patch("codoxear.server._require_auth", return_value=True),
+                patch("codoxear.server.MANAGER") as manager,
+                patch("codoxear.server._current_git_branch", return_value=None),
+                patch(
+                    "codoxear.server._pi_messages.read_latest_pi_todo_snapshot",
+                    return_value=None,
+                ),
+            ):
+                manager.refresh_session_meta.return_value = None
+                manager.get_session.return_value = session
+                manager.get_state.return_value = {
+                    "busy": False,
+                    "queue_len": 1,
+                    "token": None,
+                }
+                manager.get_session_stats.return_value = {}
+                manager._queue_len.return_value = 1
+                manager.queue_list.return_value = []
+                manager.sidebar_meta_get.return_value = {
+                    "priority_offset": 0.0,
+                    "snooze_until": None,
+                    "dependency_session_id": None,
+                }
+
+                Handler.do_GET(handler)  # type: ignore[arg-type]
+
+        payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
+        self.assertIsNone(payload["diagnostics"]["model_provider"])
+        self.assertIsNone(payload["diagnostics"]["model"])
+        self.assertIsNone(payload["diagnostics"]["reasoning_effort"])
+
+    def test_workspace_diagnostics_leave_context_usage_unknown_without_native_session_stats(self) -> None:
         handler = _HandlerHarness("/api/sessions/pi-session/workspace")
         with tempfile.TemporaryDirectory() as td:
             session_path = Path(td) / "pi-session.jsonl"
@@ -3908,6 +3987,7 @@ class TestPiBackendRouting(unittest.TestCase):
                     "queue_len": 1,
                     "token": None,
                 }
+                manager.get_session_stats.return_value = {}
                 manager._queue_len.return_value = 1
                 manager.queue_list.return_value = ["Queued follow-up"]
                 manager.sidebar_meta_get.return_value = {
@@ -3919,12 +3999,9 @@ class TestPiBackendRouting(unittest.TestCase):
                 Handler.do_GET(handler)  # type: ignore[arg-type]
 
         payload = json.loads(handler.wfile.getvalue().decode("utf-8"))
-        self.assertEqual(
-            payload["diagnostics"]["context_usage"],
-            {"used_tokens": 196077, "total_tokens": 272000, "percent_used": 72},
-        )
+        self.assertIsNone(payload["diagnostics"]["context_usage"])
 
-    def test_workspace_diagnostics_allow_context_usage_above_window(self) -> None:
+    def test_workspace_diagnostics_use_native_session_stats_for_context_usage(self) -> None:
         handler = _HandlerHarness("/api/sessions/pi-session/workspace")
         with tempfile.TemporaryDirectory() as td:
             session_path = Path(td) / "pi-session.jsonl"
@@ -3975,6 +4052,13 @@ class TestPiBackendRouting(unittest.TestCase):
                     "busy": False,
                     "queue_len": 1,
                     "token": None,
+                }
+                manager.get_session_stats.return_value = {
+                    "contextUsage": {
+                        "tokens": 283891,
+                        "contextWindow": 272000,
+                        "percent": 104,
+                    }
                 }
                 manager._queue_len.return_value = 1
                 manager.queue_list.return_value = ["Queued follow-up"]
@@ -4043,6 +4127,8 @@ class TestPiBackendRouting(unittest.TestCase):
             ) -> dict[str, object]:
                 if req["cmd"] == "state":
                     return {"busy": False, "queue_len": 0, "token": None}
+                if req["cmd"] == "session_stats":
+                    return {}
                 if req["cmd"] == "ui_state":
                     return {
                         "requests": [
