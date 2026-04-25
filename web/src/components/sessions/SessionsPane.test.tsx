@@ -412,6 +412,61 @@ describe("SessionsPane", () => {
     expect(sessionsStore.select).toHaveBeenCalledWith("sess-2");
   });
 
+  it("prefers the returned durable handoff session id over runtime id", async () => {
+    vi.mocked(api.handoffSession).mockResolvedValue({
+      ok: true,
+      session_id: "dur-new",
+      runtime_id: "rt-new",
+      broker_pid: 333,
+      backend: "pi",
+    } as any);
+
+    const composerStore = {
+      getState: () => ({ draftBySessionId: { "sess-1": "keep draft" }, sending: false, pendingBySessionId: {} }),
+      subscribe: () => () => undefined,
+      setDraft: vi.fn(),
+      copyDraft: vi.fn(),
+      submit: vi.fn(),
+      clearAcknowledgedPending: vi.fn(),
+    };
+    const sessionsStore = renderSessionsPane({
+      items: [{ session_id: "sess-1", alias: "Inbox cleanup", cwd: "/tmp/project", agent_backend: "pi", runtime_id: "rt-1" }],
+      activeSessionId: "sess-1",
+      loading: false,
+      newSessionDefaults: null,
+      recentCwds: ["/tmp/project"],
+      cwdGroups: {},
+      tmuxAvailable: true,
+    }, {
+      composerStore,
+    });
+
+    sessionsStore.refresh = vi.fn(async () => {
+      sessionsStore.setState({
+        ...sessionsStore.getState(),
+        items: [
+          { session_id: "dur-new", alias: "Inbox cleanup", cwd: "/tmp/project", agent_backend: "pi", runtime_id: "rt-new" },
+          { session_id: "rt-new", alias: "stale runtime row", cwd: "/tmp/project", agent_backend: "pi", runtime_id: "rt-old-shadow" },
+        ],
+      });
+    });
+
+    await openSessionMenu();
+    const handoffAction = Array.from(root?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') || []).find((button) => button.textContent?.includes("Handoff"));
+    expect(handoffAction).toBeDefined();
+    await click(handoffAction!);
+    await flush();
+
+    const confirmButton = Array.from(root?.querySelectorAll<HTMLButtonElement>("button") || []).find((button) => button.textContent?.includes("Handoff session"));
+    expect(confirmButton).toBeDefined();
+    await click(confirmButton!);
+    await flush();
+
+    expect(composerStore.copyDraft).toHaveBeenCalledWith("sess-1", "dur-new");
+    expect(sessionsStore.select).toHaveBeenCalledWith("dur-new");
+    expect(sessionsStore.select).not.toHaveBeenCalledWith("rt-new");
+  });
+
   it("duplicates a session from details and selects returned session", async () => {
     vi.mocked(api.getSessionDetails).mockResolvedValue({
       ok: true,
