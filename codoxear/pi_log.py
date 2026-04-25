@@ -392,7 +392,16 @@ def _scan_pi_run_settings_range(
     return provider, model, thinking_level
 
 
-def read_pi_run_settings(path: Path, *, max_scan_bytes: int = 8 * 1024 * 1024) -> tuple[str | None, str | None, str | None]:
+@functools.lru_cache(maxsize=512)
+def _read_pi_run_settings_cached(
+    path_str: str,
+    *,
+    max_scan_bytes: int,
+    size: int,
+    mtime_ns: int,
+) -> tuple[str | None, str | None, str | None]:
+    del mtime_ns
+    path = Path(path_str)
     provider: str | None = None
     model: str | None = None
     thinking_level: str | None = None
@@ -409,35 +418,43 @@ def read_pi_run_settings(path: Path, *, max_scan_bytes: int = 8 * 1024 * 1024) -
         if isinstance(raw_thinking, str) and raw_thinking.strip():
             thinking_level = raw_thinking
 
-    try:
-        size = int(path.stat().st_size)
-    except FileNotFoundError:
-        return provider, model, thinking_level
-    except Exception:
-        return provider, model, thinking_level
-
     head_scan_bytes = min(size, 256 * 1024)
     tail_scan_bytes = min(size, int(max_scan_bytes))
     tail_start = max(head_scan_bytes, size - tail_scan_bytes)
     tail_limit_bytes = max(0, size - tail_start)
-    try:
+    provider, model, thinking_level = _scan_pi_run_settings_range(
+        path,
+        start=0,
+        limit_bytes=head_scan_bytes,
+        provider=provider,
+        model=model,
+        thinking_level=thinking_level,
+    )
+    if tail_limit_bytes > 0:
         provider, model, thinking_level = _scan_pi_run_settings_range(
             path,
-            start=0,
-            limit_bytes=head_scan_bytes,
+            start=tail_start,
+            limit_bytes=tail_limit_bytes,
             provider=provider,
             model=model,
             thinking_level=thinking_level,
         )
-        if tail_limit_bytes > 0:
-            provider, model, thinking_level = _scan_pi_run_settings_range(
-                path,
-                start=tail_start,
-                limit_bytes=tail_limit_bytes,
-                provider=provider,
-                model=model,
-                thinking_level=thinking_level,
-            )
-    except FileNotFoundError:
-        return provider, model, thinking_level
     return provider, model, thinking_level
+
+
+def read_pi_run_settings(path: Path, *, max_scan_bytes: int = 8 * 1024 * 1024) -> tuple[str | None, str | None, str | None]:
+    try:
+        stat = path.stat()
+    except FileNotFoundError:
+        return None, None, None
+    except Exception:
+        return None, None, None
+    try:
+        return _read_pi_run_settings_cached(
+            str(path.resolve()),
+            max_scan_bytes=int(max_scan_bytes),
+            size=int(stat.st_size),
+            mtime_ns=int(stat.st_mtime_ns),
+        )
+    except FileNotFoundError:
+        return None, None, None

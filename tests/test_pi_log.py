@@ -2,7 +2,9 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
+import codoxear.pi_log as _pi_log
 from codoxear.pi_log import pi_model_context_window
 from codoxear.pi_log import read_pi_run_settings
 from codoxear.pi_messages import read_pi_message_tail_snapshot
@@ -127,6 +129,33 @@ class TestPiLogRunSettings(unittest.TestCase):
                 }) + "\n")
 
             self.assertEqual(read_pi_run_settings(path), ("openai", "gpt-5.4", "high"))
+
+    def test_read_pi_run_settings_reuses_cached_scan_for_unchanged_file(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "session.jsonl"
+            path.write_text(
+                "\n".join([
+                    json.dumps({
+                        "type": "session",
+                        "version": 3,
+                        "id": "sess-1",
+                        "timestamp": "2026-04-16T14:45:09.869Z",
+                        "cwd": "/tmp/project",
+                        "provider": "openai",
+                        "modelId": "gpt-5.4",
+                        "thinkingLevel": "high",
+                    }),
+                    json.dumps({"type": "model_change", "provider": "openai", "modelId": "gpt-5.4"}),
+                    "",
+                ]),
+                encoding="utf-8",
+            )
+            with patch("codoxear.pi_log._scan_pi_run_settings_range", wraps=_pi_log._scan_pi_run_settings_range) as scan:
+                self.assertEqual(read_pi_run_settings(path), ("openai", "gpt-5.4", "high"))
+                first_calls = scan.call_count
+                self.assertGreater(first_calls, 0)
+                self.assertEqual(read_pi_run_settings(path), ("openai", "gpt-5.4", "high"))
+                self.assertEqual(scan.call_count, first_calls)
 
     def test_read_pi_message_tail_snapshot_returns_latest_token_usage(self) -> None:
         with tempfile.TemporaryDirectory() as td:
