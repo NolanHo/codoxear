@@ -263,11 +263,37 @@ def _insert_event_by_ts(
 
 
 
+def _collapse_bridge_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    latest_by_event_id: dict[str, dict[str, Any]] = {}
+    ordered: list[dict[str, Any]] = []
+    for event in events:
+        event_id = str(event.get("event_id") or "").strip()
+        if not event_id:
+            ordered.append(event)
+            continue
+        latest_by_event_id[event_id] = event
+    emitted_event_ids: set[str] = set()
+    collapsed: list[dict[str, Any]] = []
+    for event in events:
+        event_id = str(event.get("event_id") or "").strip()
+        if not event_id:
+            collapsed.append(event)
+            continue
+        if event_id in emitted_event_ids:
+            continue
+        latest = latest_by_event_id.get(event_id)
+        if latest is None:
+            continue
+        collapsed.append(latest)
+        emitted_event_ids.add(event_id)
+    return collapsed
+
+
 def merge_events_by_ts(
     durable_events: list[dict[str, Any]], events: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
     merged = list(durable_events)
-    for event in events:
+    for event in _collapse_bridge_events(events):
         _insert_event_by_ts(merged, event)
     return merged
 

@@ -15,6 +15,7 @@ from typing import Any, cast
 from unittest.mock import ANY, Mock, patch
 
 from codoxear import pi_messages, server
+from codoxear.page_state_sqlite import DurableSessionRecord, PageStateDB
 from codoxear.runtime import build_server_runtime
 from codoxear.server import (
     Handler,
@@ -1650,11 +1651,25 @@ class TestPiBackendRouting(unittest.TestCase):
             mgr.catalog_record_for_ref = (
                 lambda _ref: SimpleNamespace(title="")
             )  # type: ignore[method-assign]
-            mgr._page_state_db = SimpleNamespace(
-                load_sessions=lambda: {("pi", "pi-thread-001"): SimpleNamespace(title="xbot")}
+            db = PageStateDB(Path(td) / "state.sqlite")
+            db.save_sessions(
+                {
+                    ("pi", "pi-thread-001"): DurableSessionRecord(
+                        backend="pi",
+                        session_id="pi-thread-001",
+                        cwd=td,
+                        source_path=None,
+                        title="xbot",
+                        first_user_message=None,
+                        created_at=100.0,
+                        updated_at=100.0,
+                    )
+                }
             )
+            mgr._page_state_db = db
 
             row = mgr.list_sessions()[0]
+            db.close()
 
         self.assertEqual(row["title"], "xbot")
 
@@ -2084,6 +2099,11 @@ class TestPiBackendRouting(unittest.TestCase):
         self.assertEqual(handler.status, 200)
         self.assertTrue(body["accepted"])
         self.assertEqual(body["delivery_state"], "queued")
+        bridge_events = mgr._bridge_events.get("pi-thread-001", [])
+        self.assertTrue(bridge_events)
+        self.assertEqual(bridge_events[0]["event"]["role"], "user")
+        self.assertEqual(bridge_events[0]["event"]["request_state"], "queued")
+        self.assertTrue(bool(bridge_events[0]["event"]["pending"]))
         mgr._maybe_drain_outbound_request("pi-session")
         bridge_events = mgr._bridge_events.get("pi-thread-001", [])
         self.assertTrue(bridge_events)
@@ -2128,6 +2148,64 @@ class TestPiBackendRouting(unittest.TestCase):
             self.assertTrue(session_path.exists())
             s = mgr._sessions["pi-session"]
             self.assertTrue(isinstance(s.pi_busy_activity_floor, float))
+
+    def test_live_payload_collapses_bridge_updates_for_same_request(self) -> None:
+        mgr = _make_manager()
+        with tempfile.TemporaryDirectory() as td:
+            session_path = Path(td) / "pi-session.jsonl"
+            sock = Path(td) / "pi.sock"
+            sock.touch()
+            mgr._sessions["pi-session"] = Session(
+                session_id="pi-session",
+                thread_id="pi-thread-001",
+                agent_backend="pi",
+                backend="pi",
+                broker_pid=os.getpid(),
+                codex_pid=os.getpid(),
+                owned=True,
+                start_ts=123.0,
+                cwd=td,
+                log_path=None,
+                sock_path=sock,
+                session_path=session_path,
+                busy=False,
+                transport="pi-rpc",
+                supports_live_ui=True,
+                ui_protocol_version=1,
+            )
+            compacting = True
+
+            def _sock_call(
+                _sock: Path, req: dict[str, object], timeout_s: float = 0.0
+            ) -> dict[str, object]:
+                if req.get("cmd") == "send":
+                    return {"busy": True, "queue_len": 0, "token": None}
+                if req.get("cmd") == "live_messages":
+                    return {"offset": 0, "events": []}
+                return {
+                    "busy": False,
+                    "queue_len": 0,
+                    "token": None,
+                    "isCompacting": compacting,
+                }
+
+            mgr._sock_call = _sock_call  # type: ignore[method-assign]
+            mgr.get_messages_page = lambda *_args, **_kwargs: {  # type: ignore[method-assign]
+                "events": [],
+                "offset": 0,
+                "has_older": False,
+                "next_before": 0,
+            }
+
+            res = mgr.send("pi-session", "hello queued")
+            self.assertTrue(bool(res.get("accepted")))
+            mgr._maybe_drain_outbound_request("pi-session")
+            payload = _session_live_payload(mgr, "pi-session")
+
+        user_events = [event for event in payload["events"] if event.get("role") == "user"]
+        self.assertEqual(len(user_events), 1)
+        self.assertEqual(user_events[0]["request_state"], "buffered")
+        self.assertTrue(bool(user_events[0]["bridge_pseudo"]))
 
     def test_send_waits_for_pi_compaction_before_bridge_delivery(self) -> None:
         mgr = _make_manager()

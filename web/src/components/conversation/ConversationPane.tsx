@@ -527,6 +527,73 @@ function eventKind(event: MessageEvent): string {
   return typeof event.type === "string" && event.type ? event.type : "event";
 }
 
+function isBridgePseudoUserEvent(event: MessageEvent): boolean {
+  return event.role === "user" && event.bridge_pseudo === true;
+}
+
+function filterResolvedBridgePseudoEvents(events: MessageEvent[]): MessageEvent[] {
+  const pendingBridgeEvents = events.filter(isBridgePseudoUserEvent);
+  if (!pendingBridgeEvents.length) {
+    return events;
+  }
+
+  const durableUserTexts = events
+    .filter((event) => event.role === "user" && !isBridgePseudoUserEvent(event) && typeof event.text === "string")
+    .map((event) => String(event.text));
+  const failedRequestIds = new Set(
+    events
+      .filter((event) => typeof event.request_id === "string" && event.request_state === "failed")
+      .map((event) => String(event.request_id)),
+  );
+  const failedTexts = new Set(
+    events
+      .filter((event) => event.request_state === "failed" && typeof event.pending_text === "string")
+      .map((event) => String(event.pending_text)),
+  );
+
+  const acknowledgedEventIds = new Set<string>();
+  let durableIdx = durableUserTexts.length - 1;
+  let pendingIdx = pendingBridgeEvents.length - 1;
+  while (durableIdx >= 0 && pendingIdx >= 0) {
+    const pendingText = typeof pendingBridgeEvents[pendingIdx]?.text === "string"
+      ? String(pendingBridgeEvents[pendingIdx].text)
+      : "";
+    if (durableUserTexts[durableIdx] === pendingText) {
+      const eventId = String(pendingBridgeEvents[pendingIdx]?.event_id || "").trim();
+      if (eventId) {
+        acknowledgedEventIds.add(eventId);
+      }
+      pendingIdx -= 1;
+    }
+    durableIdx -= 1;
+  }
+
+  for (const event of pendingBridgeEvents) {
+    const eventId = String(event.event_id || "").trim();
+    if (!eventId) {
+      continue;
+    }
+    if (event.request_state === "failed" || event.resolved === true) {
+      acknowledgedEventIds.add(eventId);
+      continue;
+    }
+    if ((typeof event.request_id === "string" && failedRequestIds.has(String(event.request_id))) || (typeof event.text === "string" && failedTexts.has(String(event.text)))) {
+      acknowledgedEventIds.add(eventId);
+    }
+  }
+
+  if (!acknowledgedEventIds.size) {
+    return events;
+  }
+  return events.filter((event) => {
+    if (!isBridgePseudoUserEvent(event)) {
+      return true;
+    }
+    const eventId = String(event.event_id || "").trim();
+    return !eventId || !acknowledgedEventIds.has(eventId);
+  });
+}
+
 function shouldRenderInMainConversation(event: MessageEvent): boolean {
   const kind = eventKind(event);
   if (MAIN_TIMELINE_KINDS.has(kind)) {
@@ -814,6 +881,20 @@ function CopyMessageIcon() {
   );
 }
 
+function pendingUserSummary(event: MessageEvent): string | undefined {
+  if (event.role !== "user" || event.pending !== true) {
+    return undefined;
+  }
+  const state = String(event.request_state || "").trim().toLowerCase();
+  if (state === "sending") {
+    return "Sending";
+  }
+  if (state === "buffered") {
+    return "Buffered";
+  }
+  return "Queued";
+}
+
 function ChatMessageCard({
   event,
   kind,
@@ -825,6 +906,7 @@ function ChatMessageCard({
 }) {
   const label = kind === "user" ? "You" : "Assistant";
   const text = contentTextFromMessage(event);
+  const summary = kind === "user" ? pendingUserSummary(event) : undefined;
   const [copied, setCopied] = useState(false);
   const resetTimerRef = useRef<number | null>(null);
 
@@ -851,7 +933,7 @@ function ChatMessageCard({
 
   return (
     <MessageSurface kind={kind}>
-      {renderCardHeader(kind, label, undefined, event.ts)}
+      {renderCardHeader(kind, label, summary, event.ts)}
       {renderRichText(text, "messageBody", options)}
       <div className="messageBubbleActions">
         <button
@@ -2131,7 +2213,7 @@ export function ConversationPane({ onOpenFilePath }: ConversationPaneProps) {
   const pendingMessages = activeSessionId ? pendingBySessionId[activeSessionId] ?? [] : [];
   const hasLocalConversationState = persistedMessages.length > 0 || pendingMessages.length > 0;
   const rawMessages = [...persistedMessages, ...pendingMessages];
-  const messages = sortEventsByTimestamp(rawMessages.filter(shouldRenderInMainConversation));
+  const messages = sortEventsByTimestamp(filterResolvedBridgePseudoEvents(rawMessages).filter(shouldRenderInMainConversation));
   const rows = messages.reduce<Array<{
     key: string;
     kind: string;

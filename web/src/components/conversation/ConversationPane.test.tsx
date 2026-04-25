@@ -2552,7 +2552,66 @@ describe("ConversationPane", () => {
     const text = root.textContent || "";
     expect(text).toContain("Working on it");
     expect(text).toContain("Please continue");
+    expect(text).toContain("Queued");
     expect(root.querySelectorAll("[data-testid='message-surface'][data-kind='user']")).toHaveLength(1);
+  });
+
+  it("renders server-backed bridge pseudo user messages and hides them after durable ack", () => {
+    const sessionsStore = createStaticStore(
+      { items: [{ session_id: "sess-pending", agent_backend: "pi" }], activeSessionId: "sess-pending", loading: false, newSessionDefaults: null },
+      { refresh: () => Promise.resolve(), select: () => undefined },
+    );
+    const pendingMessagesStore = createStaticStore(
+      {
+        bySessionId: {
+          "sess-pending": [
+            { role: "user", text: "Please continue", pending: true, bridge_pseudo: true, event_id: "bridge-outbound:req-1", request_id: "req-1", request_state: "queued" },
+            { role: "assistant", text: "Working on it" },
+          ],
+        },
+        offsetsBySessionId: { "sess-pending": 2 },
+        loading: false,
+      },
+      { loadInitial: () => Promise.resolve(), poll: () => Promise.resolve(), loadOlder: () => Promise.resolve() },
+    );
+
+    root = document.createElement("div");
+    document.body.appendChild(root);
+    render(
+      <AppProviders sessionsStore={sessionsStore as any} messagesStore={pendingMessagesStore as any}>
+        <ConversationPane />
+      </AppProviders>,
+      root,
+    );
+
+    expect(root.textContent).toContain("Please continue");
+    expect(root.textContent).toContain("Queued");
+
+    const ackedMessagesStore = createStaticStore(
+      {
+        bySessionId: {
+          "sess-pending": [
+            { role: "user", text: "Please continue" },
+            { role: "user", text: "Please continue", pending: true, bridge_pseudo: true, event_id: "bridge-outbound:req-1", request_id: "req-1", request_state: "queued" },
+            { role: "assistant", text: "Working on it" },
+          ],
+        },
+        offsetsBySessionId: { "sess-pending": 3 },
+        loading: false,
+      },
+      { loadInitial: () => Promise.resolve(), poll: () => Promise.resolve(), loadOlder: () => Promise.resolve() },
+    );
+
+    render(
+      <AppProviders sessionsStore={sessionsStore as any} messagesStore={ackedMessagesStore as any}>
+        <ConversationPane />
+      </AppProviders>,
+      root,
+    );
+
+    const userSurfaces = root.querySelectorAll("[data-testid='message-surface'][data-kind='user']");
+    expect(userSurfaces).toHaveLength(1);
+    expect(root.textContent).not.toContain("Queued");
   });
 
   it("inserts day separators when consecutive messages cross calendar days", () => {

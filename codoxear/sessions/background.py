@@ -186,6 +186,24 @@ def probe_bridge_transport(
     return "alive", None
 
 
+def _outbound_request_event_id(request: Any) -> str:
+    return f"bridge-outbound:{request.request_id}"
+
+
+def _pending_outbound_request_event(request: Any, *, state: str) -> dict[str, Any]:
+    return {
+        "event_id": _outbound_request_event_id(request),
+        "role": "user",
+        "text": request.text,
+        "pending": True,
+        "bridge_pseudo": True,
+        "request_id": request.request_id,
+        "request_state": state,
+        "pending_text": request.text,
+        "ts": request.created_ts,
+    }
+
+
 def enqueue_outbound_request(manager: Any, runtime_id: str, text: str):
     sv = _runtime(manager)
     with manager._lock:
@@ -205,6 +223,10 @@ def enqueue_outbound_request(manager: Any, runtime_id: str, text: str):
             created_ts=sv.api.time.time(),
         )
         requests_by_runtime.setdefault(runtime_id, []).append(request)
+    manager.append_bridge_event(
+        request.durable_session_id,
+        _pending_outbound_request_event(request, state="queued"),
+    )
     queue_wakeup = getattr(manager, "_queue_wakeup", None)
     if isinstance(queue_wakeup, threading.Event):
         queue_wakeup.set()
@@ -213,6 +235,14 @@ def enqueue_outbound_request(manager: Any, runtime_id: str, text: str):
 
 def fail_outbound_request(manager: Any, request: Any, error: str) -> None:
     sv = _runtime(manager)
+    manager.append_bridge_event(
+        request.durable_session_id,
+        {
+            **_pending_outbound_request_event(request, state="failed"),
+            "pending": False,
+            "resolved": True,
+        },
+    )
     event = {
         "type": "pi_event",
         "summary": "Bridge send failed",
@@ -231,6 +261,10 @@ def mark_outbound_request_buffered_for_compaction(manager: Any, request: Any) ->
     if request.state == "buffered":
         return
     request.state = "buffered"
+    manager.append_bridge_event(
+        request.durable_session_id,
+        _pending_outbound_request_event(request, state="buffered"),
+    )
     event = {
         "type": "pi_event",
         "summary": "Bridge buffered prompt during compaction",
@@ -302,6 +336,10 @@ def maybe_drain_outbound_request(manager: Any, runtime_id: str) -> bool:
     request.state = "sending"
     request.attempts += 1
     request.last_attempt_ts = sv.api.time.time()
+    manager.append_bridge_event(
+        request.durable_session_id,
+        _pending_outbound_request_event(request, state="sending"),
+    )
     try:
         resp = manager.sock_call(
             session.sock_path,

@@ -264,6 +264,8 @@ export interface MessageEvent {
   prompt_fallback_available?: boolean;
   streaming?: boolean;
   completed?: boolean;
+  pending?: boolean;
+  bridge_pseudo?: boolean;
   stream_id?: string;
   turn_id?: string;
   event_id?: string;
