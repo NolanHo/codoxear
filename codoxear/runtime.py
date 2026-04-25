@@ -30,8 +30,20 @@ def _module_attr(module: ModuleType, name: str) -> Any:
     raise AttributeError(name)
 
 
-def _route_modules(module: ModuleType, names: tuple[str, ...]) -> tuple[Any, ...]:
-    return tuple(_module_attr(module, name) for name in names)
+def _route_modules(
+    module: ModuleType,
+    names: tuple[str, ...],
+    *,
+    required: bool,
+) -> tuple[Any, ...]:
+    route_modules: list[Any] = []
+    for name in names:
+        try:
+            route_modules.append(_module_attr(module, name))
+        except AttributeError:
+            if required:
+                raise
+    return tuple(route_modules)
 
 
 class RuntimeApi:
@@ -76,6 +88,7 @@ def build_server_runtime(
     manager: Any,
     event_hub: Any,
     api: RuntimeApi | None = None,
+    require_route_modules: bool = False,
 ) -> ServerRuntime:
     resolved_api = api
     if resolved_api is None:
@@ -87,6 +100,10 @@ def build_server_runtime(
         _manager=manager,
         event_hub=event_hub,
         api=resolved_api,
-        get_route_modules=_route_modules(module, _GET_ROUTE_MODULE_ATTRS),
-        post_route_modules=_route_modules(module, _POST_ROUTE_MODULE_ATTRS),
+        get_route_modules=_route_modules(
+            module, _GET_ROUTE_MODULE_ATTRS, required=require_route_modules
+        ),
+        post_route_modules=_route_modules(
+            module, _POST_ROUTE_MODULE_ATTRS, required=require_route_modules
+        ),
     )

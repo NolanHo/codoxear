@@ -1,8 +1,10 @@
+import sys
 import types
 import unittest
 
 from codoxear.runtime import RuntimeApi, build_server_runtime
 from codoxear.runtime_api_exports import RUNTIME_API_EXPORTS
+from codoxear.sessions.runtime_access import manager_runtime
 
 
 class TestRuntimeApiSurface(unittest.TestCase):
@@ -47,6 +49,30 @@ class TestRuntimeApiSurface(unittest.TestCase):
         self.assertEqual(runtime.api.static_dir, "/tmp/static")
         with self.assertRaises(AttributeError):
             _ = runtime.api.http_assets_routes
+
+    def test_manager_runtime_fallback_allows_modules_without_route_attrs(self) -> None:
+        module = types.ModuleType("fake_manager_runtime_module")
+        module.EVENT_HUB = object()
+        module.static_dir = "/tmp/static"
+        module._build_runtime_api = lambda: RuntimeApi(module, exports=("static_dir",))
+
+        manager_cls = type("ExternalManager", (), {"__module__": module.__name__})
+        manager = manager_cls()
+        original_module = sys.modules.get(module.__name__)
+        sys.modules[module.__name__] = module
+        try:
+            runtime = manager_runtime(manager)
+            self.assertIs(manager._runtime, runtime)
+            self.assertIs(manager_runtime(manager), runtime)
+        finally:
+            if original_module is None:
+                sys.modules.pop(module.__name__, None)
+            else:
+                sys.modules[module.__name__] = original_module
+
+        self.assertEqual(runtime.api.static_dir, "/tmp/static")
+        self.assertEqual(runtime.get_route_modules, ())
+        self.assertEqual(runtime.post_route_modules, ())
 
     def test_runtime_api_exports_exclude_route_modules(self) -> None:
         for name in (

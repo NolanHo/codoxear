@@ -1795,6 +1795,7 @@ class SessionManager(_manager_delegates.SessionManagerDelegates):
             manager=self,
             event_hub=EVENT_HUB,
             api=_build_runtime_api(),
+            require_route_modules=True,
         )
         globals()["MANAGER"] = self
         globals()["RUNTIME"] = self._runtime
