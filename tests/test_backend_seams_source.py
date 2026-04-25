@@ -16,10 +16,15 @@ class TestBackendSeamsSource(unittest.TestCase):
     def test_server_dispatches_http_routes_through_modules(self) -> None:
         source = SERVER.read_text(encoding="utf-8")
         runner = (ROOT / "http" / "server_runner.py").read_text(encoding="utf-8")
+        exports = (ROOT / "runtime_api_exports.py").read_text(encoding="utf-8")
         self.assertIn("from .http.routes import assets as _http_assets_routes", source)
         self.assertIn("from .http.routes import sessions_read as _http_session_read_routes", source)
+        self.assertIn("for route_module in runtime.get_route_modules", runner)
+        self.assertIn("for route_module in runtime.post_route_modules", runner)
         self.assertIn("route_module.handle_get(runtime, self, path, u)", runner)
         self.assertIn("route_module.handle_post(runtime, self, path, u)", runner)
+        self.assertNotIn('"http_assets_routes"', exports)
+        self.assertNotIn('"http_session_write_routes"', exports)
 
     def test_server_uses_payload_sidebar_and_pi_bridge_seams(self) -> None:
         source = SERVER.read_text(encoding="utf-8")

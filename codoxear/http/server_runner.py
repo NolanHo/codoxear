@@ -86,14 +86,7 @@ def make_handler(runtime: Any):
                         self.send_error(404)
                         return
                     path = stripped
-                for route_module in (
-                    runtime.api.http_assets_routes,
-                    runtime.api.http_auth_routes,
-                    runtime.api.http_events_routes,
-                    runtime.api.http_notification_routes,
-                    runtime.api.http_session_read_routes,
-                    runtime.api.http_file_routes,
-                ):
+                for route_module in runtime.get_route_modules:
                     if route_module.handle_get(runtime, self, path, u):
                         return
                 self.send_error(404)
@@ -123,12 +116,7 @@ def make_handler(runtime: Any):
                         self.send_error(404)
                         return
                     path = stripped
-                for route_module in (
-                    runtime.api.http_auth_routes,
-                    runtime.api.http_notification_routes,
-                    runtime.api.http_session_write_routes,
-                    runtime.api.http_file_routes,
-                ):
+                for route_module in runtime.post_route_modules:
                     if route_module.handle_post(runtime, self, path, u):
                         return
                 self.send_error(404)
