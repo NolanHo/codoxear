@@ -79,6 +79,20 @@ class TestSessionsReadGitRoutes(unittest.TestCase):
         self.assertEqual(facade.changed_files_calls, ["session-1"])
         self.assertEqual(handler.responses, [(200, {"ok": True, "files": ["tracked.py"]})])
 
+    def test_changed_files_route_rejects_unauthorized_requests(self) -> None:
+        facade = _Facade()
+        facade.require_auth_result = False
+        handler = _Handler()
+        u = urllib.parse.urlparse("/api/sessions/session-1/git/changed_files")
+
+        with patch.object(routes, "build_runtime_facade", return_value=facade):
+            handled = routes.handle_get(object(), handler, u.path, u)
+
+        self.assertTrue(handled)
+        self.assertTrue(handler.unauthorized_called)
+        self.assertEqual(facade.changed_files_calls, [])
+        self.assertEqual(handler.responses, [])
+
     def test_git_diff_route_passes_query_args_to_facade(self) -> None:
         facade = _Facade()
         facade.diff_result = {"ok": True, "diff": "patch"}
@@ -104,6 +118,19 @@ class TestSessionsReadGitRoutes(unittest.TestCase):
         self.assertEqual(facade.diff_calls, [])
         self.assertEqual(handler.responses, [(400, {"error": "path required"})])
 
+    def test_git_diff_route_maps_unknown_session_to_404(self) -> None:
+        facade = _Facade()
+        facade.diff_result = KeyError("unknown session")
+        handler = _Handler()
+        u = urllib.parse.urlparse("/api/sessions/session-3/git/diff?path=src%2Fapp.py")
+
+        with patch.object(routes, "build_runtime_facade", return_value=facade):
+            handled = routes.handle_get(object(), handler, u.path, u)
+
+        self.assertTrue(handled)
+        self.assertEqual(facade.diff_calls, [("session-3", "src/app.py", False)])
+        self.assertEqual(handler.responses, [(404, {"error": "unknown session"})])
+
     def test_git_file_versions_route_maps_value_error_to_400(self) -> None:
         facade = _Facade()
         facade.file_versions_result = ValueError("outside repo")
@@ -116,6 +143,18 @@ class TestSessionsReadGitRoutes(unittest.TestCase):
         self.assertTrue(handled)
         self.assertEqual(facade.file_versions_calls, [("session-4", "../secret.txt")])
         self.assertEqual(handler.responses, [(400, {"error": "outside repo"})])
+
+    def test_git_file_versions_route_rejects_missing_session_id(self) -> None:
+        facade = _Facade()
+        handler = _Handler()
+        u = urllib.parse.urlparse("/api/sessions//git/file_versions?path=tracked.py")
+
+        with patch.object(routes, "build_runtime_facade", return_value=facade):
+            handled = routes.handle_get(object(), handler, u.path, u)
+
+        self.assertTrue(handled)
+        self.assertEqual(handler.sent_error, 404)
+        self.assertEqual(facade.file_versions_calls, [])
 
     def test_changed_files_route_maps_runtime_error_to_409(self) -> None:
         facade = _Facade()
