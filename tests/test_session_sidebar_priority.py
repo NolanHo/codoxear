@@ -136,6 +136,36 @@ class TestSessionSidebarPriority(unittest.TestCase):
         session_ids = [row["session_id"] for row in payload["sessions"]]
         self.assertIn("sess-6", session_ids)
 
+    def test_list_sessions_uses_cached_catalog_title_for_live_rows(self) -> None:
+        mgr = _make_manager()
+        now = time.time()
+        live = _session(sid="live-1", start_ts=now - 100, last_chat_ts=now - 50)
+        mgr._sessions = {live.session_id: live}
+        mgr.catalog_record_for_ref = lambda ref: (_ for _ in ()).throw(AssertionError("unexpected catalog rescan"))  # type: ignore[method-assign]
+        with tempfile.TemporaryDirectory() as td:
+            db = PageStateDB(Path(td) / "state.sqlite")
+            db.save_sessions(
+                {
+                    ("codex", "live-1"): DurableSessionRecord(
+                        backend="codex",
+                        session_id="live-1",
+                        cwd="/tmp/live-1",
+                        source_path="",
+                        title="Cached title",
+                        first_user_message="cached preview",
+                        created_at=100.0,
+                        updated_at=150.0,
+                    )
+                }
+            )
+            mgr._page_state_db = db
+            rows = mgr.list_sessions()
+            db.close()
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["session_id"], "live-1")
+        self.assertEqual(rows[0]["title"], "Cached title")
+
     def test_list_sessions_includes_pending_sqlite_sessions_as_live_placeholders(
         self,
     ) -> None:

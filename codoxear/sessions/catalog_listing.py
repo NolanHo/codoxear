@@ -30,6 +30,7 @@ def _build_live_item(
     *,
     qmap: Any,
     meta_map: Any,
+    catalog_records: dict[Any, Any],
     now_ts: float,
 ) -> tuple[dict[str, Any], set[tuple[str, str]], bool]:
     live_resume_keys: set[tuple[str, str]] = set()
@@ -181,15 +182,10 @@ def _build_live_item(
         try:
             record_ref = ref if ref is not None else (session.backend, durable_session_id)
             if record_ref is not None:
-                record = manager.catalog_record_for_ref(record_ref)
+                existing_record = catalog_records.get(record_ref)
                 record_title = sv.api.clean_optional_text(
-                    getattr(record, "title", None)
+                    getattr(existing_record, "title", None)
                 )
-                if (not record_title) and hasattr(getattr(manager, "_page_state_db", None), "load_sessions"):
-                    existing_record = manager._page_state_db.load_sessions().get(record_ref)
-                    record_title = sv.api.clean_optional_text(
-                        getattr(existing_record, "title", None)
-                    )
                 if record_title:
                     session.title = record_title
             if (
@@ -273,6 +269,7 @@ def _collect_live_items(
     *,
     qmap: Any,
     meta_map: Any,
+    catalog_records: dict[Any, Any],
     now_ts: float,
 ) -> tuple[list[dict[str, Any]], set[tuple[str, str]], bool]:
     items: list[dict[str, Any]] = []
@@ -285,6 +282,7 @@ def _collect_live_items(
             session,
             qmap=qmap,
             meta_map=meta_map,
+            catalog_records=catalog_records,
             now_ts=now_ts,
         )
         items.append(row)
@@ -504,6 +502,7 @@ def list_sessions(manager: Any) -> list[dict[str, Any]]:
             sv,
             qmap=qmap,
             meta_map=meta_map,
+            catalog_records=recovered_catalog,
             now_ts=now_ts,
         )
         sidebar_dirty = bool(sidebar_dirty or live_sidebar_dirty)
