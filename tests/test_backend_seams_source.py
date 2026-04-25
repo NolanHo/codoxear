@@ -80,6 +80,19 @@ class TestBackendSeamsSource(unittest.TestCase):
         self.assertIn("from . import sessions_write_create as _create", write_source)
         self.assertIn("payload = facade.parse_create_session_request(obj)", write_create)
 
+    def test_session_git_routes_use_separate_runtime_facade_slice(self) -> None:
+        facade_source = (ROOT / "runtime_facade_sessions.py").read_text(encoding="utf-8")
+        git_facade_source = (ROOT / "runtime_facade_session_git.py").read_text(encoding="utf-8")
+        git_routes = (ROOT / "http" / "routes" / "sessions_read_git.py").read_text(encoding="utf-8")
+        self.assertIn("from .runtime_facade_session_git import RuntimeFacadeSessionGitMixin", facade_source)
+        self.assertIn("class RuntimeFacadeSessionMixin(RuntimeFacadeSessionGitMixin):", facade_source)
+        self.assertIn("def session_git_changed_files_payload(", git_facade_source)
+        self.assertIn("def session_git_diff_payload(", git_facade_source)
+        self.assertIn("def session_git_file_versions_payload(", git_facade_source)
+        self.assertIn("facade.session_git_changed_files_payload(session_id)", git_routes)
+        self.assertIn("facade.session_git_diff_payload(", git_routes)
+        self.assertIn("facade.session_git_file_versions_payload(", git_routes)
+
     def test_server_delegates_session_catalog_identity_lookups(self) -> None:
         source = SERVER.read_text(encoding="utf-8")
         delegates = _manager_delegate_sources()
