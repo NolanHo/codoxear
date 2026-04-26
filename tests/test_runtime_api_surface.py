@@ -74,6 +74,9 @@ class TestRuntimeApiSurface(unittest.TestCase):
         self.assertEqual(runtime.get_route_modules, ())
         self.assertEqual(runtime.post_route_modules, ())
 
+    def test_runtime_api_exports_include_spawn_timeout_constant(self) -> None:
+        self.assertIn("TMUX_META_WAIT_SECONDS", RUNTIME_API_EXPORTS)
+
     def test_runtime_api_exports_exclude_route_modules(self) -> None:
         for name in (
             "http_assets_routes",
